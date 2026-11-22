@@ -46,36 +46,38 @@ async function fixture() {
   return { db, dir, enterprise, row, detail, observation }
 }
 
-it('typed fields follow the content version and repeat for repeated observations of that version', { timeout: 30_000 }, async () => {
+it('enterprise detail exposes typed fields only for the current verified capture', { timeout: 30_000 }, async () => {
   const f = await fixture()
   const raw = { id: 'BL-1', qymc: '办理企业', tyshxydm: '91330211BL', sblx: '复核', year: '2024', sqsj: '2024-02-02', cszt: '已受理', whpc: '2024-1', personuuid: '2021批次', szsfmc: '浙江省宁波市' }
-  const first = (await f.row({ raw, queriedAt: '2026-10-01T00:00:00Z' }))
-  const replay = (await f.row({ raw, queriedAt: '2026-10-02T00:00:00Z' }))
-  const changed = (await f.row({ raw: { ...raw, cszt: '已办结', whpc: '2024-2' }, queriedAt: '2026-10-03T00:00:00Z' }))
-  expect(replay.projection!.versionId).toBe(first.projection!.versionId)
-  expect(changed.projection!.versionId).not.toBe(first.projection!.versionId)
-
+  const first = await f.row({ raw, queriedAt: '2026-10-01T00:00:00Z' })
   const firstTyped = (await f.observation(first.relation.id)).typedFields
   expect(firstTyped).toMatchObject({
     interface: 'business_list', projectionRuleVersion: 'platform-business-v1',
     nameRaw: '办理企业', usccRaw: '91330211BL', declareKind: 'review', year: 2024,
     appliedAt: '2024-02-02', status: '已受理', batch: '2024-1', province: '浙江省宁波市',
   })
-  const factWithoutRelation = (fact: NonNullable<typeof firstTyped>) => {
-    const { relationId: _relationId, ...rest } = fact
-    return rest
-  }
-  expect(factWithoutRelation((await f.observation(replay.relation.id)).typedFields)).toEqual(factWithoutRelation(firstTyped))
-  expect((await f.observation(changed.relation.id)).typedFields).toMatchObject({ status: '已办结', batch: '2024-2' })
-  expect((await f.detail()).platform.businessRecords.flatMap((b: any) => b.observationRefs).every((o: any) => o.enterpriseId === f.enterprise.id)).toBe(true)
 
-  const business = (await f.detail()).platform.businessRecords[0]
-  expect(business.versionCount).toBe(2)
-  expect(business.observationRefs.map((o: any) => [o.relationId, o.businessRecord.versionId, o.typedFields?.status])).toEqual([
-    [first.relation.id, first.projection!.versionId, '已受理'],
-    [replay.relation.id, first.projection!.versionId, '已受理'],
-    [changed.relation.id, changed.projection!.versionId, '已办结'],
+  const replay = await f.row({ raw, queriedAt: '2026-10-02T00:00:00Z' })
+  expect(replay.projection.versionId).toBe(first.projection.versionId)
+  const repeated = (await f.detail()).platform
+  expect(repeated.relations.map((row: { id: number }) => row.id)).toEqual([replay.relation.id])
+  expect(repeated.businessRecords).toMatchObject([
+    { observationRefs: [{ relationId: replay.relation.id, businessRecord: { versionId: first.projection.versionId } }] },
   ])
+  expect(repeated.businessRecords[0].observationRefs[0].typedFields).toEqual({ ...firstTyped, relationId: replay.relation.id })
+
+  const changed = await f.row({ raw: { ...raw, cszt: '已办结', whpc: '2024-2' }, queriedAt: '2026-10-03T00:00:00Z' })
+  expect(changed.projection.versionId).not.toBe(first.projection.versionId)
+  const current = (await f.detail()).platform
+  expect(current.relations.map((row: { id: number }) => row.id)).toEqual([changed.relation.id])
+  expect(current.businessRecords).toMatchObject([{
+    representativeRelationId: changed.relation.id, versionCount: 1, observationCount: 1,
+    observationRefs: [{
+      relationId: changed.relation.id, enterpriseId: f.enterprise.id, businessRecord: { versionId: changed.projection.versionId },
+      typedFields: { relationId: changed.relation.id, projectionVersionId: changed.projection.versionId, status: '已办结', batch: '2024-2' },
+    }],
+    versions: [{ representativeRelationId: changed.relation.id }],
+  }])
 })
 
 it('apply and recognized projections expose their own typed fields without inventing unmodeled ones', { timeout: 30_000 }, async () => {
