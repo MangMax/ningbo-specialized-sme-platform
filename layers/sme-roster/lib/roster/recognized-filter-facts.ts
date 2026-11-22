@@ -3,8 +3,8 @@
  */
 export function recognizedFilterFacts(
   context: { titleCode: string; schema: 'queryBusList' },
-  raw: { rddqrq: unknown; whpcyear: unknown; whpc: unknown },
-  conditions: { rddqrq: unknown; whpcyear: unknown; whpc: unknown },
+  raw: { rddqrq: unknown; maintenanceYearAbsent: boolean; whpc: unknown },
+  conditions: { rddqrq: unknown; whpcyear: unknown },
 ): { validYear: number | null; maintenance: { year: number; batch: number | null } | null } {
   if (context.titleCode !== 'innovative_sme' || context.schema !== 'queryBusList') return { validYear: null, maintenance: null }
   const year = (value: unknown) => typeof value === 'string' && /^[1-9]\d{3}$/.test(value) ? Number(value) : null
@@ -22,9 +22,8 @@ export function recognizedFilterFacts(
   const composite = typeof raw.whpc === 'string' ? /^([1-9]\d{3})-([1-9]|1[0-5])$/.exec(raw.whpc) : null
   // Only the year prefix with an absent returned whpcyear is observed. Neither
   // the suffix nor a submitted batch predicate establishes a positive batch.
-  const rawYearMissing = raw.whpcyear == null || raw.whpcyear === ''
   const compositeYear = composite ? Number(composite[1]) : null
-  const maintenance = rawYearMissing && compositeYear != null
+  const maintenance = raw.maintenanceYearAbsent && compositeYear != null
     && (conditions.whpcyear == null || year(conditions.whpcyear) === compositeYear)
     ? { year: compositeYear, batch: null } : null
   return { validYear, maintenance }

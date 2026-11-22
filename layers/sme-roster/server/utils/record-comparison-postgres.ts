@@ -93,8 +93,9 @@ async function selectComparison(db: Reader, input: RecordComparisonInput): Promi
   const normalized = await readPostgresObservationComparisonFacts(db, observationIds.map(row => ({ observationId: row.observationId,
     interface: byQuery.get(row.queryId)!.interface })), 'archive')
   const relations = observationIds.map(({ enterpriseName: _name, relationId: _id, ...row }) => {
-    const projection = normalized.get(row.observationId)
-    if (!projection) throw new Error('comparison_observation_fact_missing')
+    const facts = normalized.get(row.observationId)
+    if (!facts) throw new Error('comparison_observation_fact_missing')
+    const { sqlFactTitle: _title, ...projection } = facts
     return { relation: { ...row, ...projection }, query: byQuery.get(row.queryId)! }
   })
   const batchById = new Map(batches.map(row => [row.id, row]))

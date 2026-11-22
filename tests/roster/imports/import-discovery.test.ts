@@ -1,18 +1,18 @@
-import { readFileSync } from 'node:fs'
+import { extendRosterImportOpenApi, type RosterImportOpenApiDocument } from '../../../layers/sme-roster/server/modules/sme-roster/roster-import-openapi'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { rosterImportMcpPayloadSchema } from '../../../layers/sme-roster/server/utils/roster-import-schema'
 
-const httpPayloadCache = new Map<string, any>()
-function httpPayload(action: string) {
-  if (httpPayloadCache.has(action)) return httpPayloadCache.get(action)
-  const source = readFileSync(new URL(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`, import.meta.url), 'utf8')
-  const payload = JSON.parse(source.match(/payload: (\{\n[\s\S]*?\n\}),/)![1]!)
-  httpPayloadCache.set(action, payload)
-  return payload
+const importDiscovery: RosterImportOpenApiDocument = {
+  paths: { '/api/roster/import/preflight': { post: {} }, '/api/roster/import/commit': { post: {} } },
+}
+extendRosterImportOpenApi(importDiscovery)
+const importActions = ['preflight', 'commit'] as const
+function httpPayload(action: typeof importActions[number]): any {
+  return importDiscovery.paths![`/api/roster/import/${action}`]!.post!.requestBody!.content['application/json'].schema.properties.payload
 }
 const discovery = z.toJSONSchema(rosterImportMcpPayloadSchema, { io: 'input' })
-const allPayloads: any[] = [discovery, ...['preflight', 'commit'].map(httpPayload)]
+const allPayloads: any[] = [discovery, ...importActions.map(httpPayload)]
 
 // Independent literal expectations pin discoverable commands, not an inferred database rowset.
 describe('roster import announcement discovery', () => {
@@ -37,7 +37,7 @@ describe('roster import announcement discovery', () => {
     expect(discovery.required ?? []).not.toContain('announcement')
   })
 
-  it.each(['preflight', 'commit'])('publishes the shared A command models as literal HTTP %s metadata', action => {
+  it.each(importActions)('publishes the shared A command models as HTTP %s metadata', action => {
     const payload = httpPayload(action)
     for (const key of ['announcement', 'officialEvidenceAppends', 'officialEvidenceCorrections', 'officialEvidencePlanHash']) {
       expect(payload.properties[key]).toEqual(discovery.properties![key])

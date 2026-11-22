@@ -9,7 +9,7 @@ UPDATE platform_collection c SET
   source_coverage = CASE WHEN jsonb_typeof(collected.evidence)='object' THEN collected.evidence - ARRAY['rows','dataRows','rawData'] END
 FROM collected WHERE c.id=collected.owner_id;
 
-\ir platform-legacy-coverage.sql
+\ir ../../../../../db/postgresql/platform-legacy-coverage.sql
 
 UPDATE platform_collection c SET raw_response_sha256 = archive.sha256
 FROM platform_collection_archive_ref refs JOIN platform_archive_value archive ON archive.id=refs.archive_id
@@ -52,4 +52,4 @@ SELECT o.id AS observation_id, o.version_id, business.facts
 FROM platform_business_observation o JOIN captured ON captured.owner_id=o.id
 LEFT JOIN business ON business.owner_id=o.id;
 
-\ir platform-version-business-fields-projection.sql
+\ir ../../../../../db/postgresql/platform-version-business-fields-projection.sql

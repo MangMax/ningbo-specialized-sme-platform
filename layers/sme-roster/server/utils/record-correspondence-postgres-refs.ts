@@ -1,15 +1,16 @@
-import { and, desc, eq, getTableColumns, isNotNull, notExists, or, sql, type SQL, type SQLWrapper, type Table } from 'drizzle-orm'
+import { and, desc, eq, getTableColumns, isNotNull, or, sql, type SQL, type SQLWrapper, type Table } from 'drizzle-orm'
 import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import {
-  platformBusinessProjection, platformExportBatch, platformExportRow,
-  platformBusinessObservation, platformObservationAssignment,
+  platformApplyProjection, platformBusinessProjection, platformExportBatch, platformExportRow,
+  platformBusinessObservation, platformCollection, platformObservationAssignment, platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
+import { platformSourceFields } from '../../../../db/postgresql/platform-source-values'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
-import { sourceQueryFields, sourceRelationFields } from '../../lib/platform/source-snapshot-fields'
+import { sourceQueryFields } from '../../lib/platform/source-snapshot-fields'
 import { correspondenceAttributionChanged, type CorrespondenceAttribution } from './record-correspondence-attribution'
 import type { CorrespondenceRefRow } from './record-correspondence'
 import type { StoredCorrespondence } from './record-correspondence-model'
@@ -65,12 +66,32 @@ function eventMatches(id: SQL, predecessor = false) {
     ) END`
 }
 
-function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
-  const overrides = { id: sql`p.relation_id`, queryId: sql`c.public_id`, ...assignment }
-  const fields = Object.keys(sourceRelationFields).filter(key => key !== 'rawFields' && key !== 'sourceText').map(key => {
-    const actual = key in overrides ? textJson(overrides[key as keyof typeof overrides]) : sql`o.relation_facts->${key}::text`
-    return jsonEqual(refValue('relation', key), actual)
-  })
+function relationMatches(db: Db, assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
+  const o = alias(platformBusinessObservation, 'o')
+  const c = alias(platformCollection, 'c')
+  const first = alias(platformObservationAssignment, 'first_assignment')
+  const a = alias(platformApplyProjection, 'apply_version')
+  const b = alias(platformBusinessProjection, 'business_version')
+  const r = alias(platformRecognizedProjection, 'recognized_version')
+  const inherited = {
+    titleRaw: sql`coalesce(${a.titleRaw}, ${b.titleRaw}, ${r.titleRaw})`,
+    status: sql`coalesce(${a.status}, ${b.status})`,
+    declareKind: sql`coalesce(${a.declareKind}, ${b.declareKind})`,
+    appliedAt: sql`coalesce(${a.appliedAt}, ${b.appliedAt})`,
+    year: sql`coalesce(${a.declarationYear}, ${b.businessYear})`,
+    batch: sql`${b.batch}`, awardBatchLabel: sql`${b.awardBatchLabel}`, province: sql`${b.province}`,
+  }
+  const sourceValue = (key: typeof platformSourceFields[number]) =>
+    sql`coalesce(${o.sourceValues}->${key}::text, to_jsonb(${inherited[key]}))`
+  const columns = {
+    id: sql`${o.publicId}`, queryId: sql`${c.publicId}`, sequenceNo: sql`${o.sequenceNo}`,
+    relationKey: sql`${o.sourceRelationKey}`, usccRaw: sql`${first.usccRaw}`, nameRaw: sql`${first.nameRaw}`,
+    aliasNameRaw: sql`${first.aliasNameRaw}`, createdAt: sql`${o.sourceCreatedAt}`, ...assignment,
+  }
+  const fields = [
+    ...Object.entries(columns).map(([key, column]) => jsonEqual(refValue('relation', key), textJson(column))),
+    ...platformSourceFields.map(key => jsonEqual(refValue('relation', key), sourceValue(key))),
+  ]
   const query = Object.entries(sourceQueryFields).map(([key, column]) => {
     if (key === 'rawResponse') {
       const saved = sql`coalesce(${refValue('query', 'rawResponseSha256')} #>> '{}', CASE
@@ -86,15 +107,18 @@ function relationMatches(assignment: { enterpriseId: SQL; matchBasis: SQL; verif
     }
     return jsonEqual(refValue('query', key), textJson(key === 'id' ? sql`c.public_id` : tableColumn('c', column.name)))
   })
+  const comparisonStatus = sourceValue('status')
+  const live = db.select({ id: o.id }).from(o)
+    .innerJoin(c, eq(c.id, o.collectionId))
+    .innerJoin(first, and(eq(first.observationId, o.id), eq(first.revision, 1)))
+    .leftJoin(a, eq(a.versionId, o.versionId))
+    .leftJoin(b, eq(b.versionId, o.versionId))
+    .leftJoin(r, eq(r.versionId, o.versionId))
+    .where(and(eq(o.id, sql`p.observation_id`), isNotNull(o.sourceValues), ...fields, ...query,
+      sql`(${comparisonStatus} ? 'base64' AND NOT (${comparisonStatus} ? 'storage')) IS NOT TRUE`))
   return sql`CASE WHEN p.observation_id IS NULL THEN
     ${jsonEqual(refValue('relation'), NULL_JSON)} AND ${jsonEqual(refValue('query'), NULL_JSON)}
-    ELSE EXISTS(
-      SELECT 1 FROM platform_business_observation o
-      JOIN platform_collection c ON c.id=o.collection_id
-      WHERE o.id=p.observation_id AND o.relation_facts IS NOT NULL
-        AND ${and(...fields)}
-        AND ${and(...query)}
-    ) END`
+    ELSE EXISTS(${live}) END`
 }
 
 const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
@@ -134,13 +158,11 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
       isNotNull(edge.eventId), isNotNull(relation.publicId))))
   const p = new QueryBuilder().$with('p').as(selected)
   const a = platformObservationAssignment
-  const target = alias(enterprise, 'target'), business = platformBusinessProjection
+  const target = alias(enterprise, 'target')
   const assignment = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
     .from(a).where(eq(a.observationId, p.observationId)).orderBy(desc(a.revision)).limit(1).as('assignment')
-  const noOpaqueStatus = notExists(db.select({ id: business.id }).from(business)
-    .where(and(eq(business.observationId, p.observationId), eq(business.storedStatusSqliteStorage, 'blob'))))
   const validate = explicitValidity ? sql`true` : eq(p.status, 'confirmed')
-  const relationMatch = relationMatches({
+  const relationMatch = relationMatches(db, {
     enterpriseId: sql`${assignment.enterpriseId}`,
     matchBasis: sql`${assignment.matchBasis}`,
     verificationStatus: sql`${assignment.verificationStatus}`,
@@ -151,7 +173,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
       'enterpriseId',${p.enterpriseId},'titleCode',${p.titleCode},'revision',${p.revision})`.as('ref'),
     matches: sql`CASE WHEN ${validate} THEN ${and(
       eventMatches(sql`${p.eventId}`), eventMatches(sql`${p.predecessorEventId}`, true),
-      relationMatch, exportMatches, noOpaqueStatus,
+      relationMatch, exportMatches,
     )} ELSE true END`.as('matches'),
     attribution: sql`CASE WHEN ${validate} THEN json_build_object('type',${p.type},'enterpriseId',${p.enterpriseId},
       'relationEnterpriseId',${assignment.enterpriseId},'relationStatus',${assignment.verificationStatus},'relationUscc',${refValue('relation', 'usccRaw')},

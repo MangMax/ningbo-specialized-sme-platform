@@ -4,6 +4,7 @@ import * as schema from '../fixtures/postgres-tables'
 import { readPostgresCurrentCandidateIds } from '../../../layers/sme-roster/lib/roster/current-candidates-postgres'
 import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 import { captureReturnedTitles } from './fixtures/returned-titles'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 
 const createDb = useIsolatedPostgresCases()
 function fixture() {
@@ -49,4 +50,20 @@ it('deduplicates a normalized owner across actual returned rows from all three i
   for (const source of ['queryBusList', 'businessList', 'queryList'] as const) await captureReturnedTitles(db, source,
     [{ id: 'all-source-'+source, tyshxydm: owner.usccNorm!, qymc: owner.name, rdjb: '3' }], [null], ['3'])
   expect(await candidates('little_giant')).toEqual([owner.id])
+})
+
+it('discovers candidates from returned text titles even when the source record ID is missing', async () => {
+  const { db, enterprise, candidates } = fixture()
+  const text = await enterprise('Text returned title')
+  const numeric = await enterprise('Numeric returned title')
+  await seedPostgresPlatformQuery(db, {
+    interface: 'business_list', queryKey: 'name:returned-title-fixture', rdjb: '2', titleCode: 'specialized_sme',
+    queriedAt: '2026-01-01T00:00:00Z', status: 'success', rawResponse: '{}',
+    relations: [
+      { sequenceNo: 1, enterpriseId: text.id, rawFields: { rdjb: '2' } },
+      { sequenceNo: 2, enterpriseId: numeric.id, rawFields: { rdjb: 2 } },
+    ],
+  })
+
+  expect(await candidates('specialized_sme')).toEqual([text.id])
 })

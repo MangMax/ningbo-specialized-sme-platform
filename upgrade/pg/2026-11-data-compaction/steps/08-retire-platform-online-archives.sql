@@ -2,7 +2,7 @@
 BEGIN;
 SET LOCAL search_path TO business, pg_catalog;
 
-\ir ../../../../db/postgresql/platform-projection-owner.sql
+\ir support/legacy-platform-projection-owner.sql
 
 DROP TRIGGER IF EXISTS platform_version_canonical_archive ON platform_business_record_version;
 DROP TRIGGER IF EXISTS platform_version_canonical_archive_required ON platform_business_record_version;

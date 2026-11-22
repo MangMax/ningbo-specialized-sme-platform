@@ -100,12 +100,15 @@ it.each(['queryBusList','queryList'] as const)('presents the selected platform b
   expect(basis).not.toMatch(/record:|version:|observation:/)
 })
 
-it('uses an ordinary same-code Ningbo recognized period despite stale Shanghai profile and no human gate', async () => {
+it.each([
+ { storage: 'text', valid: '1', invalid: '0' },
+ { storage: 'numeric', valid: 1, invalid: 0 },
+])('uses a same-code Ningbo recognized period with a $storage validity flag despite a stale Shanghai profile', async ({ valid, invalid }) => {
  const c=await candidate('platform-only',[])
  await db.update(schema.enterprise).set({usccNorm:'91330110MA2GMDFH58',city:'上海市',district:'上海市'}).where(eq(schema.enterprise.id,c.enterprise.id))
- await seedPostgresPlatformQuery(db,collectionCommand({id:'ordinary-platform',tyshxydm:'91330110MA2GMDFH58',qymc:'平台原名',rdjb:'2',rdtime:'2023-12-28 08:50:25',rddqrq:'2026-12-28',sfyx:'1',szsmc:'宁波市'},'2026-11-01T00:00:00Z'))
- expect(await read(c.enterprise.id)).toMatchObject({group:'eligible',effectiveQualification:{status:'effective',source:{source:'recognized_list',period:{until:{raw:'2026-12-28',precision:'day'}}}}})
- await seedPostgresPlatformQuery(db,collectionCommand({id:'ordinary-platform',tyshxydm:'91330110MA2GMDFH58',qymc:'平台原名',rdjb:'2',rdtime:'2023-12-28 08:50:25',rddqrq:'2026-12-28',sfyx:'0',sxsj:'2026-11-02',szsmc:'宁波市'},'2026-11-04T00:00:00Z'))
+ await seedPostgresPlatformQuery(db,collectionCommand({id:'ordinary-platform',tyshxydm:'91330110MA2GMDFH58',qymc:'平台原名',rdjb:'2',rdtime:'2023-12-28 08:50:25',rddqrq:'2026-12-28',sfyx:valid,szsmc:'宁波市'},'2026-11-01T00:00:00Z'))
+ expect(await read(c.enterprise.id)).toMatchObject({group:'eligible',effectiveQualification:{status:'effective',source:{source:'recognized_list',statusRaw:valid,period:{until:{raw:'2026-12-28',precision:'day'}}}}})
+ await seedPostgresPlatformQuery(db,collectionCommand({id:'ordinary-platform',tyshxydm:'91330110MA2GMDFH58',qymc:'平台原名',rdjb:'2',rdtime:'2023-12-28 08:50:25',rddqrq:'2026-12-28',sfyx:invalid,sxsj:'2026-11-02',szsmc:'宁波市'},'2026-11-04T00:00:00Z'))
  expect(await read(c.enterprise.id)).toMatchObject({group:'excluded'})
 })
 

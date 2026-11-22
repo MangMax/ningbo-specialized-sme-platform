@@ -7,5 +7,5 @@ ALTER TABLE platform_collection ADD COLUMN IF NOT EXISTS source_coverage jsonb,
 ALTER TABLE platform_business_observation ADD COLUMN IF NOT EXISTS relation_facts jsonb,
   ADD COLUMN IF NOT EXISTS business_fields jsonb;
 ALTER TABLE platform_business_record_version ADD COLUMN IF NOT EXISTS business_fields jsonb;
-\ir ../../../../db/postgresql/platform-offline-read-facts.sql
+\ir support/platform-offline-read-facts.sql
 COMMIT;

@@ -564,7 +564,7 @@ export function evaluateCandidate(
         const result=witnessSources.get(ref.relationId!)
         if(!result||result.kind!=='available')return []
         const source=result.source
-        const key=source.position.state==='matched'?source.position.rdjbKey:null
+        const key = source.rdjbKey
         const fromPosition=key===null?null:RDJB_TITLE_CODES[key]
         const scope = source.rdjb.split(',').filter(Boolean)
         const fromScope = scope.length === 1 ? RDJB_TITLE_CODES[scope[0]!] : null
@@ -572,8 +572,8 @@ export function evaluateCandidate(
           || (fromPosition ?? source.titleCode ?? fromScope) !== title) return []
         const projected = recognizedFilterFacts(
           {titleCode:fromPosition ?? source.titleCode ?? fromScope!,schema:'queryBusList'},
-          {rddqrq:source.rawValid,whpcyear:source.rawMaintenanceYear,whpc:source.rawMaintenanceBatch},
-          {rddqrq:source.conditionValidYear,whpcyear:source.conditionMaintenanceYear,whpc:source.conditionMaintenanceBatch})
+          {rddqrq:source.rawValid,maintenanceYearAbsent:source.maintenanceYearAbsent,whpc:source.rawMaintenanceBatch},
+          {rddqrq:source.conditionValidYear,whpcyear:source.conditionMaintenanceYear})
         return [{...base,matchedValidYear:projected.validYear,matchedMaintenance:projected.maintenance,correspondenceId:ref.id,conditionQueryId:source.queryId}]
       })
       return matches.length ? matches : [{...base,matchedValidYear:null,matchedMaintenance:null,correspondenceId:null,conditionQueryId:null}]

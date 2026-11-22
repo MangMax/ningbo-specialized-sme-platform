@@ -2,6 +2,7 @@ import { and, desc, eq, sql, type SQLWrapper } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { platformApplyProjection as apply, platformBusinessObservation as observation, platformBusinessProjection as business,
   platformCollection as collection, platformRecognizedProjection as recognized } from '../../../../db/postgresql/platform-tables'
+import { platformSourceCellValue, type PlatformSourceCell } from '../../../../db/postgresql/platform-source-values'
 import { normalizeUscc } from '../domain'
 import { isValidUscc } from './uscc-research'
 import { projectPlatformQualificationFact, type PlatformQualificationInputRow, type PlatformQualificationFact } from './platform-qualification'
@@ -15,15 +16,6 @@ export function qualificationUsccCandidate(column: SQLWrapper, usccs: string[]) 
 }
 
 type Reader = Pick<NodePgDatabase, 'select'>
-type RecognizedRow = PlatformQualificationInputRow & { flag: Buffer | null; flagStorage: string }
-
-function recognizedFlag({ flag, flagStorage }: Pick<RecognizedRow, 'flag' | 'flagStorage'>): string | number | null {
-  if (flag === null) return null
-  if (flagStorage === 'text') return flag.toString('utf8')
-  if (flagStorage === 'integer') return Number(flag.readBigInt64BE())
-  if (flagStorage === 'real') return flag.readDoubleBE()
-  return null
-}
 
 export function createPostgresPlatformQualificationReader(db: Reader) {
   let variants: Promise<Map<string, { raw: string; normalized: string }[]>> | undefined
@@ -64,8 +56,9 @@ async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm
   })
   const recognizedLatest = latest(recognized.recordId)
   const recognizedRows = await db.select({ ...coordinates(recognizedLatest),
-    flag: recognized.sourceValidFlag, flagStorage: recognized.sourceValidFlagSqliteStorage,
     p: { usccRaw: recognized.usccRaw, titleRaw: recognized.titleRaw, nameRaw: recognized.nameRaw,
+      // pg already decodes JSONB. Drizzle's column decoder parses scalar strings again.
+      sourceValidFlag: sql<PlatformSourceCell>`${recognized.sourceValidFlag}`,
       qualificationFieldsRule: recognized.qualificationFieldsRule, sourceRecognizedAt: recognized.sourceRecognizedAt,
       sourceValidityDate: recognized.sourceValidityDate, sourceProvinceName: recognized.sourceProvinceName,
       sourceCityName: recognized.sourceCityName, sourceDistrictName: recognized.sourceDistrictName,
@@ -83,8 +76,8 @@ async function readFacts(db: Reader, byUscc: Map<string, { id: number; uscc_norm
       status: apply.status, declarationYear: apply.declarationYear, appliedAt: apply.appliedAt },
   }).from(apply).innerJoinLateral(applyLatest, eq(applyLatest.versionId, apply.versionId)).where(scope(apply.usccRaw))
   const facts: PlatformQualificationInputRow[] = [
-    ...recognizedRows.map(({ flag, flagStorage, ...row }) => ({
-      ...row, source: 'recognized_list' as const, p: { ...row.p, sourceValidFlag: recognizedFlag({ flag, flagStorage }) },
+    ...recognizedRows.map(row => ({
+      ...row, source: 'recognized_list' as const, p: { ...row.p, sourceValidFlag: platformSourceCellValue(row.p.sourceValidFlag) },
     })),
     ...businessRows.map(row => ({ ...row, source: 'business_list' as const })),
     ...applyRows.map(row => ({ ...row, source: 'apply_list' as const })),

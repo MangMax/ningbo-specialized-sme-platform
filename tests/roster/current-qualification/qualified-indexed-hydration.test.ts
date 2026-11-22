@@ -27,3 +27,32 @@ it('retains name and explicitly assigned native observations when credit code is
   const actual = (await listPostgresCurrentQualified(f.db, { titleCode: 'specialized_sme' })).rows[0]!.qualificationAssessment
   expect(actual.titles.map(title => title.platform.observations.map(q => q.queryId))).toEqual([[linked.queryId, named.queryId], [linked.queryId, named.queryId], [linked.queryId, named.queryId]])
 })
+
+it('shows each observation’s stored facts when two queries return the same process version', async () => {
+  await f.resetBusiness()
+  const { enterprise } = await f.candidate('Repeated process version')
+  const query = {
+    interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme',
+    status: 'success', rawResponse: '{}',
+  } as const
+  const relation = {
+    sequenceNo: 1, relationKey: 'same-process', enterpriseId: enterprise.id,
+    usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, matchBasis: 'uscc', verificationStatus: 'confirmed',
+    rawFields: { id: 'same-process', rdjb: '2', qymc: enterprise.name, tyshxydm: enterprise.usccNorm!, year: 2024 },
+  } as const
+  const first = await seedPostgresPlatformQuery(f.db, {
+    ...query, queriedAt: `${year}-01-01T00:00:00Z`, relations: [relation],
+  })
+  const second = await seedPostgresPlatformQuery(f.db, {
+    ...query, queriedAt: `${year}-01-02T00:00:00Z`,
+    relations: [{ ...relation, status: '终审未通过', batch: '2023-3' }],
+  })
+
+  const result = await listPostgresCurrentQualified(f.db, { titleCode: 'specialized_sme' })
+  const observations = result.rows[0]!.qualificationAssessment.titles
+    .find(title => title.titleCode === 'specialized_sme')!.platform.observations
+  expect(observations.map(({ queryId, rows }) => ({ queryId, rows }))).toEqual([
+    { queryId: second.queryId, rows: [{ relationId: second.relationIds[0], status: '终审未通过', year: 2024, batch: '2023-3' }] },
+    { queryId: first.queryId, rows: [{ relationId: first.relationIds[0], status: null, year: 2024, batch: null }] },
+  ])
+})

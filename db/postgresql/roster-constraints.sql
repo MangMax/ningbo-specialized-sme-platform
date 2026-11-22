@@ -20,7 +20,6 @@ CREATE UNIQUE INDEX official_evidence_row_revision_uq ON official_evidence_row_r
 CREATE INDEX official_evidence_row_source_idx ON official_evidence_row_revision (source_document_id,sha256,bytes,attachment,section_key,list_no,evidence_id,revision);
 CREATE INDEX platform_apply_projection_applied_idx ON platform_apply_projection (applied_at);
 CREATE INDEX platform_apply_projection_kind_idx ON platform_apply_projection (declare_kind);
-CREATE UNIQUE INDEX platform_apply_projection_observation_uq ON platform_apply_projection (observation_id);
 CREATE INDEX platform_apply_projection_record_idx ON platform_apply_projection (record_id);
 CREATE INDEX platform_apply_projection_status_idx ON platform_apply_projection (status);
 CREATE INDEX platform_apply_projection_title_version_idx ON platform_apply_projection (title_raw,version_id);
@@ -34,7 +33,6 @@ CREATE INDEX platform_business_observation_version_idx ON platform_business_obse
 CREATE INDEX platform_business_projection_applied_idx ON platform_business_projection (applied_at);
 CREATE INDEX platform_business_projection_batch_idx ON platform_business_projection (batch);
 CREATE INDEX platform_business_projection_kind_idx ON platform_business_projection (declare_kind);
-CREATE UNIQUE INDEX platform_business_projection_observation_uq ON platform_business_projection (observation_id);
 CREATE INDEX platform_business_projection_record_idx ON platform_business_projection (record_id);
 CREATE INDEX platform_business_projection_status_idx ON platform_business_projection (status);
 CREATE INDEX platform_business_projection_title_version_idx ON platform_business_projection (title_raw,version_id);
@@ -58,7 +56,6 @@ CREATE INDEX platform_observation_position_idx ON platform_business_observation 
 CREATE INDEX platform_query_title_scope_rdjb_collection_idx ON platform_query_title_scope(rdjb,collection_id);
 CREATE INDEX platform_recognized_projection_batch_idx ON platform_recognized_projection (maintenance_batch);
 CREATE INDEX platform_recognized_projection_district_idx ON platform_recognized_projection (district);
-CREATE UNIQUE INDEX platform_recognized_projection_observation_uq ON platform_recognized_projection (observation_id);
 CREATE INDEX platform_recognized_projection_record_idx ON platform_recognized_projection (record_id);
 CREATE INDEX platform_recognized_projection_title_version_idx ON platform_recognized_projection (title_raw,version_id);
 CREATE INDEX platform_recognized_projection_uscc_idx ON platform_recognized_projection (uscc_raw);
@@ -140,8 +137,6 @@ ALTER TABLE official_evidence_row_revision
 ALTER TABLE official_evidence_row_revision
   ADD FOREIGN KEY (evidence_id, event_id) REFERENCES record_evidence(id, record_event_id);
 ALTER TABLE platform_apply_projection
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
-ALTER TABLE platform_apply_projection
   ADD FOREIGN KEY (version_id) REFERENCES platform_business_record_version(id) ON DELETE RESTRICT;
 ALTER TABLE platform_apply_projection
   ADD FOREIGN KEY (record_id) REFERENCES platform_business_record(id) ON DELETE RESTRICT;
@@ -157,14 +152,6 @@ ALTER TABLE platform_business_observation
   ADD FOREIGN KEY (batch_id) REFERENCES import_batch(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_observation
   ADD FOREIGN KEY (version_id,record_id) REFERENCES platform_business_record_version(id,record_id) ON DELETE RESTRICT;
-ALTER TABLE platform_business_observation
-  ADD FOREIGN KEY (apply_exact_owner_id,apply_exact_state,apply_sql_fact_title_state)
-        REFERENCES platform_apply_projection(observation_id,exact_stored_state,sql_fact_title_state) DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE platform_business_observation
-  ADD FOREIGN KEY (process_exact_owner_id,process_exact_state,process_sql_fact_title_state)
-        REFERENCES platform_business_projection(observation_id,exact_stored_state,sql_fact_title_state) DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE platform_business_projection
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_projection
   ADD FOREIGN KEY (version_id) REFERENCES platform_business_record_version(id) ON DELETE RESTRICT;
 ALTER TABLE platform_business_projection
@@ -194,8 +181,6 @@ ALTER TABLE platform_observation_assignment
   ADD FOREIGN KEY (enterprise_id) REFERENCES enterprise(id) ON DELETE RESTRICT;
 ALTER TABLE platform_query_title_scope
   ADD FOREIGN KEY (collection_id) REFERENCES platform_collection(id) ON DELETE RESTRICT;
-ALTER TABLE platform_recognized_projection
-  ADD FOREIGN KEY (observation_id) REFERENCES platform_business_observation(id) ON DELETE RESTRICT;
 ALTER TABLE platform_recognized_projection
   ADD FOREIGN KEY (version_id) REFERENCES platform_business_record_version(id) ON DELETE RESTRICT;
 ALTER TABLE platform_recognized_projection

@@ -11,10 +11,6 @@ BEGIN
   IF has_scope AND NEW.id IS DISTINCT FROM OLD.id THEN
     RAISE EXCEPTION 'Collection scope owner is retained' USING ERRCODE = 'integrity_constraint_violation';
   END IF;
-  IF OLD.condition_facts ? 'witnesses' AND
-    (NEW.condition_facts -> 'witnesses') IS DISTINCT FROM (OLD.condition_facts -> 'witnesses') THEN
-    RAISE EXCEPTION 'Collection condition witnesses are immutable' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
   RETURN NEW;
 END;
 $$;

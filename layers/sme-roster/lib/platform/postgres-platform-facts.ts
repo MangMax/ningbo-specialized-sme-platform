@@ -1,4 +1,5 @@
-type EvidenceIdentity = { id: number; sha256: string | null }
+import { createHash } from 'node:crypto'
+
 
 export function capturePostgresObservationFacts(sourceText: string | null, materializedRawText: string | null) {
   const text = sourceText ?? ''
@@ -8,11 +9,9 @@ export function capturePostgresObservationFacts(sourceText: string | null, mater
   }
 }
 
-export function capturePostgresCollectionFacts(evidenceText: string | null, rawResponse: string | null, evidenceIdentity?: EvidenceIdentity) {
+export function capturePostgresCollectionFacts(evidenceText: string | null, rawResponse: string | null) {
   return {
-    evidenceArchiveId: evidenceIdentity?.id ?? null,
-    evidenceSha256: evidenceIdentity?.sha256 ?? null,
-    evidenceSealed: evidenceIdentity ? 1 : null,
-    sourceArchiveBytes: Buffer.byteLength(evidenceText ?? '', 'utf8') + Buffer.byteLength(rawResponse ?? '', 'utf8'),
+    evidenceSha256: evidenceText === null ? null : createHash('sha256').update(evidenceText).digest('hex'),
+    sourceBytes: Buffer.byteLength(evidenceText ?? '', 'utf8') + Buffer.byteLength(rawResponse ?? '', 'utf8'),
   }
 }

@@ -67,10 +67,11 @@ beforeAll(async () => {
   ])
   // Preserve exact-cell inputs that can only come from historical data.
   alterSyntheticCapture(`
-    UPDATE business.platform_apply_projection
-    SET exact_title_raw=convert_to('X','UTF8'), exact_title_raw_sqlite_storage='text',
-        exact_status=convert_to(CASE WHEN observation_id=1 THEN ' pending ' ELSE 'pending' END,'UTF8')
-    WHERE observation_id IN (1,2)
+    UPDATE business.platform_business_observation
+    SET source_values=source_values || jsonb_build_object(
+      'titleRaw', 'X', 'status', CASE WHEN id=1 THEN ' pending ' ELSE 'pending' END
+    )
+    WHERE id IN (1,2)
   `)
   // Record the statements executed by the real PostgreSQL adapter.
   vi.doMock('../../../db/postgresql/client', async importOriginal => {
@@ -182,20 +183,18 @@ it('reads a new declaration after commit and coordinate-only reference replay', 
   expect(await mcp({ recordId }, true)).toEqual(detail)
 })
 it('serializes exact real, text, BLOB and NULL declaration cells', async () => {
-  const real = Buffer.alloc(8)
-  real.writeDoubleBE(2024.5)
   const columns = [
-    ['exact_year', 'declarationYear'], ['exact_status', 'status'], ['exact_title_raw', 'titleRaw'],
-    ['exact_declare_kind', 'declareKind'], ['exact_applied_at', 'appliedAt'],
+    ['year', 'declarationYear'], ['status', 'status'], ['titleRaw', 'titleRaw'],
+    ['declareKind', 'declareKind'], ['appliedAt', 'appliedAt'],
   ] as const
   const cases = [
-    ['real', real, 2024.5], ['text', Buffer.from('  unknown  '), '  unknown  '],
-    ['blob', Buffer.from('2024'), { type: 'Buffer', data: [50, 48, 50, 52] }], ['null', null, null],
+    [2024.5, 2024.5], ['  unknown  ', '  unknown  '],
+    [{ base64: 'MjAyNA==' }, { type: 'Buffer', data: [50, 48, 50, 52] }], [null, null],
   ] as const
-  for (const [column, field] of columns) {
-    for (const [storage, bytes, expected] of cases) {
-      const value = bytes === null ? 'NULL' : `decode('${bytes.toString('hex')}', 'hex')`
-      alterSyntheticCapture(`UPDATE business.platform_apply_projection SET ${column}=${value}, ${column}_sqlite_storage='${storage}' WHERE observation_id=1`)
+  for (const [key, field] of columns) {
+    for (const [value, expected] of cases) {
+      alterSyntheticCapture(`UPDATE business.platform_business_observation
+        SET source_values=source_values || $cell$${JSON.stringify({ [key]: value })}$cell$::jsonb WHERE id=1`)
       const body = (await get('declarations?view=isolated')).body
       expect(await mcp({ view: 'isolated' })).toEqual(body)
       expect(body.rows.find((row: { relationId: number }) => row.relationId === 1)[field]).toEqual(expected)
@@ -240,12 +239,8 @@ it('public target SQL never reads legacy entities or business JSON and rejects u
   expect(statements.length).toBeGreaterThan(0)
   expect(statements.map(row => row.sql).join('\n')).not.toMatch(/\b(?:platform_query|platform_relation|platform_archive_value|raw_fields|raw_response|canonical_raw_json)\b|\bjsonb?_extract\w*\s*\(/i)
   alterSyntheticCapture(`
-    UPDATE business.platform_apply_projection
-    SET sql_fact_title=NULL, sql_fact_title_rule=NULL, sql_fact_title_state='uncaptured',
-      sql_fact_title_reason='synthetic incomplete capture'
-    WHERE observation_id=1;
     UPDATE business.platform_business_observation
-    SET apply_sql_fact_title_state='uncaptured' WHERE id=1
+    SET source_values=NULL WHERE id=1
   `)
   expect((await get('declarations?platformKey=absent&page=999')).response.status).toBe(409)
   expect((await get('filter-options?source=declarations')).response.status).toBe(409)

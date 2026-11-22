@@ -84,10 +84,10 @@ beforeAll(async () => {
       SET enterprise_id=CASE WHEN observation_id=2 THEN 2 ELSE 1 END,
           match_basis='manual', name_raw=' Original ', uscc_raw=' U '
       WHERE observation_id IN (1,2,3,5);
-    UPDATE business.platform_recognized_projection p
-    SET exact_title_raw=decode(v.hex,'hex'), exact_title_raw_sqlite_storage=v.storage
-    FROM (VALUES (5,'33','text'),(7,NULL,'null'),(8,'30','text'),(9,'','text'),(10,'2020','text'),(11,'3200ff','blob'))
-      v(id,hex,storage) WHERE p.observation_id=v.id;
+    UPDATE business.platform_business_observation o
+    SET source_values=source_values || jsonb_build_object('titleRaw', v.value::jsonb)
+    FROM (VALUES (5,'"3"'),(7,'null'),(8,'"0"'),(9,'""'),(10,'"  "'),(11,'{"base64":"MgD/"}'))
+      v(id,value) WHERE o.id=v.id;
     COMMIT`])
   // Record the statements executed by the real PostgreSQL adapter.
   vi.doMock('../../../db/postgresql/client', async importOriginal => {
@@ -232,18 +232,14 @@ it('public SQL avoids legacy and archive business reads and capture rejection pr
   expect((await get('recognized-directory')).response.status).toBe(200)
   expect(statements.length).toBeGreaterThan(0)
   expect(statements.map(row => row.sql).join('\n')).not.toMatch(/\b(?:platform_query|platform_relation|platform_archive_value|raw_fields|raw_response|canonical_raw_json)\b|\bjsonb?_extract\w*\s*\(/i)
-  function setCaptureState(state: 'captured' | 'uncaptured') {
-    // Simulate incomplete migration in this isolated fixture without changing its installed triggers.
-    postgres!.psql(['-c', `BEGIN; SET LOCAL session_replication_role = replica;
-      UPDATE business.platform_recognized_projection SET exact_title_state='${state}' WHERE observation_id=5; COMMIT`])
-  }
-  setCaptureState('uncaptured')
+  // Simulate incomplete migration in this isolated fixture.
+  postgres!.psql(['-c', 'UPDATE business.platform_business_observation SET source_values=NULL WHERE id=5'])
   try {
     expect((await get('recognized-directory?platformKey=absent')).response.status).toBe(409)
     expect((await get('filter-options?source=recognized-directory')).response.status).toBe(409)
     expect((await get('recognized-directory/1')).response.status).toBe(409)
     await expect(mcp({ platformKey: 'absent' })).rejects.toMatchObject({ statusCode: 409, code: 'recognized_target_uncaptured' })
   } finally {
-    setCaptureState('captured')
+    postgres!.psql(['-c', `UPDATE business.platform_business_observation SET source_values='{"titleRaw":"3"}'::jsonb WHERE id=5`])
   }
 })

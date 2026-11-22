@@ -45,11 +45,11 @@ describe('business_list typed projection through public MCP import tools', () =>
     expect(plan.preflight.canonicalProjection[0]).toMatchObject({
       businessProjection: { declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省', ruleVersion: 'platform-business-v1' },
     })
-    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]!.n)).toBe(0)
+    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection`)).rows[0]!.n)).toBe(0)
 
     const saved = await commit.handler(input as never, {} as never) as { summary: { canonicalProjection: Record<string, number> } }
     expect(saved.summary.canonicalProjection).toMatchObject({ businessProjectionsCreated: 1, businessProjectionsReused: 0 })
-    expect((await db.execute(sql`SELECT declare_kind AS "declareKind", business_year::integer AS "businessYear", status, batch, award_batch_label AS "awardBatchLabel", province FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]).toEqual({
+    expect((await db.execute(sql`SELECT declare_kind AS "declareKind", business_year::integer AS "businessYear", status, batch, award_batch_label AS "awardBatchLabel", province FROM business.platform_business_projection`)).rows[0]).toEqual({
       declareKind: 'review', businessYear: 2023, status: '终审通过', batch: '2023-2', awardBatchLabel: '第三批', province: '浙江省',
     })
 
@@ -64,6 +64,6 @@ describe('business_list typed projection through public MCP import tools', () =>
     } as never, {} as never)
     expect(reference).toMatchObject({ status: 'committed', summary: { written: 0, skipped: 1 },
       items: [{ detail: { reuseExisting: true, rowsWritten: 0 } }] })
-    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection WHERE observation_id IS NULL`)).rows[0]!.n)).toBe(1)
+    expect(Number((await db.execute<{ n: string }>(sql`SELECT count(*) n FROM business.platform_business_projection`)).rows[0]!.n)).toBe(1)
   })
 })

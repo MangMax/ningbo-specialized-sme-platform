@@ -18,3 +18,4 @@ SELECT to_regclass('business.platform_archive_value') IS NOT NULL AS platform_on
 \ir steps/13-compact-platform-batch-results.sql
 \ir steps/14-retire-evidence-impact-tracker.sql
 \ir steps/15-retire-comparison-scope-proof.sql
+\ir steps/16-compact-platform-observations.sql

@@ -41,7 +41,7 @@ type ComparisonIdentity = {
 }
 
 type ObservationComparisonFact = Awaited<ReturnType<typeof readPostgresObservationComparisonFacts>> extends Map<number, infer Fact> ? Fact : never
-export type Relation = ComparisonIdentity & ObservationComparisonFact
+export type Relation = ComparisonIdentity & Omit<ObservationComparisonFact, 'sqlFactTitle'>
 
 type Event = Omit<typeof RecordEventTable.$inferSelect, 'formalValidity'>
 

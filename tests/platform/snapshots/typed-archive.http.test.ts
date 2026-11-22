@@ -1,3 +1,4 @@
+import { extendRosterImportOpenApi, type RosterImportOpenApiDocument } from '../../../layers/sme-roster/server/modules/sme-roster/roster-import-openapi'
 import { createServer } from 'node:http'
 
 import type { AddressInfo } from 'node:net'
@@ -37,7 +38,10 @@ function source(row: unknown, page = 1, total = 1) { return ` \n${JSON.stringify
 let server: ReturnType<typeof createServer>, base: string, client: Client
 const transports = new Set<StreamableHTTPServerTransport>()
 const tools: any[] = []
-const importMetadata: Record<string, any> = {}
+const importDiscovery: RosterImportOpenApiDocument = {
+  paths: { '/api/roster/import/preflight': { post: {} }, '/api/roster/import/commit': { post: {} } },
+}
+extendRosterImportOpenApi(importDiscovery)
 async function post(path: string, body: unknown) {
   return nativeFetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
 }
@@ -61,7 +65,7 @@ beforeAll(async () => {
   const declarationsRoute = (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default
   const router = createRouter().post('/api/platform/query', queryRoute).get('/api/platform/queries', readRoute).get('/api/platform/declarations', declarationsRoute)
   for (const action of ['preflight', 'commit'] as const) {
-    vi.stubGlobal('defineRouteMeta', (value: any) => { importMetadata[action] = value.openAPI })
+    vi.stubGlobal('defineRouteMeta', () => {})
     router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
   const { createPlatformBatchRoute } = await import('../../../layers/sme-roster/server/utils/platform-batch-route')
@@ -290,8 +294,8 @@ for (const transport of ['REST', 'MCP'] as const) {
 }
 
 it('public REST metadata and MCP discovery describe typed selection while preserving their actual auth boundaries', async () => {
-  for (const action of ['preflight', 'commit']) {
-    const payload = importMetadata[action].requestBody.content['application/json'].schema.properties.payload
+  for (const action of ['preflight', 'commit'] as const) {
+    const payload: any = importDiscovery.paths![`/api/roster/import/${action}`]!.post!.requestBody!.content['application/json'].schema.properties.payload
     expect(payload.description).toContain('reuseExisting:true')
     expect(payload.properties.platformQueries.items.properties.collectionEvidence.anyOf.find((branch: any) => branch.type === 'object').properties.rawData).toMatchObject({ required: ['version', 'rows', 'pages'], properties: { version: { const: 1 }, rows: { items: { additionalProperties: {} } } } })
   }
@@ -299,7 +303,7 @@ it('public REST metadata and MCP discovery describe typed selection while preser
   for (const name of ['preflight_roster_batch', 'save_roster_batch']) expect(discovered.tools.find(t => t.name === name)?.description).toContain('reuseExisting:true')
   const evidence = await collect({ id: 'auth', n: 1 }), body = request([recognizedResultToImport(evidence)])
   const before = await businessState()
-  for (const action of ['preflight', 'commit']) {
+  for (const action of ['preflight', 'commit'] as const) {
     const result = await nativeFetch(`${base}/api/roster/import/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     expect(result.status).toBe(401)
   }

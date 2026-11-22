@@ -131,10 +131,16 @@ it('structured readback and reference reuse preserve all three sources across re
     const freshQueries = structuredClone(queries)
     for (const q of freshQueries) { q.queryKey += ':failure'; q.queriedAt = '2026-11-02T00:00:00Z'; if (q.collectionEvidence) { q.collectionEvidence.queriedAt = q.queriedAt; q.collectionEvidence.completedAt = q.queriedAt } }
     await db.execute(sql`
-      CREATE FUNCTION business.reject_recognized_projection() RETURNS trigger LANGUAGE plpgsql AS
-      $$ BEGIN RAISE EXCEPTION '598 hard failure'; END $$;
-      CREATE TRIGGER fail_598 BEFORE INSERT ON business.platform_recognized_projection
-        FOR EACH ROW EXECUTE FUNCTION business.reject_recognized_projection();
+      CREATE FUNCTION business.reject_recognized_observation() RETURNS trigger LANGUAGE plpgsql AS
+      $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM business.platform_collection WHERE id=NEW.collection_id AND interface='recognized_list') THEN
+          RAISE EXCEPTION '598 hard failure';
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE TRIGGER fail_598 BEFORE INSERT ON business.platform_business_observation
+        FOR EACH ROW EXECUTE FUNCTION business.reject_recognized_observation();
     `)
     const failedRequest = request('598-failure', { platformQueries: freshQueries })
     const originalBytes = JSON.stringify(failedRequest)
@@ -147,7 +153,7 @@ it('structured readback and reference reuse preserve all three sources across re
     expect((await db.execute(sql`SELECT status FROM import_batch WHERE idempotency_key='598-failure'`)).rows).toEqual([{ status: 'failed' }])
     expect(readFileSync(originalFile, 'utf8')).toBe(originalBytes)
     writeFileSync(join(dir, 'failed-receipt.json'), JSON.stringify(failed, null, 2))
-    await db.execute(sql`DROP TRIGGER fail_598 ON business.platform_recognized_projection`)
+    await db.execute(sql`DROP TRIGGER fail_598 ON business.platform_business_observation`)
     expect((await post('commit', failedRequest)).status).toBe('committed')
     await check()
     const recovered = await snapshot()

@@ -64,7 +64,7 @@ ALTER TABLE platform_recognized_projection
   DROP COLUMN stored_status_kind,
   DROP COLUMN stored_year_kind;
 
-\ir ../../../../db/postgresql/platform-projection-comparison-constraints.sql
-\ir ../../../../db/postgresql/platform-recognized-title-trigger.sql
+\ir support/platform-projection-comparison-constraints.sql
+\ir support/platform-recognized-title-trigger.sql
 \endif
 COMMIT;

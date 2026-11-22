@@ -244,7 +244,8 @@ it('records raw-page evidence digest and recognized boolean source semantics', a
     SELECT evidence_sha256, source_coverage ? 'rawData' AS stores_raw_data FROM platform_collection
   `)).rows).toEqual([{ evidence_sha256: createHash('sha256').update(JSON.stringify(e)).digest('hex'), stores_raw_data: false }])
   expect((await db.execute(sql`
-    SELECT source_maintenance_year_absent::int FROM platform_recognized_projection WHERE observation_id IS NOT NULL
+    SELECT p.source_maintenance_year_absent::int
+    FROM platform_business_observation o JOIN platform_recognized_projection p ON p.version_id=o.version_id
   `)).rows).toEqual([{ source_maintenance_year_absent: 0 }])
   e.rawData.pages[0]!.body = body.replace('[null," ",2]', '[2," ",null]')
   expect(() => platformResultToImport(e)).toThrow('Raw observations and legacy projection must match original responses')

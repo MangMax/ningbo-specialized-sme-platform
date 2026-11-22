@@ -1,13 +1,14 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import {
-  platformApplyProjection, platformBusinessObservation, platformBusinessProjection,
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformBusinessRecordVersion,
   platformObservationAssignment, platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformFactInterface,PlatformObservationFact } from '../../lib/platform/observation-facts'
 import type { PlatformStoredRelation } from '../../lib/platform/read'
+import { platformObservationComparison, platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import type { RosterPlatformQueryRow } from '../../lib/roster/enterprise-roster'
 import type { PlatformDetailObservation } from '../../lib/roster/platform-business-detail'
@@ -56,40 +57,50 @@ export function groupBusinessDetails(groups: PlatformBusinessGroup[], typedField
   return groupPlatformBusinessDetails(observations)
 }
 
-async function loadPostgresFacts(db: Pg, table: Projection, ids: number[]) {
+async function loadPostgresFacts(db: Pg, source: PlatformFactInterface, table: Projection, ids: number[]) {
   if (!ids.length) return []
 
   const o = platformBusinessObservation
   const version = alias(table, 'version_projection')
+  const rawVersion = platformBusinessRecordVersion
   const first = platformObservationAssignment
-  return db.select({ relationId: o.publicId, source: table, version, originalName: first.nameRaw, originalUscc: first.usccRaw })
-    .from(o).innerJoin(table, eq(table.observationId, o.id))
+  const projection = {
+    versionId: version.versionId, ruleVersion: version.ruleVersion, titleRaw: version.titleRaw,
+    nameRaw: version.nameRaw, usccRaw: version.usccRaw,
+    ...('declareKind' in version ? { declareKind: version.declareKind, appliedAt: version.appliedAt, status: version.status } : {}),
+    ...('declarationYear' in version ? { declarationYear: version.declarationYear } : {}),
+    ...('businessYear' in version ? { businessYear: version.businessYear,
+      batch: version.batch, awardBatchLabel: version.awardBatchLabel, province: version.province } : {}),
+    ...('maintenanceYear' in version ? { validityDateRaw: version.validityDateRaw, maintenanceYear: version.maintenanceYear,
+      maintenanceBatch: version.maintenanceBatch, district: version.district, awardNote: version.awardNote } : {}),
+  }
+  const rows = await db.select({
+    relationId: o.publicId, sourceValues: o.sourceValues,
+    observationFields: o.businessFields, versionFields: rawVersion.businessFields, versionId: o.versionId,
+    version: projection, originalName: first.nameRaw, originalUscc: first.usccRaw,
+  }).from(o)
     .leftJoin(version, and(eq(version.versionId, o.versionId), eq(version.recordId, o.recordId)))
+    .leftJoin(rawVersion, eq(rawVersion.id, o.versionId))
     .innerJoin(first, and(eq(first.observationId, o.id), eq(first.revision, 1)))
     // A single array bind preserves global relation order without the parameter-count limit.
-    .where(sql`${o.publicId} = ANY(${sql.param(ids)}::bigint[])`).orderBy(o.publicId)
+    .where(and(sql`${o.publicId} = ANY(${sql.param(ids)}::bigint[])`, isNotNull(o.sourceValues))).orderBy(o.publicId)
+  return rows.map(row => ({
+    relationId: row.relationId, version: row.version, originalName: row.originalName, originalUscc: row.originalUscc,
+    source: platformObservationComparison(source, row.sourceValues, platformObservationVersionDefaults(source, row.version),
+      row.versionId === null ? row.observationFields : row.versionFields),
+  }))
 }
 
 export async function readPostgresPlatformDetailFacts(db: Pg, queries: RosterPlatformQueryRow[], relations: PlatformStoredRelation[]) {
   const byQuery = new Map(queries.map(query=>[query.id,query.interface]))
   const scoped = Map.groupBy(relations, row=>byQuery.get(row.queryId))
   const ids = (source: PlatformFactInterface) => (scoped.get(source) ?? []).map(row=>row.id)
-  const declarations = await loadPostgresFacts(db,platformApplyProjection,ids('apply_list'))
-  const processes = await loadPostgresFacts(db,platformBusinessProjection,ids('business_list'))
-  const recognized = await loadPostgresFacts(db,platformRecognizedProjection,ids('recognized_list'))
-  const value = (bytes: Buffer | null, kind: string) => kind === 'text' ? bytes?.toString('utf8') ?? null : bytes
+  const declarations = await loadPostgresFacts(db, 'apply_list', platformApplyProjection, ids('apply_list'))
+  const processes = await loadPostgresFacts(db, 'business_list', platformBusinessProjection, ids('business_list'))
+  const recognized = await loadPostgresFacts(db, 'recognized_list', platformRecognizedProjection, ids('recognized_list'))
   const facts = [
     ...declarations.map(row => projectDeclarationObservationFact(row as unknown as Parameters<typeof projectDeclarationObservationFact>[0])),
-    ...processes.map(row => {
-      const source = row.source as typeof platformBusinessProjection.$inferSelect
-      return projectBusinessProcessObservationFact({
-        ...row,
-        source: { ...source,
-          storedStatus: value(source.storedStatus, source.storedStatusSqliteStorage),
-          reconciledStatus: value(source.reconciledStatus, source.reconciledStatusSqliteStorage),
-        },
-      } as unknown as Parameters<typeof projectBusinessProcessObservationFact>[0])
-    }),
+    ...processes.map(row => projectBusinessProcessObservationFact(row as unknown as Parameters<typeof projectBusinessProcessObservationFact>[0])),
     ...recognized.map(row => projectRecognizedObservationFact(row as unknown as Parameters<typeof projectRecognizedObservationFact>[0]))
       .map(archiveFactFieldOrder),
   ]

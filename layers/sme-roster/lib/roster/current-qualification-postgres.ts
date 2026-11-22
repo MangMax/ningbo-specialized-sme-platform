@@ -1,4 +1,3 @@
-import { decodePostgresExactCell } from '../../../../db/postgresql/exact-cell'
 import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
@@ -9,7 +8,6 @@ import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-
 import {
   platformApplyProjection, platformBusinessObservation, platformBusinessProjection, platformCollection,
   platformCollectionPage, platformObservationAssignment,
-  platformRecognizedProjection,
 } from '../../../../db/postgresql/platform-tables'
 import { enterpriseFactRevision, titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -32,7 +30,7 @@ import { officialPublishedError, projectOfficialPublishedNames, type OfficialPub
 import type { PublishedPresentation } from './correspondence-view'
 import { importPostgresReceiptRedactor } from '../../server/utils/import-receipt-redaction'
 import type { ReceiptRuntimeContext } from '../../server/utils/receipt-runtime-context'
-import { CANDIDATE_SCOPE_RULE } from '../platform/candidate-scope-capture'
+import { platformObservationSourceValue, platformObservationVersionDefaults } from '../platform/postgres-observation-facts'
 import { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
 
 import { readPostgresQualificationDecisionHeads } from '../../server/utils/decision-lifecycle/postgres-reads'
@@ -113,7 +111,7 @@ const titleScopeBits = { innovative_sme: 1, specialized_sme: 2, little_giant: 4 
 
 async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], scope: 'references' | 'roster-detail' | 'hydration') {
   const hydrated = scope === 'hydration'
-  const readCells = scope !== 'references'
+  const readFacts = scope !== 'references'
   const byUscc = Map.groupBy(subjects, owner => normalizeUscc(owner.uscc_norm))
   byUscc.delete('')
   const codes = [...byUscc.keys()]
@@ -126,7 +124,6 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
 
 
   const apply = platformApplyProjection
-  const recognized = platformRecognizedProjection
   const business = platformBusinessProjection
   const uscc = hydrated ? assignment.usccRaw : first.usccRaw
   const latestRevision = db.select({ revision: max(head.revision) }).from(head).where(eq(head.observationId, observation.id))
@@ -134,14 +131,11 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
     id: observation.publicId, queryId: collection.publicId, interface: collection.interface, queriedAt: collection.queriedAt,
     collectionId: collection.id, sequenceNo: observation.sequenceNo, titleCode: collection.titleCode, rdjb: collection.rdjb,
     owner: assignment.enterpriseId, uscc,
-    state: observation.candidateScopeState, rule: observation.candidateScopeRule, mask: observation.candidateScopeMask,
-    ...(readCells ? {
-      applyStatus: apply.storedStatus, recognizedStatus: recognized.storedStatus,
-      applyYear: apply.storedYear, recognizedYear: recognized.storedYear,
-      applyBatch: apply.storedBatch, recognizedBatch: recognized.storedBatch,
-      processStatus: business.exactStatus, statusStorage: business.exactStatusSqliteStorage,
-      processYear: business.exactYear, yearStorage: business.exactYearSqliteStorage,
-      processBatch: business.exactBatch, batchStorage: business.exactBatchSqliteStorage,
+    mask: observation.candidateScopeMask,
+    ...(readFacts ? {
+      sourceValues: observation.sourceValues,
+      applyVersion: { id: apply.id, status: apply.status, declarationYear: apply.declarationYear },
+      businessVersion: { id: business.id, status: business.status, businessYear: business.businessYear, batch: business.batch },
     } : {}),
   }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
@@ -150,10 +144,9 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
     .where(or(inArray(assignment.enterpriseId, ids), codes.length
       ? and(isNull(assignment.enterpriseId), qualificationUsccCandidate(sql`${uscc}`, codes)) : undefined))
     .orderBy(observation.publicId)
-  const rows = await (readCells ? query
-    .leftJoin(business, eq(business.observationId, observation.id))
-    .leftJoin(apply, eq(apply.observationId, observation.id))
-    .leftJoin(recognized, eq(recognized.observationId, observation.id)) : query)
+  const rows = await (readFacts ? query
+    .leftJoin(business, eq(business.versionId, observation.versionId))
+    .leftJoin(apply, eq(apply.versionId, observation.versionId)) : query)
   const exact = rows.flatMap(row => {
     const owners = row.owner !== null ? [row.owner] : (byUscc.get(normalizeUscc(row.uscc)) ?? []).map(item => item.id)
     return owners.map(owner => ({ ...row, owner }))
@@ -169,15 +162,21 @@ async function readPlatformEffects(db: Reader, subjects: readonly Enterprise[], 
   return (owner: number, title: CurrentTitle): PlatformEffect[] => {
     const available = byOwner.get(owner) ?? []
     const selected = hydrated ? available.filter(row => {
-      if (row.state !== 'captured' || row.rule !== CANDIDATE_SCOPE_RULE || row.mask === null) throw new Error('Current hydration candidate capture unavailable')
+      if (row.mask === null) throw new Error('Current hydration candidate capture unavailable')
       return Boolean(row.mask & titleScopeBits[title])
     }) : platformEffectsForTitle(available, pages, title)
-    return selected.map(row => ({
-      id: row.id, queryId: row.queryId, interface: row.interface as PlatformInterface, queriedAt: row.queriedAt,
-      year: row.processYear == null ? row.applyYear ?? row.recognizedYear ?? null : decodePostgresExactCell(row.processYear, row.yearStorage ?? null) as number | null,
-      batch: row.processBatch == null ? row.applyBatch ?? row.recognizedBatch ?? null : decodePostgresExactCell(row.processBatch, row.batchStorage ?? null) as string | null,
-      status: row.processStatus == null ? row.applyStatus ?? row.recognizedStatus ?? null : decodePostgresExactCell(row.processStatus, row.statusStorage ?? null) as string | null,
-    }))
+    return selected.map(row => {
+      const source = row.interface as PlatformInterface
+      const version = source === 'apply_list' ? row.applyVersion : row.businessVersion
+      const defaults = platformObservationVersionDefaults(source, version ?? null)
+      const values = row.sourceValues ?? null
+      return {
+        id: row.id, queryId: row.queryId, interface: source, queriedAt: row.queriedAt,
+        year: platformObservationSourceValue(values, defaults, 'year') as number | null,
+        batch: platformObservationSourceValue(values, defaults, 'batch') as string | null,
+        status: platformObservationSourceValue(values, defaults, 'status') as string | null,
+      }
+    })
   }
 }
 

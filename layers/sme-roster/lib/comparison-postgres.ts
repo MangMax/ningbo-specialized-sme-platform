@@ -228,7 +228,7 @@ async function readPostgresComparisonEvidence<T extends Parameters<typeof projec
   for (const { relation, observationId } of originals) {
     const stored = archive.get(observationId)
     if (!stored) continue
-    const { rawFields: _raw, normalizationConflicts, ...archiveProcessFacts } = stored
+    const { rawFields: _raw, sqlFactTitle: _title, normalizationConflicts, ...archiveProcessFacts } = stored
     facts.set(relation.id, { normalizationConflicts, archiveProcessFacts })
   }
   return projectPlatformComparisonEvidence(rows, aliases, dispositions, queriedEnterpriseIds(subjects), queries, originals.map(row => row.relation)

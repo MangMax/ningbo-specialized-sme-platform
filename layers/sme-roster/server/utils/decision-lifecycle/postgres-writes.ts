@@ -8,9 +8,8 @@ import { differenceReason } from '../../../../../db/postgresql/roster-selection-
 import {
   platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformObservationAssignment,
 } from '../../../../../db/postgresql/platform-tables'
-import type { platformBusinessObservation as PlatformBusinessObservationTable, platformCollection as PlatformCollectionTable, platformObservationAssignment as PlatformObservationAssignmentTable } from '../../../../../db/postgresql/platform-tables'
+import type { platformObservationAssignment as PlatformObservationAssignmentTable } from '../../../../../db/postgresql/platform-tables'
 import type { EnterpriseFactRevision } from '../enterprise-fact-model'
-import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
@@ -18,10 +17,6 @@ import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, 
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Observation = Omit<typeof PlatformBusinessObservationTable.$inferSelect, 'witnessRdjbValue' | 'witnessPageValue'> & {
-  witnessRdjbValue: ReturnType<typeof decodePostgresExactCell>
-  witnessPageValue: ReturnType<typeof decodePostgresExactCell>
-}
 type Fact = EnterpriseFactRevision
 
 export function lockPostgresDecisionOwnership102(tx: Tx) {
@@ -29,16 +24,14 @@ export function lockPostgresDecisionOwnership102(tx: Tx) {
 }
 
 async function readObservationPin(tx: Tx, id: number) {
-  const p = alias(platformBusinessObservation, 'p')
-  const [stored] = await tx.select({
-    observation: sql<Observation>`${postgresRosterRow(platformBusinessObservation, 'p')}`,
-    rdjb: p.witnessRdjbValue, rdjbType: p.witnessRdjbValueSqliteStorage,
-    page: p.witnessPageValue, pageType: p.witnessPageValueSqliteStorage,
-  }).from(p).where(eq(p.id, id))
-  if (!stored) return undefined
-  stored.observation.witnessRdjbValue = decodePostgresExactCell(stored.rdjb, stored.rdjbType)
-  stored.observation.witnessPageValue = decodePostgresExactCell(stored.page, stored.pageType)
-  return stored.observation
+  const o = platformBusinessObservation
+  const [observation] = await tx.select({
+    id: o.id, collectionId: o.collectionId, sequenceNo: o.sequenceNo, pageId: o.pageId, pageRowNo: o.pageRowNo,
+    positionState: o.positionState, sourceRelationKey: o.sourceRelationKey, recordId: o.recordId, versionId: o.versionId,
+    identityState: o.identityState, contentState: o.contentState, projectionRuleVersion: o.projectionRuleVersion,
+    inputFingerprint: o.inputFingerprint,
+  }).from(o).where(eq(o.id, id))
+  return observation
 }
 
 async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins: boolean) {
@@ -61,9 +54,18 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const relation = d.evidenceRelationId ? (await readPostgresDifferenceObservations(tx, [d.evidenceRelationId])).get(d.evidenceRelationId) : null
   checkDecisionRelation102(enterprise, d, relation)
   const queryId = d.evidenceQueryId ?? relation?.queryId
-  const c = alias(platformCollection, 'c')
+  const c = platformCollection
   const targetQuery = queryId ? (await tx.select({
-    id: c.publicId, collection: sql<typeof PlatformCollectionTable.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
+    id: c.publicId,
+    collection: {
+      id: c.id, interface: c.interface, queryKey: c.queryKey, rdjb: c.rdjb, titleCode: c.titleCode,
+      queriedAt: c.queriedAt, createdAt: c.createdAt, lastCollectedAt: c.lastCollectedAt, status: c.status,
+      failureReason: c.failureReason, source: c.source, evidenceStatus: c.evidenceStatus, completedAt: c.completedAt,
+      completeness: c.completeness, fullRange: c.fullRange, fetchedCount: c.fetchedCount, declaredTotal: c.declaredTotal,
+      scopeMode: c.scopeMode, provenanceState: c.provenanceState, parseState: c.parseState, ruleVersion: c.ruleVersion,
+      errorCode: c.errorCode, errorMessage: c.errorMessage, maxRequests: c.maxRequests, maxRows: c.maxRows,
+      maxDurationMs: c.maxDurationMs, pageSize: c.pageSize,
+    },
   }).from(c).where(eq(c.publicId, queryId)))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')

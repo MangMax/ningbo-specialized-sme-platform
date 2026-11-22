@@ -2,9 +2,12 @@ import { and, between, desc, eq, getTableColumns, isNotNull, sql } from 'drizzle
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import {
-  platformBusinessObservation, platformCollection, platformCollectionPage,
+  platformApplyProjection, platformBusinessObservation, platformBusinessProjection,
+  platformCollection, platformCollectionPage, platformRecognizedProjection,
   platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
+import { platformObservationSourceValue, platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
+import { platformSourceFields } from '../../../../db/postgresql/platform-source-values'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 type Db = Pick<NodePgDatabase, 'select'>
 type Collection = Pick<typeof platformCollection.$inferSelect, typeof collectionFieldOrder[number]> & Pick<PlatformStoredQuery, 'interface' | 'status'>
@@ -39,13 +42,7 @@ const collectionFieldOrder = [
   'maxRows',
   'maxDurationMs',
   'pageSize',
-  'witnessState',
-  'witnessGate',
-  'witnessRule',
-  'witnessArchiveId',
-  'witnessSha256',
-  'witnessErrorName',
-  'witnessError',
+  'recognizedScope',
 ] as const satisfies readonly (keyof typeof pgCollectionColumns)[]
 const collectionColumns = Object.fromEntries(collectionFieldOrder
   .map(key => [key, pgCollectionColumns[key]])) as Pick<typeof pgCollectionColumns, typeof collectionFieldOrder[number]> & Pick<PlatformStoredQuery, 'interface' | 'status'>
@@ -96,26 +93,32 @@ export async function readPostgresRelationFingerprints(db: Db, scope: { queryId:
   const rows = await db.select({
     id: observation.publicId, queryId: platformCollection.publicId, observationId: observation.id,
     enterpriseId: latest.enterpriseId, matchBasis: latest.matchBasis, verificationStatus: latest.verificationStatus,
-    originalUscc: original.usccRaw, originalName: original.nameRaw, sourceRdjb: sourcePage.rdjb,
-    source: observation.relationFacts,
+    originalUscc: original.usccRaw, originalName: original.nameRaw, aliasNameRaw: original.aliasNameRaw, sourceRdjb: sourcePage.rdjb,
+    sequenceNo: observation.sequenceNo, relationKey: observation.sourceRelationKey, createdAt: observation.sourceCreatedAt,
+    source: platformCollection.interface, sourceValues: observation.sourceValues,
+    apply: platformApplyProjection, business: platformBusinessProjection, recognized: platformRecognizedProjection,
   }).from(platformCollection)
     .innerJoin(observation, eq(observation.collectionId, platformCollection.id))
     .crossJoinLateral(latest)
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .leftJoinLateral(sourcePage, isNotNull(sourcePage.sequenceStart))
+    .leftJoin(platformApplyProjection, eq(platformApplyProjection.versionId, observation.versionId))
+    .leftJoin(platformBusinessProjection, eq(platformBusinessProjection.versionId, observation.versionId))
+    .leftJoin(platformRecognizedProjection, eq(platformRecognizedProjection.versionId, observation.versionId))
     .where(where).orderBy(observation.publicId)
-  return rows.map(({ id, enterpriseId, matchBasis, verificationStatus, source, queryId, observationId, sourceRdjb, originalUscc, originalName }) => {
-    if (source === null) throw new Error('Missing captured correspondence source facts')
-    const { status } = source
-    const relation: PlatformStoredRelation = {
-      ...(source as Omit<PlatformStoredRelation, 'rawFields' | 'sourceText'>),
-      id, queryId, enterpriseId,
-      matchBasis: matchBasis as PlatformStoredRelation['matchBasis'],
-      verificationStatus: verificationStatus as PlatformStoredRelation['verificationStatus'],
-      rawFields: null, sourceText: null,
-      status: status !== null && typeof status === 'object' && 'base64' in status && typeof status.base64 === 'string'
-        ? Buffer.from(status.base64, 'base64') : status as PlatformStoredRelation['status'],
-    }
+  return rows.map(row => {
+    const { id, enterpriseId, matchBasis, verificationStatus, queryId, observationId, sourceRdjb, originalUscc, originalName } = row
+    const source = row.source as PlatformStoredQuery['interface']
+    const version = source === 'apply_list' ? row.apply : source === 'business_list' ? row.business : row.recognized
+    const defaults = platformObservationVersionDefaults(source, version)
+    const values = Object.fromEntries(platformSourceFields.map(key => [
+      key, platformObservationSourceValue(row.sourceValues, defaults, key),
+    ]))
+    const relation = {
+      ...values, id, queryId, enterpriseId, sequenceNo: row.sequenceNo, relationKey: row.relationKey,
+      nameRaw: originalName, usccRaw: originalUscc, aliasNameRaw: row.aliasNameRaw, createdAt: row.createdAt,
+      matchBasis, verificationStatus, rawFields: null, sourceText: null,
+    } as PlatformStoredRelation
     return { relation, observationId, sourceRdjb, originalUscc, originalName }
   })
 }

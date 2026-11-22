@@ -77,60 +77,10 @@ $$;
 CREATE TRIGGER platform_assignment_revision BEFORE INSERT ON platform_observation_assignment
   FOR EACH ROW EXECUTE FUNCTION guard_platform_assignment_revision();
 
-CREATE FUNCTION guard_platform_observation_source() RETURNS trigger
-LANGUAGE plpgsql SET search_path FROM CURRENT AS $$
-DECLARE source_interface text;
-BEGIN
-  SELECT interface INTO STRICT source_interface FROM platform_collection WHERE id = NEW.collection_id;
-  IF NEW.record_id IS NOT NULL AND NOT EXISTS (
-    SELECT 1 FROM platform_business_record WHERE id = NEW.record_id AND interface = source_interface
-  ) THEN
-    RAISE EXCEPTION 'Observation and record interface disagree' USING ERRCODE = 'integrity_constraint_violation';
-  END IF;
-
-  IF TG_OP = 'INSERT' THEN
-    IF ((source_interface = 'apply_list') IS DISTINCT FROM
-        (NEW.apply_exact_owner_id IS NOT NULL AND NEW.apply_exact_state = 'captured'
-          AND NEW.apply_sql_fact_title_state = 'captured'))
-      OR ((source_interface = 'business_list') IS DISTINCT FROM
-        (NEW.process_exact_owner_id IS NOT NULL AND NEW.process_exact_state = 'captured'
-          AND NEW.process_sql_fact_title_state = 'captured')) THEN
-      RAISE EXCEPTION 'Observation requires its source-specific stored projection'
-        USING ERRCODE = 'integrity_constraint_violation';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$$;
+\ir platform-observation-source.sql
 
 CREATE TRIGGER platform_observation_source
   BEFORE INSERT OR UPDATE OF record_id ON platform_business_observation
   FOR EACH ROW EXECUTE FUNCTION guard_platform_observation_source();
 
 \ir platform-collection-scope-integrity.sql
-
-CREATE TRIGGER platform_collection_witness_fixed BEFORE UPDATE ON platform_collection
-  FOR EACH ROW WHEN (OLD.witness_rule IS NOT NULL
-    AND (NEW.witness_gate, NEW.witness_rule, NEW.witness_archive_id, NEW.witness_sha256,
-      NEW.witness_error_name, NEW.witness_error, NEW.witness_state)
-      IS DISTINCT FROM
-        (OLD.witness_gate, OLD.witness_rule, OLD.witness_archive_id, OLD.witness_sha256,
-          OLD.witness_error_name, OLD.witness_error, OLD.witness_state))
-  EXECUTE FUNCTION reject_roster_history_mutation();
-
-CREATE TRIGGER platform_observation_witness_fixed BEFORE UPDATE ON platform_business_observation
-  FOR EACH ROW WHEN (OLD.witness_rule IS NOT NULL
-    AND (NEW.id, NEW.collection_id, NEW.sequence_no, NEW.witness_rule, NEW.witness_collection_id,
-      NEW.witness_sequence_no, NEW.witness_archive_id, NEW.witness_sha256, NEW.witness_ordinal,
-      NEW.witness_rdjb_kind, NEW.witness_rdjb_value, NEW.witness_rdjb_value_sqlite_storage, NEW.witness_rdjb_key,
-      NEW.witness_page_kind, NEW.witness_page_value, NEW.witness_page_value_sqlite_storage,
-      NEW.witness_error_name, NEW.witness_error, NEW.witness_state)
-      IS DISTINCT FROM
-        (OLD.id, OLD.collection_id, OLD.sequence_no, OLD.witness_rule, OLD.witness_collection_id,
-          OLD.witness_sequence_no, OLD.witness_archive_id, OLD.witness_sha256, OLD.witness_ordinal,
-          OLD.witness_rdjb_kind, OLD.witness_rdjb_value, OLD.witness_rdjb_value_sqlite_storage, OLD.witness_rdjb_key,
-          OLD.witness_page_kind, OLD.witness_page_value, OLD.witness_page_value_sqlite_storage,
-          OLD.witness_error_name, OLD.witness_error, OLD.witness_state))
-  EXECUTE FUNCTION reject_roster_history_mutation();
-
-\ir platform-recognized-title-trigger.sql

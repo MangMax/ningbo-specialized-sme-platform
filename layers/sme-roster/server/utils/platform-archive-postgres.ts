@@ -11,6 +11,7 @@ import {
   platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
+import { platformSourceCellValue, type PlatformSourceCell, type PlatformSourceValues } from '../../../../db/postgresql/platform-source-values'
 import { platformQueryTitleScope as titleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
@@ -32,15 +33,16 @@ const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } 
 
 const commonVersionFields = { titleRaw: 'title_raw', nameRaw: 'name_raw', usccRaw: 'uscc_raw', ruleVersion: 'rule_version' }
 const processFields = { declareKind: 'declare_kind', appliedAt: 'applied_at', status: 'status' }
-const storedProcessFields = { titleRaw: 'exact_title_raw', declareKind: 'exact_declare_kind', appliedAt: 'exact_applied_at', status: 'exact_status' }
+const storedProcessFields = { titleRaw: 'titleRaw', declareKind: 'declareKind', appliedAt: 'appliedAt', status: 'status' } as const
+type SourceValueKey = keyof PlatformSourceValues
 const catalogs = {
   declarations: {
     table: applyProjection,
     interface: 'apply_list',
     fields: { ...commonVersionFields, ...processFields, declarationYear: 'declaration_year' },
-    exact: { ...storedProcessFields, declarationYear: 'exact_year' },
+    exact: { ...storedProcessFields, declarationYear: 'year' },
     options: { titles: 'title_raw', declareKinds: 'declare_kind', years: 'declaration_year', statuses: 'status' },
-    exactOptions: { titles: 'exact_title_raw', declareKinds: 'exact_declare_kind', years: 'exact_year', statuses: 'exact_status' },
+    exactOptions: { titles: 'titleRaw', declareKinds: 'declareKind', years: 'year', statuses: 'status' },
     limits: { versions: DECLARATION_VERSION_LIMIT, observations: DECLARATION_OBSERVATION_LIMIT },
     idCode: 'invalid_declaration_id', notFoundCode: 'declaration_not_found', notFoundMessage: 'Declaration record not found',
     notIndexedCode: 'apply_target_not_indexed', notIndexedMessage: 'Declaration observation is not indexed',
@@ -49,9 +51,9 @@ const catalogs = {
     table: processProjection,
     interface: 'business_list',
     fields: { ...commonVersionFields, ...processFields, businessYear: 'business_year', batch: 'batch', awardBatchLabel: 'award_batch_label', province: 'province' },
-    exact: { ...storedProcessFields, businessYear: 'exact_year', batch: 'exact_batch', awardBatchLabel: 'exact_award_batch_label', province: 'exact_province' },
+    exact: { ...storedProcessFields, businessYear: 'year', batch: 'batch', awardBatchLabel: 'awardBatchLabel', province: 'province' },
     options: { titles: 'title_raw', declareKinds: 'declare_kind', years: 'business_year', statuses: 'status', batches: 'batch' },
-    exactOptions: { titles: 'exact_title_raw', declareKinds: 'exact_declare_kind', years: 'exact_year', statuses: 'exact_status', batches: 'exact_batch' },
+    exactOptions: { titles: 'titleRaw', declareKinds: 'declareKind', years: 'year', statuses: 'status', batches: 'batch' },
     limits: { versions: BUSINESS_PROCESS_VERSION_LIMIT, observations: BUSINESS_PROCESS_OBSERVATION_LIMIT },
     idCode: 'invalid_business_process_id', notFoundCode: 'business_process_not_found', notFoundMessage: 'Business process record not found',
     notIndexedCode: 'process_target_not_indexed', notIndexedMessage: 'Record observation is not indexed',
@@ -60,15 +62,16 @@ const catalogs = {
     table: recognizedProjection,
     interface: 'recognized_list',
     fields: { ...commonVersionFields, validityDateRaw: 'validity_date_raw', maintenanceYear: 'maintenance_year', maintenanceBatch: 'maintenance_batch', district: 'district', awardNote: 'award_note' },
-    exact: { titleRaw: 'exact_title_raw' },
+    exact: { titleRaw: 'titleRaw' },
     options: { titles: 'title_raw', batches: 'maintenance_batch', districts: 'district', validityDates: 'validity_date_raw' },
-    exactOptions: { titles: 'exact_title_raw' },
+    exactOptions: { titles: 'titleRaw' },
     limits: { versions: RECOGNIZED_DIRECTORY_VERSION_LIMIT, observations: RECOGNIZED_DIRECTORY_OBSERVATION_LIMIT },
     idCode: 'invalid_recognized_record_id', notFoundCode: 'recognized_record_not_found', notFoundMessage: 'Recognized directory record not found',
     notIndexedCode: 'recognized_target_not_indexed', notIndexedMessage: 'Record observation is not indexed',
   },
 } as const satisfies Record<Source, {
-  table: typeof applyProjection | typeof processProjection | typeof recognizedProjection; interface: string; fields: Fields; exact: Fields; options: Partial<Options>; exactOptions: Partial<Options>
+  table: typeof applyProjection | typeof processProjection | typeof recognizedProjection; interface: string; fields: Fields;
+  exact: Readonly<Record<string, SourceValueKey>>; options: Partial<Options>; exactOptions: Partial<Record<keyof Options, SourceValueKey>>
   limits: { versions: number; observations: number }
   idCode: string; notFoundCode: string; notFoundMessage: string; notIndexedCode: string; notIndexedMessage: string
 }>
@@ -103,77 +106,54 @@ function enterpriseKeyword(table: typeof enterprise, keyword: string | undefined
     like(table.usccNorm, `%${normalizeUscc(keyword)}%`))
 }
 
-// PostgreSQL materialization must retain these exact cells as bytea with the
-// staging tool's SQLite storage tags. Typed projection columns stay text/bigint.
-function exactEquals(cell: AnyPgColumn, storage: AnyPgColumn, value: string | number | undefined) {
+type ObservationTable = typeof observation | typeof archivedObservation
+
+function sourceCell(table: ObservationTable, key: SourceValueKey) {
+  return sql<PlatformSourceCell>`${table.sourceValues} -> ${key}::text`
+}
+
+// SQLite puts integer and real in the same order bucket, ahead of text and BLOB.
+function sourceStorageOrder(cell: SQL<PlatformSourceCell>) {
+  return sql<number | null>`CASE jsonb_typeof(${cell})
+    WHEN 'number' THEN 0 WHEN 'string' THEN 1
+    WHEN 'object' THEN CASE WHEN ${cell} ->> 'storage' = 'text' THEN 1 ELSE 2 END END`
+}
+
+function sourceBytes(cell: SQL<PlatformSourceCell>) {
+  return sql<Buffer | null>`CASE jsonb_typeof(${cell})
+    WHEN 'string' THEN convert_to(${cell} #>> '{}', 'UTF8')
+    WHEN 'object' THEN decode(${cell} ->> 'base64', 'base64') END`
+}
+
+function exactEquals(cell: SQL<PlatformSourceCell>, value: string | number | undefined) {
   if (value === undefined) return undefined
-  if (typeof value === 'string') return and(eq(storage, 'text'), eq(cell, Buffer.from(value)))
-  const integer = Buffer.alloc(8), real = Buffer.alloc(8)
-  integer.writeBigInt64BE(BigInt(value))
-  real.writeDoubleBE(value)
-  return or(and(eq(storage, 'integer'), eq(cell, integer)), and(eq(storage, 'real'), eq(cell, real)))
+  if (typeof value === 'string') return and(eq(sourceStorageOrder(cell), 1), eq(sourceBytes(cell), Buffer.from(value)))
+  return eq(cell, sql`to_jsonb(${value}::bigint)`)
 }
 
-interface ExactCell { storage: string | null; value: Buffer | null }
-
-function exactValue({ storage, value }: ExactCell) {
-  if (value === null) return null
-  switch (storage) {
-    case 'text': return value.toString('utf8')
-    case 'blob': return value
-    case 'integer': return Number(value.readBigInt64BE())
-    case 'real': return value.readDoubleBE()
-    default: throw new Error('Invalid archived SQLite storage class')
-  }
-}
-
-function decodeExactFields(row: Record<string, unknown>, fields: Fields) {
-  for (const key of Object.keys(fields)) {
-    row[key] = exactValue({ value: row[key] as ExactCell['value'], storage: row[key + 'Storage'] as ExactCell['storage'] })
-    delete row[key + 'Storage']
-  }
+function decodeExactFields(row: Record<string, unknown>, fields: Catalog['exact']) {
+  for (const key of Object.keys(fields)) row[key] = platformSourceCellValue(row[key] as PlatformSourceCell)
   return row
-}
-
-const typeOrder: Record<string, number> = { integer: 0, real: 0, text: 1, blob: 2 }
-function compareExactCells(a: ExactCell, b: ExactCell) {
-  const rank = typeOrder[a.storage!]! - typeOrder[b.storage!]!
-  if (rank) return rank
-  if (a.storage === 'text' || a.storage === 'blob') return Buffer.compare(a.value!, b.value!)
-  const left = a.storage === 'integer' ? a.value!.readBigInt64BE() : a.value!.readDoubleBE()
-  const right = b.storage === 'integer' ? b.value!.readBigInt64BE() : b.value!.readDoubleBE()
-  if (left < right) return -1
-  if (left > right) return 1
-  return 0
 }
 
 async function captureGate(tx: Reader, catalog: Catalog, recordId?: number) {
   const base = tx.select({ id: observation.id }).from(observation)
     .innerJoin(collection, eq(collection.id, observation.collectionId))
-  const notCaptured = (column: AnyPgColumn, expected = 'captured') => or(isNull(column), ne(column, expected))
   if (catalog.interface === 'apply_list') {
-    const [missing] = await base.leftJoin(applyProjection, eq(applyProjection.observationId, observation.id))
-      .where(and(
-        eq(collection.interface, 'apply_list'),
-        recordId === undefined ? undefined : eq(observation.recordId, recordId),
-        or(isNull(applyProjection.id), notCaptured(applyProjection.exactStoredState), notCaptured(applyProjection.sqlFactTitleState)),
-      )).limit(1)
+    const [missing] = await base.where(and(
+      eq(collection.interface, 'apply_list'),
+      recordId === undefined ? undefined : eq(observation.recordId, recordId),
+      isNull(observation.sourceValues),
+    )).limit(1)
     if (missing) failPlatformBusinessRequest(409, 'apply_stored_uncaptured', 'Declaration observation has uncaptured stored facts')
     return
   }
 
   const process = catalog.interface === 'business_list'
-  const projection = catalog.table
-  const capture = process ? or(
-    notCaptured(processProjection.exactStoredState), notCaptured(processProjection.sqlFactTitleState),
-    notCaptured(processProjection.exactStoredRule, 'process-stored-cells-v1'),
-    notCaptured(processProjection.sqlFactTitleRule, 'process-legacy-sql-fact-title-v1'),
-  ) : notCaptured(recognizedProjection.exactTitleState)
   const original = alias(assignment, 'original')
-  const [missing] = await base.leftJoin(projection, eq(projection.observationId, observation.id))
-    .leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+  const [missing] = await base.leftJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .where(and(eq(collection.interface, catalog.interface),
-      or(isNull(projection.id), capture, isNull(original.observationId))))
+      or(isNull(observation.sourceValues), isNull(original.observationId))))
     .limit(1)
   if (missing) {
     if (process) failPlatformBusinessRequest(409, 'process_target_uncaptured', 'Process observation has uncaptured original facts or assignment')
@@ -371,6 +351,10 @@ async function listRecords(tx: Reader, catalog: Catalog, filter: ArchiveFilter) 
   }
 }
 
+function isolatedObservation(obs: ObservationTable) {
+  return or(ne(obs.identityState, 'resolved'), ne(obs.contentState, 'verified'), isNull(obs.versionId))
+}
+
 async function listIsolated(tx: Reader, catalog: Catalog, filter: ArchiveFilter) {
   const { page, pageSize, offset } = platformBusinessPage(filter)
   const base = { view: 'isolated' as const, page, pageSize }
@@ -382,33 +366,28 @@ async function listIsolated(tx: Reader, catalog: Catalog, filter: ArchiveFilter)
   const col = archivedCollection
   const owner = alias(assignment, 'owner')
   const original = alias(assignment, 'original')
-  const { table } = catalog
-  const columnNamed = (name: string) => namedColumn(table, name)
-  const exact = (name: string, value: string | number | undefined) =>
-    exactEquals(columnNamed(name), columnNamed(name + '_sqlite_storage'), value)
+  const exact = (key: SourceValueKey, value: string | number | undefined) => exactEquals(sourceCell(obs, key), value)
   const current = tx.select({ enterpriseId: owner.enterpriseId }).from(owner)
     .where(eq(owner.observationId, obs.id)).orderBy(desc(owner.revision)).limit(1).as('a')
   const keyword = enterpriseKeyword(enterprise, filter.q)
   const criteria = and(
     eq(col.interface, catalog.interface),
-    or(ne(obs.identityState, 'resolved'), ne(obs.contentState, 'verified'), isNull(obs.versionId)),
+    isolatedObservation(obs),
     filter.enterpriseId === undefined ? undefined : eq(current.enterpriseId, filter.enterpriseId),
     keyword,
     filter.platformKey === undefined ? undefined : filter.platformKey.includes('\0') ? ne(obs.id, obs.id) : eq(obs.sourceRelationKey, filter.platformKey),
-    exact('exact_title_raw', filter.titleRaw),
-    recognized ? undefined : exact('exact_declare_kind', normalizeDeclareKind(filter.declareKind) ?? undefined),
-    recognized ? undefined : exact('exact_year', filter.year),
-    recognized ? undefined : exact('exact_status', filter.status),
-    catalog.interface === 'business_list' ? exact('exact_batch', filter.batch) : undefined,
+    exact('titleRaw', filter.titleRaw),
+    recognized ? undefined : exact('declareKind', normalizeDeclareKind(filter.declareKind) ?? undefined),
+    recognized ? undefined : exact('year', filter.year),
+    recognized ? undefined : exact('status', filter.status),
+    catalog.interface === 'business_list' ? exact('batch', filter.batch) : undefined,
     filter.rdjb ? scopeMatch(tx, filter.rdjb) : undefined,
   )
   const query = <T extends PgSelect>(selection: T) => selection
-    .innerJoin(col, eq(col.id, obs.collectionId)).innerJoin(table, eq(table.observationId, obs.id))
+    .innerJoin(col, eq(col.id, obs.collectionId))
     .leftJoinLateral(current, eq(obs.id, obs.id)).leftJoin(enterprise, eq(enterprise.id, current.enterpriseId))
   const [result] = await query(tx.select({ total: count() }).from(obs).$dynamic()).where(criteria)
-  const cells = Object.fromEntries(Object.entries(catalog.exact).flatMap(([key, name]) => [
-    [key, columnNamed(name)], [key + 'Storage', columnNamed(name + '_sqlite_storage')],
-  ]))
+  const cells = Object.fromEntries(Object.entries(catalog.exact).map(([key, name]) => [key, sourceCell(obs, name)]))
   const observations = await query(tx.select({
     relationId: obs.publicId, queryId: col.publicId, queriedAt: col.queriedAt, queryKey: col.queryKey, queryStatus: col.status,
     sequenceNo: obs.sequenceNo, identityState: obs.identityState, contentState: obs.contentState,
@@ -438,52 +417,51 @@ export function listPostgresPlatformArchive(db: NodePgDatabase, source: Source, 
   }, snapshot)
 }
 
+async function readIsolatedOptions(tx: Reader, catalog: Catalog, option: string, name: SourceValueKey) {
+  const cell = sourceCell(observation, name)
+  const storage = sourceStorageOrder(cell).as('storage')
+  const bytes = sourceBytes(cell).as('bytes')
+  // PostgreSQL numeric retains order and equality before node-postgres turns the result into a JS number.
+  const numeric = sql<string | null>`CASE WHEN jsonb_typeof(${cell}) = 'number'
+    THEN (${cell} #>> '{}')::numeric END`.as('numeric_value')
+  const years = option === 'years'
+  // SQLite trim() casts BLOBs to text when checking for an empty option.
+  const nonempty = or(eq(storage.sql, 0), sql`encode(${bytes.sql}, 'hex') !~ '^(20)*$'`)
+  const cells = await tx.selectDistinct({ storage, bytes, numeric }).from(observation)
+    .innerJoin(collection, eq(observation.collectionId, collection.id))
+    .where(and(eq(collection.interface, catalog.interface), isolatedObservation(observation), years ? eq(storage.sql, 0) : nonempty))
+    .orderBy(asc(storage), asc(bytes), years ? desc(numeric) : asc(numeric))
+  if (years) return [...new Set(cells.map(cell => Number(cell.numeric)).filter(value => Number.isSafeInteger(value) && value > 0))]
+  return cells.map(({ storage, bytes, numeric }) => {
+    if (storage === 0) return Number(numeric)
+    if (storage === 1) return bytes!.toString('utf8')
+    return bytes
+  })
+}
+
 export function readPostgresPlatformArchiveOptions(db: NodePgDatabase, { source, view }: PlatformFilterOptionsQuery) {
   const catalog = catalogs[source]
   return db.transaction(async tx => {
     await captureGate(tx, catalog)
     const result = { titles: [], declareKinds: [], years: [], statuses: [], batches: [], districts: [], validityDates: [] } as Record<keyof Options, unknown[]>
-    const exact = view === 'isolated'
+    if (view === 'isolated') {
+      for (const [option, name] of Object.entries(catalog.exactOptions)) {
+        result[option as keyof Options] = await readIsolatedOptions(tx, catalog, option, name)
+      }
+      return result
+    }
+
     const projection = catalog.table
-    const selectOptions = <T extends PgSelect>(selection: T, predicate: SQL) => exact
-        ? selection.innerJoin(observation, eq(projection.observationId, observation.id))
-          .innerJoin(collection, eq(observation.collectionId, collection.id))
-          .where(and(eq(collection.interface, catalog.interface), or(
-            ne(observation.identityState, 'resolved'), ne(observation.contentState, 'verified'), isNull(observation.versionId),
-          ), predicate))
-        : selection.innerJoin(recordVersion, eq(projection.versionId, recordVersion.id))
-          .innerJoin(businessRecord, eq(recordVersion.recordId, businessRecord.id))
-          .where(and(eq(businessRecord.interface, catalog.interface), predicate))
-    const columnNamed = (name: string) => namedColumn(projection, name)
-    for (const [key, name] of Object.entries(exact ? catalog.exactOptions : catalog.options)) {
-      const option = key as keyof Options
-      const column = columnNamed(name)
-      if (!exact) {
-        // Drizzle 0.45 cannot express COLLATE or btrim.
-        const value = option === 'years' ? sql<number>`${column}`.mapWith(Number) : sql<string>`${column} COLLATE "C"`
-        const where = option === 'years' ? between(column, 1, Number.MAX_SAFE_INTEGER) : sql`btrim(${column}) <> ''`
-        result[option] = (await selectOptions(tx.selectDistinct({ value }).from(projection).$dynamic(), where).orderBy(option === 'years' ? desc(value) : asc(value)))
-          .map(row => row.value)
-        continue
-      }
-      const storage = columnNamed(name + '_sqlite_storage')
-      // SQLite trim() casts BLOBs to text for the empty check. Drizzle 0.45 has no PostgreSQL encode / regex operator.
-      const numeric = inArray(storage, ['integer', 'real'])
-      const where = option === 'years' ? numeric : or(numeric, sql`encode(${column}, 'hex') !~ '^(20)*$'`)
-      const cells = await selectOptions(tx.selectDistinct({
-        value: column as AnyPgColumn<{ data: Buffer }>, storage: storage as AnyPgColumn<{ data: string }>,
-      }).from(projection).$dynamic(), and(isNotNull(column), where)!)
-      if (option === 'years') {
-        result.years = [...new Set(cells.map(exactValue)
-          .filter((value): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0))]
-          .sort((a, b) => b - a)
-      } else {
-        // SQLite DISTINCT treats equal INTEGER/REAL values as one candidate.
-        cells.sort(compareExactCells)
-        result[option] = cells
-          .filter((cell, i) => i === 0 || compareExactCells(cells[i - 1]!, cell) !== 0)
-          .map(exactValue)
-      }
+    for (const [option, name] of Object.entries(catalog.options)) {
+      const column = namedColumn(projection, name)
+      // Drizzle 0.45 cannot express COLLATE or btrim.
+      const value = option === 'years' ? sql<number>`${column}`.mapWith(Number) : sql<string>`${column} COLLATE "C"`
+      const where = option === 'years' ? between(column, 1, Number.MAX_SAFE_INTEGER) : sql`btrim(${column}) <> ''`
+      result[option as keyof Options] = (await tx.selectDistinct({ value }).from(projection)
+        .innerJoin(recordVersion, eq(projection.versionId, recordVersion.id))
+        .innerJoin(businessRecord, eq(recordVersion.recordId, businessRecord.id))
+        .where(and(eq(businessRecord.interface, catalog.interface), where))
+        .orderBy(option === 'years' ? desc(value) : asc(value))).map(row => row.value)
     }
     return result
   }, snapshot)

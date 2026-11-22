@@ -6,7 +6,9 @@ import { platformApplyProjection, platformBusinessProjection, platformRecognized
   platformBusinessObservation as observation, platformBusinessRecordVersion as version, platformCollection as collection,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence as correspondence } from '../../../../db/postgresql/qualification-tables'
+import { platformObservationVersionDefaults } from '../../lib/platform/postgres-observation-facts'
 import { refreshRelationFields, refreshSourceKeys } from '../../lib/platform/difference-hash-keys'
+import type { PlatformFactInterface } from '../../lib/platform/observation-facts'
 import { CURRENT_TITLES } from '../../lib/roster/current-titles'
 import type { PostgresQualificationTransaction } from '../../lib/roster/current-qualification-postgres'
 import { hashRefreshInputs, projectRefreshObservation, refreshProjectionColumns } from './enterprise-difference-refresh-contract'
@@ -21,14 +23,29 @@ const sourceKeys = new Set<string>(refreshSourceKeys)
 async function readNativePlatformRefreshFacts(tx: Tx, selected: ReturnType<typeof sql>) {
   const current = tx.select({ matchBasis: assignment.matchBasis, verificationStatus: assignment.verificationStatus })
     .from(assignment).where(eq(assignment.observationId, observation.id)).orderBy(desc(assignment.revision)).limit(1).as('current_assignment')
+  const original = alias(assignment, 'original_assignment')
   const sources = await tx.select({
     collectionId: observation.collectionId, matchBasis: current.matchBasis, verificationStatus: current.verificationStatus,
-    relation: observation.relationFacts, versionId: observation.versionId,
+    source: collection.interface, sourceValues: observation.sourceValues, versionId: observation.versionId,
+    relationKey: observation.sourceRelationKey, nameRaw: original.nameRaw, usccRaw: original.usccRaw, aliasNameRaw: original.aliasNameRaw,
+    apply: platformApplyProjection, business: platformBusinessProjection, recognized: platformRecognizedProjection,
     observationFields: observation.businessFields, versionFields: version.businessFields,
-  }).from(observation).leftJoin(version, eq(version.id, observation.versionId)).innerJoinLateral(current, sql`true`)
-    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.relationFacts)))
+  }).from(observation)
+    .innerJoin(collection, eq(collection.id, observation.collectionId))
+    .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
+    .leftJoin(version, eq(version.id, observation.versionId))
+    .leftJoin(platformApplyProjection, eq(platformApplyProjection.versionId, observation.versionId))
+    .leftJoin(platformBusinessProjection, eq(platformBusinessProjection.versionId, observation.versionId))
+    .leftJoin(platformRecognizedProjection, eq(platformRecognizedProjection.versionId, observation.versionId))
+    .innerJoinLateral(current, sql`true`)
+    .where(and(sql`${observation.collectionId} = any(${selected})`, isNotNull(observation.sourceValues)))
   const relations = Map.groupBy(sources.map(row => {
-    const stored = row.relation!
+    const source = row.source as PlatformFactInterface
+    const typed = source === 'apply_list' ? row.apply : source === 'business_list' ? row.business : row.recognized
+    const stored: Record<string, unknown> = {
+      ...platformObservationVersionDefaults(source, typed), ...row.sourceValues,
+      relationKey: row.relationKey, nameRaw: row.nameRaw, usccRaw: row.usccRaw, aliasNameRaw: row.aliasNameRaw,
+    }
     const fields = Object.fromEntries(refreshRelationFields.map(name => [
       name, stored[name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())] ?? null,
     ]))

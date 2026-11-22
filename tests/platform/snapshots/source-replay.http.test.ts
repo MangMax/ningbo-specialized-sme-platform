@@ -19,6 +19,7 @@ import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-job
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
+import { extendRosterImportOpenApi, type RosterImportOpenApiDocument } from '../../../layers/sme-roster/server/modules/sme-roster/roster-import-openapi'
 import type { RosterImportRequest, RosterImportPlatformQuery, RosterImportExportSnapshot } from '../../../layers/sme-roster/lib/roster-import-client'
 
 const realTransport = process.env.ISSUE300_REAL_TRANSPORT === '1'
@@ -30,7 +31,10 @@ let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let db: ReturnType<typeof usePostgresDirectoryDb>
 const token = 'synthetic-issue300'
 let server: ReturnType<typeof createServer>, base: string, serial = 0
-const metadata: Record<string, any> = {}
+const importDiscovery: RosterImportOpenApiDocument = {
+  paths: { '/api/roster/import/preflight': { post: {} }, '/api/roster/import/commit': { post: {} } },
+}
+extendRosterImportOpenApi(importDiscovery)
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
@@ -39,7 +43,7 @@ beforeAll(async () => {
   for (const [key, value] of Object.entries({ defineEventHandler, readBody, setHeader, setResponseStatus, createError, getQuery, useRuntimeConfig: () => ({ filesDir: dir, apiToken: token }) })) vi.stubGlobal(key, value)
   const router = createRouter()
   for (const action of ['preflight', 'commit'] as const) {
-    vi.stubGlobal('defineRouteMeta', (value: any) => { metadata[action] = value.openAPI })
+    vi.stubGlobal('defineRouteMeta', () => {})
     router.post(`/api/roster/import/${action}`, (await import(`../../../layers/sme-roster/server/api/roster/import/${action}.post.ts`)).default)
   }
   vi.stubGlobal('defineRouteMeta', () => {})
@@ -277,7 +281,7 @@ it.each(['failed', 'partial'] as const)(`${protocol} preserves existing %s colle
 })
 
 it(`${protocol} discovery explains the existing reuseExisting field and immutable replay boundary`, async () => {
-  for (const action of ['preflight', 'commit']) expect(metadata[action].requestBody.content['application/json'].schema.properties.payload.properties.platformQueries.items.properties.reuseExisting).toMatchObject({ type: 'boolean', const: true })
+  for (const action of ['preflight', 'commit'] as const) expect(importDiscovery.paths![`/api/roster/import/${action}`]!.post!.requestBody!.content['application/json'].schema.properties.payload.properties.platformQueries).toMatchObject({ items: { properties: { reuseExisting: { type: 'boolean', const: true } } } })
   if (realTransport) for (const tool of (await mcpClient.listTools()).tools.filter(tool => ['preflight_roster_batch', 'save_roster_batch'].includes(tool.name))) expect(tool.description).toContain('reuseExisting:true')
 })
 it(`${protocol} preflight and commit reject adding a sequence through another same-payload query`, async () => {

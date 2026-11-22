@@ -3,7 +3,7 @@ import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 
 if (process.argv.length !== 2 || !process.env.PGDATABASE) {
-  throw new Error('Set PGDATABASE and run node upgrade/pg/2026-11-data-compaction/steps/16-refresh-platform-digests.mjs')
+  throw new Error('Set PGDATABASE and run node upgrade/pg/2026-11-data-compaction/steps/17-refresh-platform-digests.mjs')
 }
 
 const require = createRequire(import.meta.url)
