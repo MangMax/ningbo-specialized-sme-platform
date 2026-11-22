@@ -28,20 +28,27 @@ it('annual reconciliation keeps a same-content confirmation on the current captu
   expect((await readFixtureAudit(f.db, id!)).slice(0, audit.length)).toEqual(audit)
 })
 
-it('annual reconciliation keeps a same-content manual rejection on the current capture', async () => {
+it.each(['rejected', 'unlinked'] as const)('annual reconciliation keeps a same-content manual %s decision on the current capture', async status => {
   const f = await nativeCorrespondenceFixture(createDb())
   const old = await collectAnnualFixtureObservation(f, 1)
-  const { correspondenceIds: [id] } = await f.save(f.request('reject', [{ action: 'create', status: 'rejected', edge: f.edge(old) }]))
+  const { correspondenceIds: [id] } = await f.save(f.request('initial', [
+    { action: 'create', status: status === 'rejected' ? 'rejected' : 'confirmed', edge: f.edge(old) },
+  ]))
+  if (status === 'unlinked') {
+    await f.save(f.request('manual-unlink', [
+      { action: 'decide', correspondenceId: id!, expectedRevision: 2, status: 'unlinked' },
+    ]))
+  }
   const audit = await readFixtureAudit(f.db, id!)
   const current = await collectAnnualFixtureObservation(f, 2)
   expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
-    status: 'blocked', decisionRefs: [{ id, relationId: current, status: 'rejected' }], reasons: ['protected_decision'],
+    status: 'blocked', decisionRefs: [{ id, relationId: current, status }], reasons: ['protected_decision'],
   })
   const task = await stageAnnualFixtureTask(f.db, f.event.id, 'same-version')
   expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId)).outcomes).toMatchObject([
-    { status: 'protected', relationId: current, decisionRefs: [{ id, relationId: current, status: 'rejected' }] },
+    { status: 'protected', relationId: current, decisionRefs: [{ id, relationId: current, status }] },
   ])
-  expect(await listPostgresCorrespondences(f.db, {})).toMatchObject([{ id, relationId: current, status: 'rejected' }])
+  expect(await listPostgresCorrespondences(f.db, {})).toMatchObject([{ id, relationId: current, status }])
   expect((await readFixtureAudit(f.db, id!)).slice(0, audit.length)).toEqual(audit)
 })
 
