@@ -2,6 +2,7 @@ import { expect, it } from 'vitest'
 import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import * as schema from '../fixtures/postgres-tables'
 import { readPostgresCurrentCandidateIds } from '../../../layers/sme-roster/lib/roster/current-candidates-postgres'
+import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 import { captureReturnedTitles } from './fixtures/returned-titles'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
@@ -37,6 +38,10 @@ it('keeps local records correspondence and differences with only higher-to-lower
   expect(await candidates('little_giant')).toEqual(giants.map(e => e.id))
   expect(await candidates('specialized_sme')).toEqual([...giants, specialized].map(e => e.id))
   expect(await candidates('innovative_sme')).toEqual([...giants, specialized, innovative].map(e => e.id))
+
+  const result = await listPostgresCurrentQualified(db, { titleCode: 'little_giant', status: 'unrecognized', q: giants[1]!.name })
+  expect(result.total).toBe(1)
+  expect(result.rows.map(row => row.enterpriseId)).toEqual([giants[1]!.id])
 })
 it('uses returned giant data even when the request selected only innovative', async () => {
   const { db, enterprise, candidates } = fixture(), owner = await enterprise('返回巨人')

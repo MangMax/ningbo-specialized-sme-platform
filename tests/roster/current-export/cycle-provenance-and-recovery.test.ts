@@ -1,13 +1,36 @@
 
 import { nativeWorkbookFixture } from './fixtures/native-workbook'
 import { afterAll, beforeEach, expect, it } from 'vitest'
-import { year as y } from './fixtures/specialized-export'
+import { eq } from 'drizzle-orm'
+import { recordEvent } from '../../../db/postgresql/ledger-tables'
+import { recordCorrespondence } from '../../../db/postgresql/qualification-tables'
+import { rows, year as y } from './fixtures/specialized-export'
 import { qualificationCycleCases } from "../current-qualification/fixtures/cycle-cases"
 import { currentQualificationWorkbookAssertions, type EffectiveQualificationCase } from './assertions/qualification'
 
 const f = nativeWorkbookFixture()
 beforeEach(async () => { await f.resetBusiness() }, 90000)
 afterAll(f.close)
+
+it('exports the same enterprise cells when a retained correspondence needs revalidation', async () => {
+  const { enterprise, record } = await f.candidate('旧对应来源待重新核实', [{ eventType: 'award', year: y, batchSeq: 1 }])
+  const [award] = await f.db.select({ id: recordEvent.id }).from(recordEvent).where(eq(recordEvent.recordId, record.id))
+  const before = await f.workbook('before-stale-correspondence')
+  expect(rows(before.wb, '有效企业').map(row => row[2])).toEqual([enterprise.name])
+
+  // A retained confirmation whose saved event provenance is no longer available.
+  await f.db.insert(recordCorrespondence).values({
+    edgeKey: 'stale-workbook-correspondence', type: 'event_recognized', role: 'recognized_corrob',
+    enterpriseId: enterprise.id, eventId: award!.id, titleCode: 'specialized_sme', status: 'confirmed',
+    revision: 1, targetIdentity: '{}', provenance: '{}', sourceFingerprint: 'synthetic-retained-fingerprint',
+    ruleId: 'manual', ruleVersion: '1', createdAt: '2026-01-01',
+  })
+
+  const after = await f.workbook('after-stale-correspondence')
+  expect(after.wb.worksheets.slice(0, 5).map(sheet => rows(after.wb, sheet.name)))
+    .toEqual(before.wb.worksheets.slice(0, 5).map(sheet => rows(before.wb, sheet.name)))
+})
+
 // Literal #475/#478 native workbook rowsets; the shared fixtures retain historical reader oracles.
 const expectedRows = {
 '有效企业': ['A-batches-passed', 'A-batches-fresh', 'A-batches-no-review', 'A-batches-unknown', 'A-batches-undated', 'B-later-reaward-resolves-tie', 'B-only-same-year-reaward', 'B-later-passed-does-not-resolve-tie', 'C-unknown-before-award', 'C-unknown-and-failed-before-award', 'C-batch-gap-before-award', 'C-unknown-before-only-passed', 'C-unknown-same-year-award', 'C-unknown-after-award', 'C-undated-unknown-with-award', 'C-old-pass-gap-before-current-pass', 'C-failed-batch-gap-before-only-passed', 'D-old-unproven-award-before-renewal', 'D-old-proven-award-before-renewal', 'D-old-unproven-award-same-year-renewal', 'D-old-proven-award-same-year-renewal', 'D-old-unproven-award-after-renewal', 'D-old-proven-award-after-renewal', 'D-independent-renewal-only', 'D-unproven-current-award', 'D-unproven-current-review', 'D-unproven-unknown-origin-award', 'A-batches-mixed', 'D-old-unproven-review-after-renewal', 'R3-cross-cycle-same-conclusion', 'R3-independent-failure-then-passed'],

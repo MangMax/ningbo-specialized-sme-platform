@@ -146,7 +146,6 @@ export interface CurrentWorkbookFacts {
   migration: Array<{ basis: string; awardYear: number | null; validFrom: string; validUntil: string; publicationScope: string }>
   platform: Array<{ interface: string; queriedAt: string }>
   assessments: Array<{ explanationValidity: string; queryCoverage: string; noRecord: boolean }>
-  correspondenceNeedsRevalidation: boolean
 }
 export type CurrentPlatformReference = { id: number; queryId: number } & CurrentWorkbookFacts['platform'][number]
 export type CandidateEvent = LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number }
@@ -609,7 +608,6 @@ export function evaluateCandidate(
     ...(currentRules ? { dispositions:workbookDispositions } : {}),
     platform:[...new Map(platformRefs.map(({queryId,interface:interfaceName,queriedAt}) => [queryId,{interface:interfaceName,queriedAt}])).values()],
     assessments:workbookAssessments,
-    correspondenceNeedsRevalidation:correspondences.some(c => c.requiresRevalidation),
   } satisfies CurrentWorkbookFacts,enumerable:false})
   // One canonical assessment-group decision for both the scan projection and
   // full T2. Keep the legacy row.group unchanged for existing consumers.

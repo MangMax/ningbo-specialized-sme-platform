@@ -127,7 +127,6 @@ export function currentWorkbookValues(title: CurrentTitle, row: CurrentRow, seri
   if (displayNote) { notes.push(displayNote); addedText.push(displayNote) }
   for (const scope of facts.migration.map(fact => safeBusinessReason(fact.publicationScope)).filter((value): value is string => !!value)) notes.push('迁入资格断言；公布核对范围：' + scope)
   for (const assessment of facts.assessments) notes.push(`解释依据：${validityName[assessment.explanationValidity] ?? '未知'}；查询覆盖：${coverageName[assessment.queryCoverage] ?? '未知'}${assessment.noRecord ? '；已核对范围内无记录' : ''}`)
-  if (facts.correspondenceNeedsRevalidation) notes.push('公布与平台对应关系的来源需重新核实')
   const values: Record<CurrentColumnKey,string|null> = {
     serial:String(serial),name:row.name,uscc:row.uscc,district:row.district,
     title:title === 'little_giant' ? '专精特新“小巨人”' : title === 'specialized_sme' ? '专精特新中小企业' : '创新型中小企业',
