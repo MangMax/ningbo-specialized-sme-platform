@@ -1,6 +1,7 @@
 \set ON_ERROR_STOP on
 BEGIN;
 SET LOCAL search_path TO business, pg_catalog;
+SELECT pg_advisory_xact_lock(21785,0);
 SELECT pg_advisory_xact_lock(42458,114);
 
 -- Check that every receipt can be projected without changing a decision or
@@ -53,4 +54,31 @@ SELECT
 FROM evidence_review_receipt_114 r
 WHERE r.kind <> 'process'
 ORDER BY r.id;
+\ir ../../../db/postgresql/platform-capture-retention.sql
+DROP FUNCTION IF EXISTS prune_platform_captures(bigint[], boolean, bigint[]);
+
+LOCK TABLE job IN SHARE ROW EXCLUSIVE MODE;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM job j
+    WHERE j.kind IN ('reconcile', 'event-archive-candidates', 'event-annual-correspondence', 'roster_task_history_cleanup')
+      AND (j.state IN ('queued', 'running') OR j.claim_token IS NOT NULL
+        OR EXISTS (SELECT 1 FROM lead_list_export WHERE job_id = j.id)
+        OR EXISTS (SELECT 1 FROM platform_batch_segment WHERE job_id = j.id))
+  ) THEN
+    RAISE EXCEPTION 'A task scheduled for removal is active or owns a retained result';
+  END IF;
+END
+$$;
+
+DELETE FROM job
+WHERE kind IN ('reconcile', 'event-archive-candidates', 'event-annual-correspondence', 'roster_task_history_cleanup');
+
+DROP TABLE record_correspondence_audit, record_correspondence, evidence_review_receipt_114, enterprise_difference_comparison;
+
+DELETE FROM import_receipt r USING import_batch b
+WHERE r.batch_id = b.id AND b.source_kind = 'correspondence_decision';
+DELETE FROM import_batch WHERE source_kind = 'correspondence_decision';
+
 COMMIT;

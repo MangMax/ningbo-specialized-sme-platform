@@ -61,8 +61,7 @@ it('preserves decision validity and existing review receipts after retiring impa
       INSERT INTO evidence_review_receipt_114 (idempotency_key, request_hash, kind, actor, basis, response, recorded_at)
       VALUES ('historical-process', repeat('0', 64), 'process', '{}', 'queue drain', '{}', '2026-01-01')
     `)
-    runtime.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
-    await pool.query('DROP TABLE evidence_review_receipt_114')
+    runtime.psql(['-f', 'upgrade/pg/2026-11-roster-cleanup/apply.sql'])
     await expect(savePostgresDecision102(db, { ...request, idempotencyKey: 'historical-process' })).rejects.toMatchObject({
       statusCode: 422, code: 'invalid_request',
     })
