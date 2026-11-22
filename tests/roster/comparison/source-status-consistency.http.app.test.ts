@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import pg from 'pg'
-import { initializeDb } from '../../../db/client'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { seedComparisonSourceStatus } from './fixtures/source-status'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
@@ -15,12 +15,7 @@ import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 // one dev compilation. Normal test runs still own and clean up their service.
 const external = process.env.ISSUE301_BASE_URL
 const dir = external ? process.env.ISSUE301_DIR! : mkdtempSync(join(tmpdir(), 'issue301-http-'))
-const dbPath = join(dir, 'fixture.db')
-const fixture = external ? JSON.parse(readFileSync(join(dir, 'fixture.json'), 'utf8')) as ReturnType<typeof seedComparisonSourceStatus> : (() => {
-  const db = initializeDb({ dbPath, create: true })
-  try { return seedComparisonSourceStatus(db) }
-  finally { db.$client.close() }
-})()
+let fixture: Awaited<ReturnType<typeof seedComparisonSourceStatus>>
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let base = external ?? ''
 let stop: (() => Promise<void>) | undefined
@@ -45,8 +40,13 @@ async function persisted() {
 }
 let before: Awaited<ReturnType<typeof persisted>> | undefined
 beforeAll(async () => {
-  if (external) { await waitForHttp(`${base}/_openapi.json`); before = await persisted(); return }
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  if (external) {
+    fixture = JSON.parse(readFileSync(join(dir, 'fixture.json'), 'utf8'))
+    await waitForHttp(`${base}/_openapi.json`); before = await persisted(); return
+  }
+  postgres = await postgresRuntimeFixture({ dir })
+  const pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  try { fixture = await seedComparisonSourceStatus(drizzle(pool)) } finally { await pool.end() }
   const cwd = resolve(import.meta.dirname, '../../..')
   let port = await reserveLoopbackPort()
   while ([3480, 3516].includes(port)) port = await reserveLoopbackPort()
@@ -84,12 +84,13 @@ async function mcp(name: string, args: unknown) {
   return JSON.parse(payload.result.content[0].text)
 }
 
-it.each(fixture.cases)('native full matches enterprise and HTTP/MCP archive facts without guessing: $label', async ({ query, relation, expected, label }) => {
+it.each(['apply-raw', 'business-raw', 'unknown', 'missing', 'recognized-is-not-process'])('native full matches enterprise and HTTP/MCP archive facts without guessing: %s', async label => {
+  const { query, relation, expected } = fixture.cases.find(item => item.label === label)!
   const actual = full.rows[0].platform.queries.find((q: { id: number }) => q.id === query.id).relations[0]
   const archive = await rest(`/api/platform/queries?queryId=${query.id}`)
   const remoteArchive = await mcp('list_platform_queries', { queryId: query.id })
   expect(remoteArchive).toEqual(archive)
-  const conflicts = label === 'status-conflict' ? [{ field: 'status', storedValue: '已退回', rawValue: '终审通过' }] : []
+  const conflicts: unknown[] = []
   const facts = { status: expected, normalizationConflicts: conflicts, declareKind: query.interface === 'recognized_list' ? null : 'apply', appliedAt: query.interface === 'recognized_list' ? null : '2025-01-02', year: query.interface === 'recognized_list' ? null : 2025 }
   for (const row of [actual, detail.platform.relations.find((r: { id: number }) => r.id === relation.id), archive.rows[0].relations[0]]) expect(row).toMatchObject({ id: relation.id, queryId: query.id, ...facts })
   expect(full.rows[0].platform.disposition).toMatchObject({ explanationId: fixture.decision.id, status: fixture.decision.status, evidenceRelationId: fixture.decision.evidenceRelationId })

@@ -1,11 +1,16 @@
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
 import { createHash } from 'node:crypto'
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
+import type { recordCorrespondence as RecordCorrespondenceTable, recordCorrespondenceAudit as RecordCorrespondenceAuditTable } from '../../../../db/postgresql/qualification-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { platformRowTitle } from '../../lib/platform/row-title'
 import { correspondenceIdentityProblem } from './record-correspondence-identity'
-import type { readCorrespondenceTargetSources } from './record-correspondence-target-sources'
+import type { ArchiveProcessFacts } from '../../lib/platform/observation-facts'
+import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { versionedOfficialEvent } from './roster-event-version-model'
 
 export type CorrespondenceEdge =
@@ -38,7 +43,11 @@ export interface CorrespondencePlan { batchId: number; batchStatus: 'preflight' 
 
 export interface CorrespondenceReceipt { batchId: number; planHash: string; impact: CorrespondenceImpact; correspondenceIds: number[] }
 
-export type StoredCorrespondence = Omit<typeof schema.recordCorrespondence.$inferSelect, 'observationId'> & { relationId: number | null }
+export type StoredCorrespondence = Omit<typeof RecordCorrespondenceTable.$inferSelect, 'observationId' | 'targetIdentity' | 'provenance'> & {
+  relationId: number | null
+  targetIdentity: Record<string, unknown>
+  provenance: Record<string, unknown>
+}
 
 export type CorrespondenceRead = StoredCorrespondence & { requiresRevalidation: boolean }
 
@@ -316,9 +325,9 @@ export function buildRecordCorrespondencePlan(lookup: DecisionLookup, request: C
   return { requestHash, targets, impact, planHash: hash({ requestHash, targets, impact }) }
 }
 
-type DecisionState = typeof schema.recordCorrespondence.$inferInsert
+type DecisionState = Omit<typeof RecordCorrespondenceTable.$inferInsert, 'targetIdentity' | 'provenance'> & Pick<StoredCorrespondence, 'targetIdentity' | 'provenance'>
 
-type DecisionAudit = Omit<typeof schema.recordCorrespondenceAudit.$inferInsert, 'correspondenceId'>
+type DecisionAudit = Omit<typeof RecordCorrespondenceAuditTable.$inferInsert, 'correspondenceId' | 'evidence'> & { evidence: Record<string, unknown> }
 
 type DecisionMutation = {
   audits: DecisionAudit[]
@@ -385,12 +394,16 @@ export function* recordCorrespondenceMutations(
   }
 }
 
-type EventRows = { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect; enterprise: typeof schema.enterprise.$inferSelect }
+type EventRows = { event: OfficialEventRow; record: RosterRecordRow; enterprise: typeof EnterpriseTable.$inferSelect }
 
 export type CorrespondenceRelationSource = {
   relation: PlatformStoredRelation
   query: PlatformStoredQuery
-  facts: ReturnType<typeof readCorrespondenceTargetSources>[number]['facts']
+  facts: ArchiveProcessFacts & Pick<PlatformStoredRelation, 'id' | 'queryId' | 'sequenceNo' | 'enterpriseId' | 'usccRaw' | 'verificationStatus'> & {
+    normalizationConflicts: PlatformNormalizationConflict[]
+    rawFields: { rdjb: string | null }
+    sourceRdjb: string | null
+  }
   observationId?: number
   provenance?: {
     relation: Omit<PlatformStoredRelation, 'rawFields' | 'sourceText'>
@@ -398,7 +411,7 @@ export type CorrespondenceRelationSource = {
   }
 }
 
-type ExportRows = { exportRow: typeof schema.platformExportRow.$inferSelect; exportBatch: typeof schema.platformExportBatch.$inferSelect }
+type ExportRows = { exportRow: typeof PlatformExportRowTable.$inferSelect; exportBatch: typeof PlatformExportBatchTable.$inferSelect }
 
 function recordedSourceMatches(observed: ReadSources, row: StoredCorrespondence, sourceFingerprint: string) {
   return observed.sourceValidity?.get(row.id) ?? (sourceFingerprint === row.sourceFingerprint)
@@ -409,9 +422,9 @@ export interface ReadSources {
   events: Map<number, EventRows>
   relations: Map<number, CorrespondenceRelationSource>
   exports: Map<number, ExportRows>
-  enterprises: Map<number, typeof schema.enterprise.$inferSelect>
+  enterprises: Map<number, typeof EnterpriseTable.$inferSelect>
   titles: Set<string>
-  evidence: Map<number, Array<{ evidence: typeof schema.recordEvidence.$inferSelect; storedFile: { id: number; relPath: string; bytes: number; sha256: string | null; removedAt: string | null } | null }>>
+  evidence: Map<number, Array<{ evidence: typeof RecordEvidenceTable.$inferSelect; storedFile: { id: number; relPath: string; bytes: number; sha256: string | null; removedAt: string | null } | null }>>
 }
 
 export type SourceReference = Pick<StoredCorrespondence, 'status' | 'eventId' | 'predecessorEventId' | 'relationId' | 'exportRowId' | 'enterpriseId' | 'titleCode'>

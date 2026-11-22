@@ -1,8 +1,9 @@
-import type { getRecordComparison, listRecordComparisonSources } from '../../server/utils/record-comparison'
+import type { readPostgresRecordComparison } from '../../server/utils/record-comparison-postgres'
+import type { readPostgresRecordComparisonSources } from '../../server/utils/record-comparison-catalog-postgres'
 import type { RecordComparisonInput } from './record-comparison'
 
-export type RecordComparisonResult = ReturnType<typeof getRecordComparison>
-export type ComparisonSourceCatalog = ReturnType<typeof listRecordComparisonSources>
+export type RecordComparisonResult = Awaited<ReturnType<typeof readPostgresRecordComparison>>
+export type ComparisonSourceCatalog = Awaited<ReturnType<typeof readPostgresRecordComparisonSources>>
 export type ComparisonSource = ComparisonSourceCatalog['rows'][number]
 export type ComparisonSourceKind = ComparisonSource['kind']
 export interface ComparisonSelection { queryIds: number[]; exportBatchIds: number[]; officialSourceDocumentIds: number[] }

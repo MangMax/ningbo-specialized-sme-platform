@@ -1,4 +1,4 @@
-import type { CorrespondenceAction, CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-api'
+import type { CorrespondenceAction, CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-runtime'
 import { handlePostgresCorrespondenceRequest } from './record-correspondence-runtime'
 
 /** Same application adapter as REST; MCP middleware and tool discovery guard write calls. */

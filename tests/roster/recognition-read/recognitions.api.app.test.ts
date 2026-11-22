@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { nativeAppAdapter } from '../../support/native-app'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import pg from 'pg'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
 
 /**
  * RL-08 —— 首次认定的**接口面**(契约 §7.5 + 增量)。
@@ -27,7 +27,7 @@ const FILE_2022 = 'jxj/announcement/2022/甬经信中小〔2022〕145号关于�
 let jiaId = 0
 let yiId = 0
 
-function seed(
+async function seed(
   name: string,
   uscc: string,
   district: string | null,
@@ -40,19 +40,17 @@ function seed(
   }[],
 ) {
   const db = app.db
-  const id = db
+  const id = (await db
     .insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, district })
-    .returning({ id: schema.enterprise.id })
-    .get().id
-  db.insert(schema.rosterLegacyMember).values({ enterpriseId: id }).run()
-  const recordId = db
+    .returning({ id: schema.enterprise.id }))[0]!.id
+  await db.insert(schema.rosterLegacyMember).values({ enterpriseId: id })
+  const recordId = (await db
     .insert(schema.record)
     .values({ enterpriseId: id, titleCode, source: 'jxj' })
-    .returning({ id: schema.record.id })
-    .get().id
+    .returning({ id: schema.record.id }))[0]!.id
   for (const e of events) {
-    const eventId = db
+    const eventId = (await db
       .insert(schema.recordEvent)
       .values({
         recordId,
@@ -60,10 +58,9 @@ function seed(
         year: e.year,
         decidedYear: e.decidedYear === undefined ? e.year : e.decidedYear,
       })
-      .returning({ id: schema.recordEvent.id })
-      .get().id
+      .returning({ id: schema.recordEvent.id }))[0]!.id
     for (const v of e.evidence ?? []) {
-      db.insert(schema.recordEvidence)
+      await db.insert(schema.recordEvidence)
         .values({
           recordEventId: eventId,
           sourceFile: v.sourceFile,
@@ -71,7 +68,6 @@ function seed(
           listNo: v.listNo ?? null,
           page: v.page ?? null,
         })
-        .run()
     }
   }
   return id
@@ -128,14 +124,15 @@ async function readWorkbook(query?: Record<string, string | string[]>) {
 }
 
 beforeAll(async () => {
+  await app.prepare()
   // 甲:2021 认定 → 2024 复核未通过 → 2025 再次获批。首次仍是 2021,出处指到 2022 年那份公布件。
-  jiaId = seed('宁波甲接口测试股份有限公司', '91330211AAAAAAA101X', '鄞州区', 'specialized_sme', [
+  jiaId = await seed('宁波甲接口测试股份有限公司', '91330211AAAAAAA101X', '鄞州区', 'specialized_sme', [
     { eventType: 'award', year: 2021, evidence: [{ sourceFile: FILE_2022, attachment: '附件一', listNo: 74, page: 74 }] },
     { eventType: 'review', year: 2021, decidedYear: 2024 },
     { eventType: 'award', year: 2025, evidence: [{ sourceFile: 'jxj/announcement/2025/1/2025一批.pdf' }] },
   ])
   // 乙:2021 认定但没有存下来的出处 ⇒ 待确认。
-  yiId = seed('宁波乙接口测试有限公司', '91330211AAAAAAA102X', null, 'specialized_sme', [
+  yiId = await seed('宁波乙接口测试有限公司', '91330211AAAAAAA102X', null, 'specialized_sme', [
     { eventType: 'award', year: 2021 },
   ])
 
@@ -291,11 +288,12 @@ describe('总表与导出继承首次认定筛选(筛选状态能进 URL、也�
 
   it('台账年份选项不读取无关平台原文，保留结论年份口径', async () => {
     await app.resetBusiness()
-    seed('年份选项合成企业', '91330211STATS00001X', null, 'specialized_sme', [
+    await app.prepare()
+    await seed('年份选项合成企业', '91330211STATS00001X', null, 'specialized_sme', [
       { eventType: 'award', year: 2022, decidedYear: 2024 },
       { eventType: 'review', year: 2022, decidedYear: 2025 },
     ])
-    submitNativePlatformQuery(app.db, { interface: 'business_list', queryKey: 'unrelated-ledger-years', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
+    await seedPostgresPlatformQuery(app.db, { interface: 'business_list', queryKey: 'unrelated-ledger-years', queriedAt: '2026-10-19', status: 'success', rawResponse: 'unrelated'.repeat(1000) })
     await app.start()
     expect(await readYears()).toEqual({ eventYears: [2022], firstRecognitionYears: [2024] })
   }, 90000)

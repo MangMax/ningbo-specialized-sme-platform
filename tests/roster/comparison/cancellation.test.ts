@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, get } from 'node:http'
@@ -9,9 +9,11 @@ import { createEvent, createError, defineEventHandler, getQuery, setHeader, type
 import { drizzle } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { initializeDb, schema } from '../../../db/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { recordEvent } from '../../../db/postgresql/ledger-tables'
+import { record, recordEvent } from '../../../db/postgresql/ledger-tables'
 import { writePostgresCollectionHeader } from '../../../layers/sme-roster/lib/platform/postgres-collection-write'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
@@ -25,25 +27,22 @@ let control: pg.Pool | undefined
 let documentId: number, recordId: number
 
 beforeAll(async () => {
-  const sourcePath = join(dir, 'seed.sqlite')
-  const seed = initializeDb({ create: true, dbPath: sourcePath })
-  try {
-    documentId = seed.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic.pdf' }).returning().get().id
-    const enterpriseId = seed.insert(schema.enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic' }).returning().get().id
-    recordId = seed.insert(schema.record).values({ enterpriseId, source: 'jxj', titleCode: 'specialized_sme' }).returning().get().id
-    seed.transaction(tx => {
-      for (let n = 0; n < initialCount; n++) {
-        tx.insert(schema.recordEvent).values({ recordId, eventType: 'award', year: 2024 }).run()
-        submitNativePlatformQuery(tx, { rawResponse: '{}', interface: 'business_list', queryKey: `synthetic:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z' })
-      }
-    })
-  } finally { seed.$client.close() }
-  postgres = await postgresRuntimeFixture({ dir, sourcePath })
+  postgres = await postgresRuntimeFixture({ dir })
   const url = new URL(postgres.url)
   url.searchParams.set('application_name', applicationName)
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url.href)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   control = new pg.Pool({ connectionString: postgres.url })
+  const seed = drizzle(control)
+  documentId = singlePostgresFixtureRow(await seed.insert(sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic.pdf' }).returning()).id
+  const enterpriseId = singlePostgresFixtureRow(await seed.insert(enterprise).values({ name: 'Synthetic', nameNorm: 'Synthetic' }).returning()).id
+  recordId = singlePostgresFixtureRow(await seed.insert(record).values({ enterpriseId, source: 'jxj', titleCode: 'specialized_sme' }).returning()).id
+  for (let n = 0; n < initialCount; n++) {
+    await seed.insert(recordEvent).values({ recordId, eventType: 'award', year: 2024 })
+    await seedPostgresPlatformQuery(seed, {
+      rawResponse: '{}', interface: 'business_list', queryKey: `synthetic:${n}`, rdjb: '2', queriedAt: '2026-10-18T00:00:00Z',
+    })
+  }
   for (const [name, value] of Object.entries({ createError, defineEventHandler, getQuery, setHeader })) vi.stubGlobal(name, value)
   comparison = (await import('../../../layers/sme-roster/server/api/roster/record-comparison.get')).default
   catalog = (await import('../../../layers/sme-roster/server/api/roster/record-comparison/sources.get')).default

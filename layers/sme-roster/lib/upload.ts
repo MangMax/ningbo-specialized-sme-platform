@@ -48,7 +48,7 @@ export function emptyBatchMeta(): BatchMeta {
 /**
  * 选择框用的取值,顺序即展示顺序 —— **中文一律取 `layers/sme-roster/lib/labels.ts` 的单一来源**,
  * 不在这里另写一份(那正是「经信局」在多处漂移的来路)。`layers/sme-roster/lib/labels.ts` 是纯数据、
- * 客户端可安全引用(它只依赖 `db/titles.ts` 的静态种子,不碰 better-sqlite3)。
+ * 客户端可安全引用(它只依赖 `db/titles.ts` 的静态种子)。
  */
 export const SOURCE_OPTIONS: ReadonlyArray<{ value: SourceCode; label: string }> =
   SOURCE_ORDER.map((value) => ({ value: value as SourceCode, label: SOURCES[value] ?? value }))

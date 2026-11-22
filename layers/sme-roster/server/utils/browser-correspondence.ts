@@ -1,7 +1,7 @@
 import { readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { checkBrowserReviewRequest } from './browser-review-102'
-import type { CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-api'
+import type { CorrespondenceApiInput, CorrespondenceApiOutput } from './record-correspondence-runtime'
 import { handlePostgresCorrespondenceRequest } from './record-correspondence-runtime'
 
 const requestSchema = z.strictObject({

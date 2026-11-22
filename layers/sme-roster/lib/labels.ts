@@ -94,7 +94,7 @@ export const PARSE_STATE_ORDER: string[] = ['unparsed', 'parsed', 'failed']
 // ---------------------------------------------------------------------------
 // 名录生命周期契约(RL-01)—— 新枚举的 code → 中文 映射
 //
-// 与 `db/schema.ts` 里各列的 `enum` 取值**逐字对应**,契约原文见
+// 与数据库约束定义的取值一致，契约原文见
 // `layers/sme-roster/lib/roster-import-client.ts`。页面/查询/导出一律从此处取文案。
 // ---------------------------------------------------------------------------
 
@@ -156,10 +156,7 @@ export const LIFECYCLE_FLAG_ORDER: string[] = [
 ]
 
 /**
- * 两个平台接口**取值**与联合类型(契约 §2.4)。**唯一出处** —— 适配层、写入侧、
- * 读接口、查询路由一律引用它,不要各自内联拼写 `'business_list' | 'apply_list'`
- * 或重列一遍数组:每多一处就多一个和 `db/schema.ts` 的 `platformQuery.interface`
- * 漂移的机会(该列枚举与本数组由 `tests/labels-enums.test.ts` 对齐钉死)。
+ * 平台接口取值与联合类型。适配层、写入侧、读接口和查询路由使用同一组值。
  */
 export const PLATFORM_INTERFACE_VALUES = ['business_list', 'apply_list', 'recognized_list'] as const
 export type PlatformInterface = (typeof PLATFORM_INTERFACE_VALUES)[number]

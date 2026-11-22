@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type * as s from '../../../../../db/schema'
+import type { platformCollection as PlatformCollectionTable } from '../../../../../db/postgresql/platform-tables'
+import type { EnterpriseFactRevision } from '../enterprise-fact-model'
+import type { differenceReason as DifferenceReasonTable } from '../../../../../db/postgresql/roster-selection-tables'
 import { differenceStatuses, differenceReasons, differenceMeasures } from '../../../../../db/difference-codes'
 import { normalizeUscc } from '../../../lib/domain'
 import { RDJB_TITLE_CODES } from '../../../lib/platform/recognized-evidence'
-import type { readDifferenceCollection, readDifferenceCollectionScope, readDifferenceObservation } from '../../../lib/platform/difference-sources'
-import type { readLatestDecisionHead102 as latestDecisionHead102 } from './head'
-import type { readEvidenceToken113 } from '../evidence-impact-113'
+import type { DifferenceObservation } from '../../../lib/platform/difference-sources'
+import type { DifferenceCollectionScopeRows } from '../../../lib/platform/difference-collection-scope'
+import type { readPostgresDecisionHead102 } from './postgres-reads'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -101,16 +103,22 @@ export function parse102<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data
 }
 
-export function publicVersion102(row: Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> & { evidenceQueryId: number | null; evidenceRelationId: number | null }, currentId: number | null) {
+export function publicVersion102(row: Omit<typeof DifferenceReasonTable.$inferSelect, 'actor' | 'currentQualification' | 'factReferences' | 'retiredEvidenceValidity' | 'retiredEvidenceReviewed'> & {
+  evidenceQueryId: number | null
+  evidenceRelationId: number | null
+  actor: DecisionCommand102['actor']
+  currentQualification: z.infer<typeof currentQualification102> | null
+  factReferences: NonNullable<DecisionCommand102['decision']>['factReferences'] | null
+}, currentId: number | null) {
   const { requestHash, idempotencyKey, ...version } = row
   return { ...version, origin: row.lifecycleAction ? 'lifecycle' : 'legacy_import', isCurrent: row.id === currentId }
 }
 
-export function decisionReceipt102(row: Pick<typeof s.differenceReason.$inferSelect, 'id' | 'lifecycleAction' | 'previousId' | 'recordedAt'>) {
+export function decisionReceipt102(row: Pick<typeof DifferenceReasonTable.$inferSelect, 'id' | 'lifecycleAction' | 'previousId' | 'recordedAt'>) {
   return { versionId: row.id, currentId: row.lifecycleAction === 'withdraw' ? null : row.id, previousId: row.previousId, action: row.lifecycleAction as string | null, recordedAt: row.recordedAt }
 }
 
-export function checkDecisionHead102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>, token?: ReturnType<typeof readEvidenceToken113>) {
+export function checkDecisionHead102(command: DecisionCommand102, previous: Awaited<ReturnType<typeof readPostgresDecisionHead102>>, token?: { latestRevisionId: number; projectionReady: boolean }) {
   if ((previous?.id ?? null) !== command.expectedCurrentId) throw new DecisionError102(409, 'stale_version', 'Expected current version no longer matches')
   if (command.reviewedEvidence) {
     if (!token?.projectionReady || token.latestRevisionId !== command.reviewedEvidence.latestRevisionId) throw new DecisionError102(409, 'stale_evidence', 'Relevant committed evidence changed or its projection is unfinished')
@@ -122,13 +130,13 @@ export const decisionContent102 = (command: DecisionCommand102) => command.decis
   { status: 'not_queried' as const, measureCode: 'none' as const, verificationStatus: 'pending' as const }
 
 export function checkDecisionFact102(enterpriseId: number, ref: NonNullable<NonNullable<DecisionCommand102['decision']>['factReferences']>[number],
-  fact: typeof s.enterpriseFactRevision.$inferSelect | undefined) {
+  fact: EnterpriseFactRevision | undefined) {
   if (ref.enterpriseId !== enterpriseId || !fact || fact.revision !== ref.revision || fact.status !== 'confirmed' || fact.fact.kind !== ref.kind) {
     throw new DecisionError102(422, 'fact_reference_mismatch', 'Fact reference must pin a current confirmed fact owned by this enterprise')
   }
 }
 
-export function checkDecisionRelation102(enterprise: { id: number; usccNorm: string | null; nameNorm: string }, d: ReturnType<typeof decisionContent102>, relation: ReturnType<typeof readDifferenceObservation> | null) {
+export function checkDecisionRelation102(enterprise: { id: number; usccNorm: string | null; nameNorm: string }, d: ReturnType<typeof decisionContent102>, relation: DifferenceObservation | null | undefined) {
   if (d.currentQualification && (!relation || relation.verificationStatus !== 'confirmed')) throw new DecisionError102(422, 'qualification_evidence_unconfirmed', 'Current qualification requires an explicitly confirmed source row')
   if (d.evidenceRelationId && !relation) throw new DecisionError102(422, 'evidence_not_found', 'Relation evidence not found')
   const enterpriseUscc=normalizeUscc(enterprise.usccNorm), relationUscc=normalizeUscc(relation?.uscc)
@@ -139,8 +147,8 @@ export function checkDecisionRelation102(enterprise: { id: number; usccNorm: str
 }
 
 export function checkDecisionQuery102(command: DecisionCommand102, enterprise: { id: number; usccNorm: string | null; nameNorm: string }, queryId: number | null | undefined,
-  targetQuery: ReturnType<typeof readDifferenceCollection> | null, relation: ReturnType<typeof readDifferenceObservation> | null,
-  collectionPages: () => ReturnType<typeof readDifferenceCollectionScope>['pages']) {
+  targetQuery: { collection: Pick<typeof PlatformCollectionTable.$inferSelect, 'rdjb' | 'queryKey'> } | null | undefined, relation: DifferenceObservation | null | undefined,
+  collectionPages: () => DifferenceCollectionScopeRows['pages']) {
   if (queryId) {
     const query = targetQuery?.collection
     if (!query) throw new DecisionError102(422, 'evidence_not_found', 'Query evidence not found')
@@ -156,7 +164,7 @@ export function checkDecisionQuery102(command: DecisionCommand102, enterprise: {
   }
 }
 
-export function checkDecisionPriorTime102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>) {
+export function checkDecisionPriorTime102(command: DecisionCommand102, previous: Awaited<ReturnType<typeof readPostgresDecisionHead102>>) {
   if (command.action !== 'maintain' && previous && !Number.isFinite(Date.parse(previous.recordedAt.slice(0, 19) + 'Z'))) throw new DecisionError102(422, 'invalid_prior_time', 'Historical registration time must be reviewed before replacement')
 }
 
@@ -185,7 +193,7 @@ export function decisionRequestHash102(command: DecisionCommand102, planHash?: s
   return createHash('sha256').update(JSON.stringify(planHash ? { command: normalized, planHash } : normalized)).digest('hex')
 }
 
-export function decisionValues102(command: DecisionCommand102, previous: ReturnType<typeof latestDecisionHead102>,
+export function decisionValues102(command: DecisionCommand102, previous: Awaited<ReturnType<typeof readPostgresDecisionHead102>>,
   d: ReturnType<typeof decisionContent102>, hash: string) {
   if (command.action === 'maintain' || (command.action === 'replace') !== !!command.decision) throw new DecisionError102(400, 'invalid_request', 'Replacement requires decision; withdrawal must omit decision')
   if (command.action === 'withdraw' && (!previous || previous.lifecycleAction === 'withdraw')) throw new DecisionError102(409, 'no_current_decision', 'No active decision to withdraw')

@@ -1,4 +1,5 @@
-import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import { reviewPostgresFixtureRows } from '../imports/fixtures/reviewed-announcement-postgres'
+import { createRosterImportClient } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,7 +33,12 @@ beforeAll(async () => {
   } }
   const preflight = await fetch(base + '/api/roster/import/preflight', { method: 'POST', headers, body: JSON.stringify(body) })
   expect(preflight.status).toBe(200)
-  const committed = await submitNewFixtureAnnouncement(base, headers.authorization.slice('Bearer '.length), body as RosterImportRequest)
+  const client = createRosterImportClient({ baseUrl: base, token: 'synthetic-a9bc' })
+  const request = body as RosterImportRequest
+  const staged = await client.commit(request)
+  if (staged.status !== 'staged') throw new Error(JSON.stringify(staged))
+  const review = await reviewPostgresFixtureRows(app.db, staged.sourceDigest, request)
+  const committed = await client.supplement(staged.intakeId, review)
   expect(committed).toMatchObject({ status: 'supplemented', summary: { failed: 0 } })
   // Read IDs from this owned synthetic DB; the historical validity fixture is staged after the decision is created.
   enterpriseId = Number((await pool.query('SELECT id FROM business.enterprise')).rows[0]!.id)

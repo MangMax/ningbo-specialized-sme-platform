@@ -1,8 +1,11 @@
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
 import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
-import type * as s from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { storedFile as StoredFileTable } from '../../../../db/postgresql/file-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
 import type { DispositionFact as Fact } from '../../../../db/title-cycle-disposition'
-import type { revisionTable } from './title-cycle-disposition'
+import type { titleCycleDispositionRevision } from '../../../../db/postgresql/qualification-tables'
 
 export const positive = z.number().int().positive();
 
@@ -43,18 +46,18 @@ export class DispositionError extends Error {
 
 export const fail = (code: string): never => { throw new DispositionError(code); };
 
-export type DispositionRow = typeof revisionTable.$inferSelect;
+export type DispositionRow = Omit<typeof titleCycleDispositionRevision.$inferSelect, 'fact' | 'audit'> & { fact: Fact; audit: unknown };
 
 export type Row = DispositionRow;
 
 export type DispositionRequest = z.infer<typeof dispositionRequestSchema>;
 
 export type DispositionSources = {
-    enterprise(id: number): typeof s.enterprise.$inferSelect | undefined
-    file(id: number): typeof s.storedFile.$inferSelect | undefined
-    event(id: number): typeof s.recordEvent.$inferSelect | undefined
-    record(id: number): typeof s.record.$inferSelect | undefined
-    evidence(eventId: number): Array<typeof s.recordEvidence.$inferSelect>
+    enterprise(id: number): typeof EnterpriseTable.$inferSelect | undefined
+    file(id: number): Pick<typeof StoredFileTable.$inferSelect, 'sha256' | 'removedAt'> | undefined
+    event(id: number): OfficialEventRow | undefined
+    record(id: number): RosterRecordRow | undefined
+    evidence(eventId: number): Array<typeof RecordEvidenceTable.$inferSelect>
 }
 
 export function dispositionDependencies(source: DispositionSources, enterpriseId: number, f: Fact) {

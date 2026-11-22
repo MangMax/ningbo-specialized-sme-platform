@@ -7,8 +7,8 @@ import type { QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
 import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../platform/legacy-provenance'
 import { type PlatformNormalizationConflict } from '../platform/normalization'
-import type { readEnterpriseSnapshot, readEnterpriseHistories } from './enterprise-read-snapshot'
-import type { readPlatformDetailFacts } from '../../server/utils/platform-business-detail-read'
+import type { readPostgresPlatformDetailFacts } from '../../server/utils/platform-business-detail-postgres'
+import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
 import type { CurrentQualificationSnapshot } from './current-qualification-model'
 import type { PlatformBusinessDetail } from './platform-business-detail'
 /**
@@ -31,7 +31,10 @@ import type { PlatformBusinessDetail } from './platform-business-detail'
  *
  * 派生状态 `rosterState` **不落列**(契约 §5):见 `deriveRosterState` 的注释。
  */
-import type * as schema from '../../../../db/schema'
+import type { enterprise, enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
+import type { FormalValidity } from '../../../../db/record-event-formal-validity'
+import type { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import type { platformExportBatch, platformExportRow } from '../../../../db/postgresql/platform-tables'
 import { normalizeName,normalizeUscc } from '../domain'
 import type { ComparisonDirection } from '../comparison-model'
 import { DIFFERENCE_STATUS_ORDER,SOURCE_ORDER,TITLE_ORDER } from '../labels'
@@ -54,19 +57,23 @@ export const DIFF_STATUS_NONE = 'none'
 export const ROSTER_STATES = ['current', 'removed_platform_only'] as const
 export type RosterState = (typeof ROSTER_STATES)[number]
 
+type EnterpriseRow = Omit<typeof enterprise.$inferSelect, 'qualityFlags'>
+type RecordRow = Omit<typeof record.$inferSelect, 'qualityFlags'>
+type EventRow = Omit<typeof recordEvent.$inferSelect, 'formalValidity'> & { formalValidity: FormalValidity | null }
+
 export interface Snapshot {
-  enterprises: (typeof schema.enterprise)['$inferSelect'][]
-  records: (typeof schema.record)['$inferSelect'][]
-  events: (typeof schema.recordEvent)['$inferSelect'][]
-  evidence: (typeof schema.recordEvidence)['$inferSelect'][]
-  aliases: (typeof schema.enterpriseAlias)['$inferSelect'][]
-  exportRows: (typeof schema.platformExportRow)['$inferSelect'][]
-  exportBatches: (typeof schema.platformExportBatch)['$inferSelect'][]
+  enterprises: EnterpriseRow[]
+  records: RecordRow[]
+  events: EventRow[]
+  evidence: (typeof recordEvidence)['$inferSelect'][]
+  aliases: (typeof enterpriseAlias)['$inferSelect'][]
+  exportRows: (typeof platformExportRow)['$inferSelect'][]
+  exportBatches: (typeof platformExportBatch)['$inferSelect'][]
   relations: PlatformStoredRelation[]
   queries: PlatformStoredQuery[]
-  differences: ReturnType<typeof readEnterpriseHistories>['differences']
-  recordsByEnterprise: Map<number, (typeof schema.record)['$inferSelect'][]>
-  eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
+  differences: Parameters<typeof publicVersion102>[0][]
+  recordsByEnterprise: Map<number, RecordRow[]>
+  eventsByRecord: Map<number, EventRow[]>
 }
 
 // ---------------------------------------------------------------------------
@@ -212,9 +219,9 @@ function normUscc(uscc: string | null | undefined): string | null {
 
 /** 每条记录/快照行在内存里组织出来的企业画像(总表与详情共用)。 */
 interface Profile {
-  enterprise: (typeof schema.enterprise)['$inferSelect']
-  records: (typeof schema.record)['$inferSelect'][]
-  eventsByRecord: Map<number, (typeof schema.recordEvent)['$inferSelect'][]>
+  enterprise: EnterpriseRow
+  records: RecordRow[]
+  eventsByRecord: Map<number, EventRow[]>
   /** 每称号的生命周期(跨该称号下**全部来源**的记录)。 */
   lifecycleByTitle: Map<string, TitleLifecycle>
   titles: string[]
@@ -380,7 +387,6 @@ function buildProfile(
 /**
  * 属地:企业自身属地优先,为空时退回它**最早那条带属地的记录**。
  *
- * 导出给 `layers/sme-roster/lib/roster/recognitions.ts`(§7.5 的清单也带属地):「属地」只该有这一个判法 ——
  * 两处各写一遍,同一家企业在总表与首次认定清单上会显示成两个区县。
  */
 export function effectiveDistrict(profile: Profile): string | null {
@@ -616,7 +622,7 @@ interface LegacyRosterDifferenceRow {
   measureNote: string | null
   movedIn: MovedIn | null
   /** Explicit stored revision pins; absence preserves the legacy response shape. */
-  factReferences?: NonNullable<typeof schema.differenceReason.$inferSelect.factReferences>
+  factReferences?: NonNullable<Parameters<typeof publicVersion102>[0]['factReferences']>
   verificationStatus: string
   recordedAt: string | null
   /** 该 (企业 × 称号 × 方向) 当前是否**确实是**差异(对照 §7.3 的差异口径)。 */
@@ -813,7 +819,10 @@ export function projectEnterpriseDifferenceUniverse(snap: Pick<Snapshot, 'differ
   return rows
 }
 
-export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & Partial<Pick<ReturnType<typeof readEnterpriseSnapshot>, 'platformLegacyById' | 'platformPositionsById'>>
+export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & {
+  platformLegacyById?: Map<number, LegacyProvenanceDisplay>
+  platformPositionsById?: Map<number, { sourceRdjb: string | null | undefined; sourcePage: number | null | undefined }>
+}
 export type RosterDetailHistory = Pick<Snapshot, 'enterprises' | 'aliases' | 'records' | 'eventsByRecord' | 'recordsByEnterprise' | 'evidence' | 'exportRows' | 'exportBatches'>
 
 export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][number], archive: RosterDetailArchive) {
@@ -858,7 +867,7 @@ export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][nu
 }
 
 export function projectRosterDetailRelations(archive: ReturnType<typeof selectRosterDetailArchive>,
-  platformFacts: ReturnType<typeof readPlatformDetailFacts>) {
+  platformFacts: Awaited<ReturnType<typeof readPostgresPlatformDetailFacts>>) {
   const { queriesById, legacyById, recognizedQueryIds, relations, platformPositionsById } = archive
   return relations.map((r): RosterPlatformRelationRow => {
     const fact = platformFacts.get(r.id)

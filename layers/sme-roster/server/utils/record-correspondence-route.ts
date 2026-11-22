@@ -1,6 +1,6 @@
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
-import { type CorrespondenceAction, type CorrespondenceApiInput } from './record-correspondence-api'
+import { type CorrespondenceAction, type CorrespondenceApiInput } from './record-correspondence-runtime'
 import { handlePostgresCorrespondenceRequest } from './record-correspondence-runtime'
 export function correspondenceRoute(action: CorrespondenceAction, options: { id?: boolean; kind?: 'event' | 'relation' | 'export_row'; key?: boolean } = {}) {
   return semanticRouteHandler(`maintenance.correspondence.${action}`, async (event: H3Event) => {

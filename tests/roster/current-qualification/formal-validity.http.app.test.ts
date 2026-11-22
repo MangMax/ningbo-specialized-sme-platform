@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { businessTables, qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
 
 // One owned Nuxt process and real read/export workers for the whole transport check.
 const f = qualificationExportFixture()
@@ -22,15 +22,15 @@ beforeAll(async () => {
     expect(spec.paths['/api/roster/exports/current/' + title].post).toBeDefined()
   }
   for (const sample of samples) {
-    const target = f.candidate(sample.name, [{ eventType: 'award', year: sample.year, batchSeq: sample.batch }], sample.title)
-    const award = f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId,target.record.id)).get()!
-    const review = sample.name === 'owned_lanfan' ? null : f.db.insert(schema.recordEvent).values({ recordId: target.record.id, eventType: 'review', year: sample.year, batchSeq: sample.name === 'owned_yayan' ? 1 : null, decidedYear: year, reviewOutcome: 'passed' }).returning().get()
+    const target = await f.candidate(sample.name, [{ eventType: 'award', year: sample.year, batchSeq: sample.batch }], sample.title)
+    const award = (await f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId,target.record.id)))[0]!
+    const review = sample.name === 'owned_lanfan' ? null : (await f.db.insert(schema.recordEvent).values({ recordId: target.record.id, eventType: 'review', year: sample.year, batchSeq: sample.name === 'owned_yayan' ? 1 : null, decidedYear: year, reviewOutcome: 'passed' }).returning())[0]!
     const path = sample.name + '.pdf', sha = 'a'.repeat(64)
-    f.db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', bytes: 1, sha256: sha }).run()
+    await f.db.insert(schema.storedFile).values({createdAt:'2026-01-01T00:00:00Z', relPath: path, filename: path, ext: 'pdf', bytes: 1n, sha256: sha })
     const event = review ?? award
-    const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 2 }).returning().get()
+    const evidence = (await f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 2 }).returning())[0]!
     const fact = { evidenceId: evidence.id, sourceSha256: sha, statementPages: [2], ...(review ? { originAwardEventId: award.id, publishedOn: today, continuation: sample.name === 'owned_yayan' ? 'until_next_review_results' : 'until_this_review_results' } : { interval: { validFrom: `${sample.year}-11-01`, validThrough: today } }) }
-    f.db.$client.prepare('UPDATE record_event SET formal_validity=? WHERE id=?').run(JSON.stringify(fact), event.id)
+    await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify(fact) }).where(eq(schema.recordEvent.id, event.id))
   }
   await f.start()
 }, 120000)
@@ -89,36 +89,36 @@ it('real current-qualified HTTP, MCP and export artifacts agree for interval and
 // Y-3 expires in Y; Y-2 is still effective (it expired in neither Y-1 nor Y).
 it('annual expiry and title inheritance preserve literal HTTP and downloaded identity periods', async () => {
   await f.resetBusiness()
-  const continuation = (recordId: number, reviewYear: number | null, kind: 'until_next_review_results' | 'until_this_review_results') => {
-    const award = f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, recordId)).get()!
-    const event = reviewYear === null ? award : f.db.insert(schema.recordEvent).values({
+  const continuation = async (recordId: number, reviewYear: number | null, kind: 'until_next_review_results' | 'until_this_review_results') => {
+    const award = (await f.db.select().from(schema.recordEvent).where(eq(schema.recordEvent.recordId, recordId)))[0]!
+    const event = reviewYear === null ? award : (await f.db.insert(schema.recordEvent).values({
       recordId, eventType: 'review', year: year-6, batchSeq: 1,
       decidedYear: reviewYear === 0 ? null : reviewYear, reviewOutcome: 'passed',
-    }).returning().get()!
+    }).returning())[0]!
     const path = `annual-${event.id}.pdf`
     const sha = 'b'.repeat(64)
-    f.db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', bytes: 7, sha256: sha }).run()
-    const evidence = f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 3 }).returning().get()!
+    await f.db.insert(schema.storedFile).values({createdAt:'2026-01-01T00:00:00Z', relPath: path, filename: path, ext: 'pdf', bytes: 7n, sha256: sha })
+    const evidence = (await f.db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, page: 3 }).returning())[0]!
     // Publication is today even when the business year is missing or expired.
     const raw = JSON.stringify({ evidenceId: evidence.id, sourceSha256: sha, statementPages: [3],
       ...(event.id === award.id ? {} : { originAwardEventId: award.id }), publishedOn: today, continuation: kind })
-    f.db.$client.prepare('UPDATE record_event SET formal_validity=? WHERE id=?').run(raw, event.id)
+    await f.db.update(schema.recordEvent).set({ formalValidity: raw }).where(eq(schema.recordEvent.id, event.id))
   }
-  const expiredAward = f.candidate('annual_expired_upper', [{ eventType: 'award', year: year-3 }])
-  continuation(expiredAward.record.id, null, 'until_next_review_results')
-  const expiredReview = f.candidate('annual_expired_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(expiredReview.record.id, year-3, 'until_this_review_results')
-  const missing = f.candidate('annual_missing_business_year', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(missing.record.id, 0, 'until_next_review_results')
+  const expiredAward = await f.candidate('annual_expired_upper', [{ eventType: 'award', year: year-3 }])
+  await continuation(expiredAward.record.id, null, 'until_next_review_results')
+  const expiredReview = await f.candidate('annual_expired_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(expiredReview.record.id, year-3, 'until_this_review_results')
+  const missing = await f.candidate('annual_missing_business_year', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(missing.record.id, 0, 'until_next_review_results')
   // Y-3 was still valid last year, but is expired now: the two expired
   // fixtures above hit that exact first-expired-year boundary.
-  const valid = f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
-  continuation(valid.record.id, year-2, 'until_next_review_results')
-  const inherited = f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
+  const valid = await f.candidate('annual_valid_review', [{ eventType: 'award', year: year-6, batchSeq: 1 }], 'innovative_sme')
+  await continuation(valid.record.id, year-2, 'until_next_review_results')
+  const inherited = await f.candidate('annual_inherited_period', [{ eventType: 'award', year: year-1 }])
   // Eight-year-old original recognition remains eligible without a passed review.
-  f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-8 }], 'little_giant')
-  const own = f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
-  f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
+  await f.candidate('annual_inherited_giant', [{ eventType: 'award', year: year-8 }], 'little_giant')
+  const own = await f.candidate('annual_own_period', [{ eventType: 'award', year: year-1 }])
+  await f.addRecord(own.enterprise.id, own.enterprise.name, [{ eventType: 'award', year: year-2 }], 'innovative_sme')
   // Include source bytes/hash/page/origin/publication and all raw event columns,
   // not job tables that legitimately change during export.
   const facts = () => f.runtimeBusinessRows(['record_event', 'record_evidence', 'stored_file'])

@@ -10,8 +10,7 @@ import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualW
 import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
 import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-projection'
 import { normalizedUscc } from './event-archive-discovery-model'
-import { type AnnualSourceRows } from './event-annual-process-read'
-import { prepareAnnualObservations, projectAnnualProcess, scopeAnnualEvent, type AnnualEventScope, type AnnualObservationFacts } from './event-annual-process-model'
+import { prepareAnnualObservations, projectAnnualProcess, scopeAnnualEvent, type AnnualEventScope, type AnnualObservationFacts, type Rows, type Queries } from './event-annual-process-model'
 import {
   readPostgresPlatformBusinessCorrespondences, readPostgresPlatformBusinessGroups, readPostgresPlatformBusinessMetadata,
 } from './platform-business-record-postgres'
@@ -19,10 +18,10 @@ import { readPostgresCorrespondenceRefs } from './record-correspondence-postgres
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select'>
-type Observation = Omit<AnnualSourceRows['rows'][number], keyof AnnualObservationFacts | 'rawFields'> & {
+type Observation = Omit<Rows[number], keyof AnnualObservationFacts | 'rawFields'> & {
   observationId: number; interface: 'apply_list' | 'business_list'; titleCode: string | null
 }
-type Coverage = AnnualSourceRows['queries'][number] & { scopedTitle: string | null; named: boolean }
+type Coverage = Queries[number] & { scopedTitle: string | null; named: boolean }
 async function readAnnualSources(db: Reader, scope: AnnualEventScope, comparison: boolean) {
   const { owner, identity, titleCode } = scope
   const original = alias(assignment, 'original')

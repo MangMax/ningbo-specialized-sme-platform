@@ -2,9 +2,13 @@ import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import { normalizeReviewedUscc, usccFormatVerdict } from '../../lib/enterprise-uscc'
-import type { enterpriseProfileAudit } from '../../../../db/schema'
 
-type ProfileAuditContext = Pick<typeof enterpriseProfileAudit.$inferInsert, 'idempotencyKey' | 'requestHash' | 'actor' | 'basis'>
+interface ProfileAuditContext {
+  idempotencyKey: string
+  requestHash: string
+  actor: { type: 'user' | 'agent'; id: string }
+  basis: string
+}
 
 export class EnterpriseKernelError extends Error {
   constructor(readonly statusCode: number, readonly code: string, message: string) { super(message) }

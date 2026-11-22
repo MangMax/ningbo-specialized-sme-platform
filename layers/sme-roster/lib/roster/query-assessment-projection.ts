@@ -1,10 +1,12 @@
 import { z } from 'zod'
-import type { readEvidenceImpact113 } from '../../server/utils/evidence-impact-113'
-import type { currentDecision102, currentDecisionState102 } from '../../server/utils/decision-lifecycle-102'
 import { normalizeUscc } from '../domain'
 import { platformQueryResultShape, type PlatformQueryPage } from '../platform/live-query'
 
-export type AssessmentScope = Parameters<typeof currentDecision102>[1]
+import type { Scope } from '../../server/utils/decision-lifecycle-102/contract'
+import type { currentPostgresDecisions102 } from '../../server/utils/decision-lifecycle-102/postgres-reads'
+
+export type AssessmentScope = Scope
+type DecisionState = Awaited<ReturnType<typeof currentPostgresDecisions102>>[number]
 type CoverageStatus = 'not_queried' | 'complete' | 'partial' | 'failed' | 'unknown'
 const metadataSchema = z.object({
   source: platformQueryResultShape.source, status: platformQueryResultShape.status,
@@ -95,41 +97,22 @@ export function projectQueryCoverage({ rows, truncated, uscc }: { rows: QueryMet
   else if (relevant.some(s => s.status === 'failed')) status = 'failed'
   return { status, sources, truncated }
 }
-/** Shared status rules; both full and scalar readers supply their own SQL projection. */
-export function assessmentStatuses(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, impact: ReturnType<typeof readEvidenceImpact113>) {
-  const current = currentDecision.current
-  const reviewed = impact.state?.reviewedRevisionId
-  const { invalid, executed, assessment } = decisionCoverage(scope, queryCoverage, currentDecision, reviewed != null)
-  const pending = !!impact.state && impact.state.latestRevisionId > (reviewed ?? -1)
-  // The scope token also advances for coverage-only and disjoint partitions.
-  // Until processing finishes stay conservative; once ready, the per-decision
-  // pending state carries substantive changes without rewriting the review audit.
-  const changed = reviewed != null && !impact.token.projectionReady
-  const validity = !current ? 'not_applicable' : pending ? impact.state!.classification : changed ? 'evidence_changed' : reviewed != null ? 'valid' : invalid ? 'premise_invalid' : 'unknown'
-  return { validity, invalid, executed, assessment }
-}
-
-function decisionCoverage(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: ReturnType<typeof currentDecisionState102>, reviewed: boolean) {
+function decisionCoverage(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: DecisionState, reviewed: boolean) {
   const current = currentDecision.current
   const executed = queryCoverage.sources.filter(s => s.titleCode === scope.titleCode && s.queryStatus !== 'not_queried' && ['exact_uscc', 'matched_relation'].includes(s.subjectMatch))
   const invalid = !reviewed && current?.status === 'not_queried' && executed.length > 0
   const assessment = current ? 'decided' : currentDecision.versionId ? 'withdrawn' : queryCoverage.status === 'complete' ? 'queried_unjudged' : queryCoverage.status === 'not_queried' ? 'not_queried' : 'unknown'
   return { invalid, executed, assessment }
 }
-export function projectQueryAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>, impact: ReturnType<typeof readEvidenceImpact113>) {
-  const { validity, invalid, executed, assessment } = assessmentStatuses(scope, queryCoverage, currentDecision, impact)
-  return assessmentResult(queryCoverage, currentDecision, validity, invalid, executed, assessment)
-}
-
-export function projectRetiredEvidenceAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>, historicalValidity: 'valid' | 'evidence_changed' | 'premise_invalid' | null, historicalReviewed: boolean) {
+export function projectRetiredEvidenceAssessment(scope: AssessmentScope, queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: DecisionState, historicalValidity: 'valid' | 'evidence_changed' | 'premise_invalid' | null, historicalReviewed: boolean) {
   const { invalid, executed, assessment } = decisionCoverage(scope, queryCoverage, currentDecision, historicalReviewed)
   const validity = !currentDecision.current ? 'not_applicable' : historicalValidity ?? (invalid ? 'premise_invalid' : 'unknown')
   return assessmentResult(queryCoverage, currentDecision, validity, invalid, executed, assessment)
 }
 
-function assessmentResult(queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: ReturnType<typeof currentDecision102>,
-  validity: ReturnType<typeof assessmentStatuses>['validity'], invalid: boolean,
-  executed: ReturnType<typeof assessmentStatuses>['executed'], assessment: ReturnType<typeof assessmentStatuses>['assessment']) {
+function assessmentResult(queryCoverage: ReturnType<typeof projectQueryCoverage>, currentDecision: DecisionState,
+  validity: 'not_applicable' | 'valid' | 'evidence_changed' | 'premise_invalid' | 'unknown', invalid: boolean,
+  executed: ReturnType<typeof decisionCoverage>['executed'], assessment: ReturnType<typeof decisionCoverage>['assessment']) {
   const current = currentDecision.current
   const reasons = validity === 'premise_invalid' ? ['query_executed'] : validity === 'evidence_changed' ? ['committed_evidence_changed'] : validity === 'unknown' ? ['no_evidence_baseline'] : []
   return {
@@ -138,7 +121,7 @@ function assessmentResult(queryCoverage: ReturnType<typeof projectQueryCoverage>
     assessment,
   }
 }
-export type QueryAssessment = ReturnType<typeof projectQueryAssessment>
+export type QueryAssessment = ReturnType<typeof projectRetiredEvidenceAssessment>
 
 export type QueryAssessmentSummary = {
   queryCoverage: Pick<QueryAssessment['queryCoverage'], 'status'>

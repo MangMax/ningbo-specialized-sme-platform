@@ -140,7 +140,6 @@ it('PATCH deduplicates confirmed old names without modifying original alias evid
 it.each([{ label: 'pending', status: 'pending' }, { label: 'withdrawn', status: 'withdrawn' }])('PATCH leaves a $label old-name natural key to alias lifecycle', async ({ status }) => {
   const owner = await seed(), before = await profile(owner.id)
   const alias = (await db.insert(enterpriseAlias).values({ createdAt: '2026-10-19T00:00:00Z', enterpriseId: owner.id, name: owner.name, nameNorm: owner.nameNorm, sourceKind: 'manual', verificationStatus: 'pending' }).returning())[0]!
-  // SQLite fixture models #99's additional status before its reserved migration is merged.
   await db.update(enterpriseAlias).set({ verificationStatus: status === 'withdrawn' ? 'withdrawn' : 'pending' }).where(eq(enterpriseAlias.id, alias.id))
   const originalAliases = (await request(`/api/roster/enterprises/${owner.id}`)).body.aliases
   const result = await patch(owner.id, command(before.version, { name: `九六生命周期新名${++sequence}`, city: null }, { previousName: { name: owner.name, sameSubject: true } }))

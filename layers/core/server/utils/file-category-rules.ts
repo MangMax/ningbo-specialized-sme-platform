@@ -1,14 +1,13 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { evaluateFileAdmission, type ResolveUploadPlacement, type UploadMetadata } from '../../lib/core/file-categories'
-import type { FileCategoryServer } from './file-store'
-import { FileMaintenanceError, splitRegistrationPath, UploadRegistrationError, type FileRow } from './file-store-contract'
+import { FileMaintenanceError, splitRegistrationPath, UploadRegistrationError, type FileCategoryServer, type FileRow } from './file-store-contract'
 
 export function createFileCategoryRules(categories: readonly FileCategoryServer[]) {
   for (const category of categories) {
     if (category.registration && typeof category.registration.matchesPath !== 'function') {
       throw new Error(`${category.id}: registration requires matchesPath`)
     }
-    if (category.registration && typeof category.registration.prepare !== 'function' && typeof category.registration.preparePostgres !== 'function') {
+    if (category.registration && typeof category.registration.preparePostgres !== 'function') {
       throw new Error(`${category.id}: registration requires a writer`)
     }
     if (category.landing && !category.registration) {
@@ -34,13 +33,10 @@ export function createFileCategoryRules(categories: readonly FileCategoryServer[
     return owners[0] ?? defaultCategory
   }
 
-  function resolveUploadPlacement(metadata: UploadMetadata, { postgres = false } = {}): ReturnType<ResolveUploadPlacement> {
+  function resolveUploadPlacement(metadata: UploadMetadata): ReturnType<ResolveUploadPlacement> {
     const requested = metadata.fileCategory
     const category = requested ? categories.find(item => item.id === requested) : defaultCategory
     if (!category?.landing) throw { status_code: 400, body: '未登记上传落位规则\n' }
-    if (postgres && !category.registration?.preparePostgres) {
-      throw { status_code: 503, body: '此文件分类尚未接入 PostgreSQL 文件库\n' }
-    }
     const segments = category.landing(metadata)
     function assertOwnership(relPath: string) {
       try {
@@ -107,7 +103,7 @@ export function createFileCategoryRules(categories: readonly FileCategoryServer[
   }
 
   return {
-    checkAdmission, resolveUploadPlacement, resolveFileRegistration, divideMetadata, parseMetadataPatch, updatePostgresFileMetadata,
+    checkAdmission, resolveUploadPlacement, resolveFileRegistration, parseMetadataPatch, updatePostgresFileMetadata,
     extensionSnapshot: (row: FileRow) => Object.assign({}, ...categories.map(category => category.snapshot?.(row))),
   }
 }

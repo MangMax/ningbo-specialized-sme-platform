@@ -21,7 +21,8 @@ let expired = true; let failedPage = true
 const platformRequests: { source: string; name: string; page: number }[] = []
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubEnv('MIIT_COOKIE', '')
   vi.stubEnv('MIIT_COOKIE_FILE', '')

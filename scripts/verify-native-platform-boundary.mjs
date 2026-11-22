@@ -50,8 +50,6 @@ function modulePath(spec, from) {
   if (spec.startsWith('.')) base = resolve(dirname(from), spec)
   else if (spec.startsWith('#core/')) base = root + '/layers/core/' + spec.slice(6)
   else if (/^#(?:layers\/)?sme-roster\//.test(spec)) base = root + '/layers/sme-roster/' + spec.replace(/^#(?:layers\/)?sme-roster\//, '')
-  else if (spec === '@db') base = root + '/db/index'
-  else if (spec.startsWith('@db/')) base = root + '/db/' + spec.slice(4)
   else if (/^(?:~~|~|@)\//.test(spec)) base = root + '/' + spec.replace(/^(?:~~|~|@)\//, '')
   else return
   return [base, base + '.ts', base + '.vue', base + '.mjs', base + '/index.ts'].find(path => existsSync(path) && extname(path))
@@ -88,7 +86,6 @@ for (let index = 0; index < queue.length; index++) {
     if (ts.isExportDeclaration(node) && node.moduleSpecifier) (node.isTypeOnly ? typeImports : imports).push(node.moduleSpecifier.text)
   }
   function visit(node) {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'sqliteTable' && node.arguments[0] && ts.isStringLiteral(node.arguments[0]) && retired.includes(node.arguments[0].text)) violations.push(relative(root, path) + ': retired schema declaration')
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'URL' && node.arguments?.[0] && ts.isStringLiteral(node.arguments[0]) && moduleFile(node.arguments[0].text)) imports.push(node.arguments[0].text)
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) imports.push(node.arguments[0].text)
     if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) typeImports.push(node.argument.literal.text)
@@ -105,16 +102,12 @@ for (let index = 0; index < queue.length; index++) {
   for (const spec of imports) {
     const target = modulePath(spec, path)
     if (sqliteModule.test(spec)) violations.push(importPath(path) + ': SQLite driver or schema import ' + spec)
-    if (target && /^db\/(?:schema|index|client|create-runtime)\.ts$/.test(relative(root, target))) {
-      violations.push(importPath(path) + ': SQLite runtime value import ' + spec)
-      continue
-    }
     if (target?.startsWith(root + '/upgrade/')) violations.push(relative(root, path) + ': offline import ' + spec)
     if (target && moduleFile(target)) {
       if (!seen.has(target) && !importers.has(target) && !entries.includes(target)) importers.set(target, path)
       queue.push(target)
     }
-    else if (!target && /^(?:\.|@db|#core\/|#(?:layers\/)?sme-roster\/|~~\/|~\/|@\/)/.test(spec)) violations.push(relative(root, path) + ': missing module ' + spec)
+    else if (!target && /^(?:\.|#core\/|#(?:layers\/)?sme-roster\/|~~\/|~\/|@\/)/.test(spec)) violations.push(relative(root, path) + ': missing module ' + spec)
   }
 }
 if (violations.length) {

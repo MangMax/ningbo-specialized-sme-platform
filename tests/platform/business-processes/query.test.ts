@@ -28,7 +28,8 @@ async function query(input: unknown) { body = input; return rest({}) }
 const input = { source: 'businessList', uscc, rdjb: 'all' }
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)

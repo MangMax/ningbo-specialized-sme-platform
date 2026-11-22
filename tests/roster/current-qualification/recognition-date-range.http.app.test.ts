@@ -12,7 +12,7 @@ import { nativeAppAdapter } from '../../support/native-app'
 import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
-import { assertQualificationRowsSnapshotEqual } from '../fixtures/qualification-matrix'
+import { assertQualificationRowsSnapshotEqual } from '../assertions/current-qualified-rows'
 import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 import { fresh, year, type Event } from '../current-export/fixtures/specialized-export'
 

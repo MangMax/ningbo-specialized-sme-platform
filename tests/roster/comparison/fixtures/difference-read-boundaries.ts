@@ -1,4 +1,4 @@
-import { submitNewFixtureAnnouncement } from '../../imports/fixtures/reviewed-announcement'
+import { submitNewFixtureAnnouncement } from './submit-announcement'
 import type { RosterImportRequest } from '../../../../layers/sme-roster/lib/roster-import-client'
 /** M2-specific public-write fixture, also used by the relocated built probe.
  * No database access: synthetic truth enters through the current HTTP API. */

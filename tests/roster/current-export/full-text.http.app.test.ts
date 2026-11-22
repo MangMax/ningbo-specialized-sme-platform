@@ -1,12 +1,13 @@
+import { recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { afterAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from './fixtures/qualification-export'
 
 const f = qualificationExportFixture()
 afterAll(() => f.close())
 it('publishes and downloads complete multiple-source text through the HTTP export job', async () => {
-  f.candidate('synthetic-full-text')
+  await f.candidate('synthetic-full-text')
   const attachment = 'literal first source\n'.repeat(24) + 'literal second source😀'.repeat(90)
-  f.db.$client.prepare('update record_evidence set attachment=?').run(attachment)
+  await f.db.update(recordEvidence).set({ attachment })
   await f.start()
   const original = await f.runtimeBusinessRows(['enterprise', 'record', 'record_event', 'record_evidence'])
   const { wb, job, response } = await f.workbook('full-text-public-artifact')

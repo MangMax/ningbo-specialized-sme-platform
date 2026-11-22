@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { schema, useDb } from '../../../db'
+import * as schema from '../fixtures/postgres-tables'
 import { prepareFactCommand, commitPreparedFact, confirmedFactReferences, saveReferencedDecision } from '../../../.agents/skills/roster-ingestion-pipeline/examples/enterprise-facts.mjs'
 
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -17,7 +17,7 @@ let directory: string
 let app: ReturnType<typeof nativeAppAdapter>
 const token = 'synthetic-fact-protocol'
 const client = new Client({ name: 'synthetic-fact-protocol-307', version: '1' })
-let db: ReturnType<typeof useDb>, ids: number[], tools: Awaited<ReturnType<Client['listTools']>>
+let db: typeof app.db, ids: number[], tools: Awaited<ReturnType<Client['listTools']>>
 const observations: unknown[] = []
 const actor = { type: 'agent', id: 'synthetic-fact-protocol-307' }
 const basis = '合成通知逐条核实，不代表真实业务判断'
@@ -51,11 +51,13 @@ describe('skill consumer through real toolkit transport', () => {
   beforeAll(async () => {
     directory = await mkdtemp(join(tmpdir(), 'fact-protocol-'))
     app = nativeAppAdapter({ dir: directory, token, launch: ({ cwd, port }) => ({ args: [join(cwd, '.output/server/index.mjs')], env: { HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: token } }) })
+    await app.prepare()
     db = app.db
-    ids = Array.from({ length: 3 }, () => {
+    ids = []
+    for (let index = 0; index < 3; index++) {
       const name = `合成MCP事实协议-${randomUUID()}`
-      return db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get().id
-    })
+      ids.push((await db.insert(schema.enterprise).values({ name, nameNorm: name }).returning())[0]!.id)
+    }
     await app.start()
     base = app.url('')
     const url = new URL(base)

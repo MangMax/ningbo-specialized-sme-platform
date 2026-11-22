@@ -16,7 +16,7 @@ import { handlePostgresEvidenceCorrectionWrite } from '../../../layers/sme-roste
 import { supplementPostgresAnnouncement } from '../../../layers/sme-roster/server/utils/announcement-supplement-postgres'
 import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-detail-postgres'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
-import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 import { handlePostgresCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-runtime'
 import { usePostgresRosterDb } from '../../../layers/sme-roster/server/utils/postgres-roster-db'
 import { receiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'

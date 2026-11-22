@@ -12,7 +12,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { McpToolCallbackResult } from '@nuxtjs/mcp-toolkit/server'
 import { enterprise as enterprises } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
-import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction'
+import type { EventCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-event-correction-model'
 import { dispatchPostgresEventCorrectionMcp, isEventCorrectionMcpResult } from '../../../layers/sme-roster/server/utils/mcp-event-correction-runtime'
 
 const schema = { enterprise: enterprises, record, recordEvent, recordEvidence }

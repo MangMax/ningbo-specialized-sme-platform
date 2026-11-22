@@ -1,6 +1,6 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
 import { businessIdentity } from '../current-export/fixtures/specialized-export'
 import { confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'

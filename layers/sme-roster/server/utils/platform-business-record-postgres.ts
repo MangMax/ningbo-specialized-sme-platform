@@ -6,10 +6,12 @@ import { recordCorrespondence as correspondence } from '../../../../db/postgresq
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup,PlatformBusinessMetadata,PlatformBusinessObservationRef,PlatformCorrespondenceRef,ScopedPlatformObservation } from '../../lib/platform/business-record'
 
-import type { readPlatformBusinessMetadata } from './platform-business-record-read'
-export type { readPlatformBusinessGroups } from './platform-business-record-read'
-
-type BusinessMetadataRow = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number,infer T> ? T : never
+export type BusinessMetadataRow =
+  Pick<typeof observation.$inferSelect, 'projectionRuleVersion' | 'recordId' | 'versionId'>
+  & { relationId: number; interface: PlatformBusinessMetadata['interface'] | null; platformKey: string | null;
+    identityState: Exclude<PlatformBusinessMetadata['identityState'], 'not_indexed'>;
+    contentState: Exclude<PlatformBusinessMetadata['contentState'], 'not_indexed'>; keySource: PlatformBusinessMetadata['keySource'];
+    hashAlgorithm: string | null; contentHash: string | null }
 // Drizzle inArray binds each ID separately. Use one bound array for large scoped reads.
 const postgresRelationScope = (ids: readonly number[]) => sql`${observation.publicId} = ANY(${sql.param(ids)}::bigint[])`
 
@@ -36,7 +38,7 @@ function decisionConflicts(priors: PlatformCorrespondenceRef[]) {
   return false
 }
 
-export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'select'>, observations: ScopedPlatformObservation[], metadata?: ReturnType<typeof readPlatformBusinessMetadata>) {
+export async function readPostgresPlatformBusinessGroups(db: Pick<NodePgDatabase, 'select'>, observations: ScopedPlatformObservation[], metadata?: Map<number, BusinessMetadataRow>) {
   if (!observations.length) return []
   const relationIds = observations.map(row => row.relationId)
   metadata ??= await readPostgresPlatformBusinessMetadata(db, relationIds)
@@ -56,7 +58,7 @@ export async function readPostgresPlatformBusinessCorrespondences(
     .where(postgresRelationScope(relationIds)).orderBy(correspondence.id)
 }
 
-export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: ReturnType<typeof readPlatformBusinessMetadata>, priors: PlatformCorrespondenceRef[]): PlatformBusinessGroup[] {
+export function projectPlatformBusinessGroups(observations: ScopedPlatformObservation[], metadata: Map<number, BusinessMetadataRow>, priors: PlatformCorrespondenceRef[]): PlatformBusinessGroup[] {
   const byRelation = Map.groupBy(priors, p => p.relationId)
   const groups = new Map<string, PlatformBusinessObservationRef[]>()
   for (const observation of observations) {

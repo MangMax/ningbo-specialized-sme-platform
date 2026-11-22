@@ -1,58 +1,25 @@
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import pg from 'pg'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
-import { defaultLogCollection } from '../../../layers/core/lib/logging/policy'
 import { createEnterpriseReadExecutor } from '../../../layers/sme-roster/server/utils/enterprise-read'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const bin = process.env.ROSTER_TEST_POSTGRES_BIN
 const filter = { titleCode: 'little_giant' as const }
 
 describe.skipIf(!bin)('PostgreSQL current qualification worker logging', () => {
   let root: string
-  let cluster: string
-  let started = false
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
   let postgres: pg.Pool
-  const command = (name: string, args: string[], input?: string) =>
-    execFileSync(join(bin!, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] })
 
   beforeAll(async () => {
     root = mkdtempSync('/tmp/roster-read-logs-')
-    cluster = join(root, 'cluster')
-    const port = await reserveLoopbackPort()
-    const url = `postgresql://fixture@127.0.0.1:${port}/postgres`
-    command('initdb', ['-D', cluster, '-A', 'trust', '-U', 'fixture', '--locale=C', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', cluster, '-l', join(root, 'server.log'), '-o', `-h 127.0.0.1 -p ${port} -k ${root}`, '-w', 'start'])
-    started = true
-    command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', url], `
-      CREATE SCHEMA business;
-      SET search_path TO business;
-      CREATE TABLE record (enterprise_id bigint, title_code text);
-      CREATE TABLE difference_reason (enterprise_id bigint, title_code text);
-      CREATE TABLE record_correspondence (enterprise_id bigint, title_code text);
-      CREATE TABLE platform_recognized_projection (version_id bigint, observation_id bigint, title_raw text);
-      CREATE TABLE platform_business_projection (LIKE platform_recognized_projection);
-      CREATE TABLE platform_apply_projection (LIKE platform_recognized_projection);
-      CREATE TABLE platform_business_observation (id bigint, version_id bigint);
-      CREATE TABLE platform_observation_assignment (observation_id bigint, enterprise_id bigint, uscc_raw text, revision bigint);
-      CREATE SCHEMA staged;
-      CREATE TABLE staged.log_policy (id bigint, "retentionDays" bigint, "maxBytes" bigint, pruned bigint, cleared bigint);
-      INSERT INTO staged.log_policy VALUES (1, 30, 1048576, 0, 0);
-      CREATE TABLE staged.log_collection (id bigint, collection text, revision bigint);
-      INSERT INTO staged.log_collection VALUES (1, '${JSON.stringify(defaultLogCollection())}', 0);
-      CREATE TABLE staged.log_events (seq bigint, id text, timestamp text, level text, source text, operation text, outcome text,
-        "requestId" text, "traceId" text, "taskId" text, "fileId" bigint, "batchId" text, "resourceId" text, summary text, detail text);
-      CREATE TABLE staged.sqlite_sequence (name text, seq bigint);
-    `)
-    command('psql', ['-X', '-w', '-v', 'staging=staged', url, '-f', 'upgrade/pg/sqlite-import/materialize-runtime-logs.sql'])
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
-    vi.stubEnv('NUXT_POSTGRES_LOG_URL', url)
+    runtime = await postgresRuntimeFixture({ dir: root, bin })
+    for (const [key, value] of Object.entries(runtime.env)) vi.stubEnv(key, value)
     vi.stubEnv('NUXT_DB_READONLY', '1')
-    postgres = new pg.Pool({ connectionString: url })
+    postgres = new pg.Pool({ connectionString: runtime.url })
     initializeWorkerLogging()
   }, 15_000)
 
@@ -62,7 +29,7 @@ describe.skipIf(!bin)('PostgreSQL current qualification worker logging', () => {
       await postgres?.end()
     } finally {
       vi.unstubAllEnvs()
-      if (started) command('pg_ctl', ['-D', cluster, '-w', '-m', 'fast', 'stop'])
+      runtime?.close()
       if (root) rmSync(root, { recursive: true, force: true })
     }
   })

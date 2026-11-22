@@ -1,10 +1,15 @@
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
 import { createHash } from 'node:crypto'
 import { statSync, realpathSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { z } from 'zod'
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { officialEvidenceRowRevision as OfficialEvidenceRowRevisionTable } from '../../../../db/postgresql/official-evidence-tables'
+import type { recordCorrespondence as RecordCorrespondenceTable } from '../../../../db/postgresql/qualification-tables'
+import type { RegisteredDeclaration } from './registered-declaration-summary'
 import { normalizeAttachment } from '../../lib/attachment'
-import type { preflightParse310 } from './parse-maintenance-105'
+import type { InputRef310 } from './parse-maintenance-contract'
 import type { EventCorrectionRequest } from './roster-event-correction-model'
 
 export const syncRequestSchema = z.strictObject({
@@ -28,7 +33,7 @@ export function failFileEventSync(code: string, message: string, statusCode = 40
   throw Object.assign(new Error(message), { code, statusCode })
 }
 
-export function fileEventSyncPhysical(ref: ReturnType<typeof preflightParse310>['inputRef'], dir:string) {
+export function fileEventSyncPhysical(ref: InputRef310, dir:string) {
   const root = realpathSync(dir),
     path = realpathSync(resolve(root, ref.relPath))
   if (!path.startsWith(root + sep)) failFileEventSync('source_changed', '文件路径越界')
@@ -50,18 +55,18 @@ export type Row = {
 }
 
 export type FileSyncEventSources = {
-  event:typeof schema.recordEvent.$inferSelect
-  record:typeof schema.record.$inferSelect
-  evidence:(typeof schema.recordEvidence.$inferSelect)[]
-  siblings:(typeof schema.recordEvent.$inferSelect)[]
-  official:(typeof schema.officialEvidenceRowRevision.$inferSelect)[]
-  correspondences:(typeof schema.recordCorrespondence.$inferSelect)[]
+  event:OfficialEventRow
+  record:RosterRecordRow
+  evidence:(typeof RecordEvidenceTable.$inferSelect)[]
+  siblings:(OfficialEventRow)[]
+  official:(Omit<typeof OfficialEvidenceRowRevisionTable.$inferSelect, 'sourceBindingKnown'> & { sourceBindingKnown: boolean })[]
+  correspondences:(typeof RecordCorrespondenceTable.$inferSelect)[]
 }
 
 export function proposeFileEventSync(input: FileSyncEventSources,
-  enterprise: Pick<typeof schema.enterprise.$inferSelect,'id'|'name'>,
+  enterprise: Pick<typeof EnterpriseTable.$inferSelect,'id'|'name'>,
   source: Pick<ReturnType<typeof fileEventSyncPhysical>,'sha256'|'contentVersion'>,
-  filePath:string, active:(typeof schema.fileDeclaration669.$inferSelect)[]): { row:Row; op?:EventCorrectionRequest['operations'][number] } {
+  filePath:string, active:(RegisteredDeclaration)[]): { row:Row; op?:EventCorrectionRequest['operations'][number] } {
   const { event,record,evidence,official } = input
   const eventId = event.id
   const before = { year: event.year, batchSeq: event.batchSeq },

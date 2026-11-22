@@ -8,19 +8,22 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { minimalPdf } from '../../support/minimal-pdf'
 
-const url = process.env.TEST_LEGACY_ROSTER_POSTGRES_URL
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 const token = 'page-fixture-token'
 let folder: string
 let request: ReturnType<typeof toWebHandler>
 
 beforeAll(async () => {
-  if (!url) return
   folder = mkdtempSync(join(tmpdir(), 'pg-legacy-pages-'))
   const pdf = minimalPdf({ pages: 2 })
   writeFileSync(join(folder, 'notice.pdf'), pdf)
   writeFileSync(join(folder, 'different.pdf'), pdf)
 
-  const client = new pg.Client({ connectionString: url })
+  postgres = await postgresRuntimeFixture({ dir: folder })
+  const url = postgres.url
+  const client = new pg.Client({ connectionString: postgres.url })
   await client.connect()
   try {
     await client.query(`
@@ -45,7 +48,6 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: folder }))
-  vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const pages = (await import('../../../layers/sme-roster/server/api/roster/evidence/pages.post')).default
   const evidence = (await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default
   const audit = (await import('../../../layers/sme-roster/server/api/roster/evidence/[id]/audit.get')).default
@@ -53,12 +55,12 @@ beforeAll(async () => {
     .post('/api/roster/evidence/pages', pages)
     .get('/api/roster/evidence/:id', evidence)
     .get('/api/roster/evidence/:id/audit', audit)))
-})
+}, 60_000)
 
 afterAll(async () => {
   await closePostgresDirectoryDb()
+  postgres?.close()
   if (folder) rmSync(folder, { recursive: true, force: true })
-  vi.doUnmock('@db')
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -77,7 +79,7 @@ async function submit(body: unknown, authorized = true) {
   }))
 }
 
-it.skipIf(!url)('previews and partially applies verified pages with one official event revision and audit', async () => {
+it('previews and partially applies verified pages with one official event revision and audit', async () => {
   const verified = { sourceFile: 'notice.pdf', listNo: 6, page: 2, enterpriseName: '甲企业', district: '海曙区', basis: 'Checked original page' }
   const entries = [
     verified,

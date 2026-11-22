@@ -1,11 +1,46 @@
+import type { SQL } from 'drizzle-orm'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, readdir, realpath, stat } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { extensionOf } from '../../lib/core/file-path'
-import type { evaluateFileAdmission, FileFilter } from '../../lib/core/file-categories'
+import type { evaluateFileAdmission, FileAdmissionPolicy, FileFilter, FileLanding } from '../../lib/core/file-categories'
 import type { FileContentConflict } from './file-identity'
 import { appLog, type LogContext } from '../../lib/logging'
+
+export type RegistrationWriter<Database = NodePgDatabase> = (db: Database, file: RegistrationFile) => Promise<FileRegistrationResult>
+
+export interface FileCategoryServer {
+  readonly id: string
+  readonly admission?: FileAdmissionPolicy
+  readonly filters?: readonly FileFilter[]
+  readonly postgres?: {
+    readonly constraint?: (filters: FileQueryFilters) => SQL | undefined
+    readonly countReferences?: (db: NodePgDatabase, ids: readonly number[]) => Promise<ReadonlyMap<number, number>>
+    readonly readFields?: (db: NodePgDatabase, ids: readonly number[]) => Promise<ReadonlyMap<number, object>>
+    readonly orderBy?: readonly SQL[]
+  }
+  readonly metadata?: {
+    readonly properties: Record<string, object>
+    parse(input: Record<string, unknown>): object
+    writePostgres?(db: NodePgDatabase, file: FileRow, patch: Record<string, unknown>): Promise<boolean>
+  }
+  readonly landing?: FileLanding
+  /** Handles unqualified uploads and registration paths unclaimed by other contributions. */
+  readonly defaultLanding?: boolean
+  readonly registration?: {
+    /** Claims a path for registration even when the request omits fileCategory. */
+    matchesPath(relPath: string): boolean
+    /** Validates the declaration and returns a writer that runs only after admission. */
+    preparePostgres(input: Record<string, unknown>): RegistrationWriter<NodePgDatabase> | Promise<RegistrationWriter<NodePgDatabase>>
+  }
+  readonly snapshot?: (fields: FileRow) => Record<string, unknown>
+  readonly openAPI?: {
+    readonly listDescription?: string
+    readonly rowProperties?: Record<string, object>
+  }
+}
 
 export interface FileQuery {
   q?: string

@@ -6,7 +6,11 @@ import type { DuplicateMergeEvidence } from '../../lib/roster/duplicate-merge'
 import { TITLE_ORDER } from '../../lib/labels'
 import { MAX_PAGE_SIZE } from '../../lib/query-limits'
 import { findIndexedUsccEvidence, type PlatformEvidenceIndex } from './roster-duplicate-merge-model'
-import type { readUsccTargets } from './uscc-research-read'
+import type { enterprise } from '../../../../db/postgresql/enterprise-tables'
+import type { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
+import type { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
+import type { PlatformStoredQuery } from '../../lib/platform/read'
+import type { selectUsccTargetRows } from './uscc-target-selection'
 
 const DEFAULT_PAGE_SIZE = 50
 
@@ -152,7 +156,16 @@ function currentTraces(snap: UsccTargetSnapshot): UsccInterfaceTrace[] {
   }))
 }
 
-export type UsccTargetSnapshot = ReturnType<typeof readUsccTargets>
+export type UsccTargetSnapshot = {
+  rows: ReturnType<typeof selectUsccTargetRows>
+  enterprises: Pick<typeof enterprise.$inferSelect, 'id' | 'name' | 'nameNorm' | 'district' | 'city'>[]
+  records: Pick<typeof record.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'source' | 'district'>[]
+  events: Pick<typeof recordEvent.$inferSelect, 'id' | 'recordId'>[]
+  evidence: Pick<typeof recordEvidence.$inferSelect, 'recordEventId' | 'sourceFile' | 'attachment' | 'listNo' | 'page'>[]
+  differences: Pick<typeof differenceReason.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'recordedAt' | 'status' | 'reasonCode' | 'reasonNote'>[]
+  queries: Pick<PlatformStoredQuery, 'id' | 'interface' | 'queryKey' | 'rdjb' | 'queriedAt' | 'status'>[]
+  relationCounts: { queryId: number; count: number }[]
+}
 
 // ---------------------------------------------------------------------------
 // 库内匹配字典（②：现名 + 已确认曾用名）

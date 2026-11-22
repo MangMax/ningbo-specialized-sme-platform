@@ -4,8 +4,6 @@ import { join } from 'node:path'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { expect, it } from 'vitest'
-import { initializeDb } from '../../../db/client'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { getPostgresPlatformBatch, getPostgresPlatformBatchItem } from '../../../layers/sme-roster/server/utils/platform-batch-query-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
@@ -52,16 +50,6 @@ const records = [batchId, 'platform-query-batch', params, 'failed', result, now]
 
 type Runtime = Awaited<ReturnType<typeof postgresRuntimeFixture>>
 
-function seedLegacySQLite(sourcePath: string) {
-  const db = initializeDb({ create: true, dbPath: sourcePath })
-  try {
-    installLeadListSchema(db.$client)
-    db.$client.prepare('INSERT INTO job (id, kind, params, state, result, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(...records)
-  } finally {
-    db.$client.close()
-  }
-}
-
 async function assertCompactBatch(client: pg.Client) {
   const { rows: [job] } = await client.query('SELECT result FROM business.job WHERE id = $1', [batchId])
   expect(JSON.parse(job.result)).toEqual({
@@ -84,32 +72,28 @@ async function assertCompactBatch(client: pg.Client) {
   expect(await getPostgresPlatformBatchItem(db, { batchId, itemId })).toEqual(batch.items[0])
 }
 
-it.skipIf(!bin).each(['PostgreSQL', 'already separated PostgreSQL', 'SQLite'] as const)(
+it.skipIf(!bin).each(['PostgreSQL', 'already separated PostgreSQL'] as const)(
   'sparsifies batch rows while retaining business types and continuation metadata from %s',
   async source => {
     const dir = mkdtempSync(join(tmpdir(), 'pg-platform-batch-migration-'))
-    const sourcePath = join(dir, 'source.db')
     let runtime: Runtime | undefined
     let client: pg.Client | undefined
     try {
-      if (source === 'SQLite') seedLegacySQLite(sourcePath)
-      runtime = await postgresRuntimeFixture({ dir, ...(source === 'SQLite' ? { sourcePath } : {}) })
+      runtime = await postgresRuntimeFixture({ dir })
       client = new pg.Client({ connectionString: runtime.url })
       await client.connect()
 
-      if (source !== 'SQLite') {
-        if (source === 'PostgreSQL') await client.query('DROP TABLE business.platform_batch_segment')
-        await client.query('INSERT INTO business.job (id, kind, params, state, result, created_at) VALUES ($1,$2,$3,$4,$5,$6)', records)
-        if (source === 'already separated PostgreSQL') {
-          runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/support/split-platform-batch-results.sql'])
-          expect((await client.query('SELECT payload FROM business.platform_batch_segment WHERE segment_index = 0')).rows)
-            .toEqual([{ payload: firstSegment }])
-          await client.query('UPDATE business.platform_batch_segment SET payload = $1 WHERE segment_index = 0', [firstAlreadySeparated])
-        }
-        runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
-        await assertCompactBatch(client)
-        runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
+      if (source === 'PostgreSQL') await client.query('DROP TABLE business.platform_batch_segment')
+      await client.query('INSERT INTO business.job (id, kind, params, state, result, created_at) VALUES ($1,$2,$3,$4,$5,$6)', records)
+      if (source === 'already separated PostgreSQL') {
+        runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/support/split-platform-batch-results.sql'])
+        expect((await client.query('SELECT payload FROM business.platform_batch_segment WHERE segment_index = 0')).rows)
+          .toEqual([{ payload: firstSegment }])
+        await client.query('UPDATE business.platform_batch_segment SET payload = $1 WHERE segment_index = 0', [firstAlreadySeparated])
       }
+      runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
+      await assertCompactBatch(client)
+      runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/13-compact-platform-batch-results.sql'])
 
       await assertCompactBatch(client)
       await client.query('DELETE FROM business.job WHERE id = $1', [batchId])

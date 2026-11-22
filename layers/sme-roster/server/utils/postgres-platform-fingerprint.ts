@@ -1,14 +1,13 @@
 import { and, between, desc, eq, getTableColumns, isNotNull, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
-import type { platformCollection as LegacyCollection } from '../../../../db/schema'
 import {
   platformBusinessObservation, platformCollection, platformCollectionPage,
   platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 type Db = Pick<NodePgDatabase, 'select'>
-type Collection = typeof LegacyCollection.$inferSelect
+type Collection = Pick<typeof platformCollection.$inferSelect, typeof collectionFieldOrder[number]> & Pick<PlatformStoredQuery, 'interface' | 'status'>
 
 const pgCollectionColumns = getTableColumns(platformCollection)
 // Preserve legacy collection field order for callers that fingerprint its projection.
@@ -49,7 +48,7 @@ const collectionFieldOrder = [
   'witnessError',
 ] as const satisfies readonly (keyof typeof pgCollectionColumns)[]
 const collectionColumns = Object.fromEntries(collectionFieldOrder
-  .map(key => [key, pgCollectionColumns[key]])) as Pick<typeof pgCollectionColumns, typeof collectionFieldOrder[number]>
+  .map(key => [key, pgCollectionColumns[key]])) as Pick<typeof pgCollectionColumns, typeof collectionFieldOrder[number]> & Pick<PlatformStoredQuery, 'interface' | 'status'>
 
 type Query = PlatformStoredQuery & { rawResponseSha256: string | null }
 

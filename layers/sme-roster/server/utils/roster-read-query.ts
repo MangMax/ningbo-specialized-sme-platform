@@ -18,7 +18,7 @@ import {
   SOURCE_ORDER,
   TITLE_ORDER,
 } from '../../lib/labels'
-import type { EventType, RecordQuery } from '../../lib/query'
+import type { EventType, RecordQuery } from '../../lib/query-projection'
 import {
   type RosterDifferenceFilter,
   type RosterEnterpriseFilter,

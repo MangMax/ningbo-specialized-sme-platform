@@ -13,16 +13,17 @@ import {
 import { platformQueryTitleScope } from '../../../../db/postgresql/platform-query-scope-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
-import type * as schema from '../../../../db/schema'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformCollectionPage as PlatformCollectionPageTable, platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
 import { fileNameOf } from '../../../core/lib/preview'
-import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
+import type { StoredFileContentIdentity } from '../../../core/server/utils/file-identity'
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { postgresOfficialSourceDirectory } from './official-source-directory-postgres'
 import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
-import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type SelectedRecordComparison } from './record-comparison-model'
+import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type FormalEvent, type SelectedRecordComparison } from './record-comparison-model'
 import { postgresCollectionConditionValues, projectPostgresComparisonConditions, projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 
@@ -60,7 +61,7 @@ async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> 
   const coordinates = numbers(rows.map(row => row.collection.id))
   const page = alias(platformCollectionPage, 'p')
   const pages = Map.groupBy((await db.select({
-    row: sql<typeof schema.platformCollectionPage.$inferSelect>`${postgresRosterRow(platformCollectionPage, 'p')}`,
+    row: sql<typeof PlatformCollectionPageTable.$inferSelect>`${postgresRosterRow(platformCollectionPage, 'p')}`,
   }).from(page).where(eq(page.collectionId, sql`ANY(${coordinates})`))
     .orderBy(page.collectionId, page.ordinal)).map(({ row }) => row), row => row.collectionId)
   const titleScope = platformQueryTitleScope
@@ -81,7 +82,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput): Promi
   const facts = await readQueryFacts(db, input.queryIds)
   const batch = alias(platformExportBatch, 'p')
   const batches = (await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch, 'p')}`,
+    row: sql<typeof PlatformExportBatchTable.$inferSelect>`${postgresRosterRow(platformExportBatch, 'p')}`,
   }).from(batch).where(eq(batch.id, sql`ANY(${numbers(input.exportBatchIds)})`)).orderBy(batch.id))
     .map(({ row }) => row).filter(row => row.importStatus === 'imported' && comparisonBefore(row.collectedOn, input.asOf))
   const documents = (await readDocuments(db, input.officialSourceDocumentIds)).filter(row => comparisonBefore(row.issueDate, input.asOf))
@@ -100,7 +101,7 @@ async function selectComparison(db: Reader, input: RecordComparisonInput): Promi
   const batchById = new Map(batches.map(row => [row.id, row]))
   const exportRow = alias(platformExportRow, 'p')
   const exports = (await db.select({
-    row: sql<typeof schema.platformExportRow.$inferSelect>`${postgresRosterRow(platformExportRow, 'p')}`,
+    row: sql<typeof PlatformExportRowTable.$inferSelect>`${postgresRosterRow(platformExportRow, 'p')}`,
   }).from(exportRow).where(eq(exportRow.batchId, sql`ANY(${numbers(input.exportBatchIds)})`)).orderBy(exportRow.id))
     .map(({ row }) => ({ row: { ...row, rawFields: null }, batch: batchById.get(row.batchId)! }))
   const edge = recordCorrespondence
@@ -121,7 +122,6 @@ async function selectComparison(db: Reader, input: RecordComparisonInput): Promi
 }
 
 type FormalStep = Extract<ComparisonRead, { type: 'events' }>
-type FormalEvent = ReturnType<typeof import('./record-comparison-formal').iterateComparisonFormalEvents> extends Generator<infer T> ? T : never
 
 async function readFormalEvents(db: Reader, input: RecordComparisonInput, request: FormalStep) {
   const e = recordEvent, r = record, v = recordEvidence
@@ -163,7 +163,7 @@ async function runComparison(tx: Reader, source: SelectedRecordComparison, signa
       else {
         const evidence = alias(recordEvidence, 'p'), f = storedFile
         const rows = await tx.select({
-          evidence: sql<typeof schema.recordEvidence.$inferSelect>`${postgresRosterRow(recordEvidence,'p')}`,
+          evidence: sql<typeof RecordEvidenceTable.$inferSelect>`${postgresRosterRow(recordEvidence,'p')}`,
           registered: sql<StoredFileContentIdentity | null>`CASE WHEN ${f.id} IS NOT NULL THEN json_build_object(
             'fileId',${f.id},'relPath',${f.relPath},'bytes',${f.bytes},'sha256',${f.sha256}) END`,
         }).from(evidence).leftJoin(f, eq(f.relPath, evidence.sourceFile))

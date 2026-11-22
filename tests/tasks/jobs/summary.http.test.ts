@@ -163,10 +163,10 @@ it('full reads redact credentials and host paths while preserving business field
   const sensitiveResult = { references, reference: 'jxj/results/synthetic.json', batchId: 'synthetic-batch', receipt: { written: 3, replayed: true },
     cookie: 'archived-session', token: 'archived-token',
     files: [{ path: '/Users/synthetic/private/result.json', text: 'first page' }, { path: 'jxj/synthetic.pdf', text: 'second page' }],
-    message: `echo ${secrets.join(' ')}; token=archived-token; path:/tmp/synthetic/private.png; file:///var/private/synthetic.sqlite; C:\\private\\result.json`,
+    message: `echo ${secrets.join(' ')}; token=archived-token; path:/tmp/synthetic/private.png; file:///var/private/synthetic.backup; C:\\private\\result.json`,
     url: 'https://example.invalid/synthetic/result', detailUrl: `/api/jobs/${jobId}`, raw: '{ "synthetic": true }' }
   await seed(jobId, 'summary-secrets', { references, file: 'jxj/synthetic.pdf', apiToken: 'archived-api-token' },
-    'failed', undefined, sensitiveResult, `failure ${secrets.join(' ')}; /var/private/synthetic.sqlite`)
+    'failed', undefined, sensitiveResult, `failure ${secrets.join(' ')}; /var/private/synthetic.backup`)
   for (const path of [`/api/jobs/${jobId}`, '/api/jobs?kind=summary-secrets', `/api/jobs/${jobId}?view=summary`, '/api/jobs?view=summary&kind=summary-secrets']) {
     const response = await fetch(`${base}${path}`)
     expect(response.status).toBe(200)

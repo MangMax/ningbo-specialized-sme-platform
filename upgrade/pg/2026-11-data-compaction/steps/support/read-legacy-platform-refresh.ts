@@ -1,9 +1,13 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
+import { z } from 'zod'
 import { platformBusinessObservation as observation, platformCollection as collection,
   platformObservationAssignment as assignment } from '../../../../../db/postgresql/platform-tables'
 import { refreshRelationFields } from '../../../../../layers/sme-roster/lib/platform/difference-hash-keys'
-import { snapshotSchema } from '../../../../../layers/sme-roster/lib/platform/evidence-snapshot-model'
 import type { PostgresQualificationTransaction as Tx } from '../../../../../layers/sme-roster/lib/roster/current-qualification-postgres'
+
+const cellSchema = z.object({name:z.string(),storageClass:z.enum(['null','text','blob','integer','real']),hex:z.string().regex(/^(?:[a-fA-F0-9]{2})*$/),real64be:z.string().regex(/^[a-fA-F0-9]{16}$/).optional()})
+
+const snapshotSchema=z.object({encoding:z.literal('t05a-sqlite-cells-v1'),fields:z.array(cellSchema)})
 
 function restoreJsonEscapes(text: string, quoted: boolean | null) {
   return quoted ? text.replace(/\\\\\|(u[0-9a-fA-F]{4})?\|/g, (_, escape: string | undefined) => escape ? '\\' + escape : '\\\\') : text

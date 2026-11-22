@@ -12,6 +12,8 @@ export async function startPostgresImportHttp(dir: string, token: string) {
     vi.stubGlobal(name, fn)
   }
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: dir, apiToken: token }))
+  const preflight = (await import('../../../../layers/sme-roster/server/api/roster/import/preflight.post')).default
+  const duplicate = (await import('../../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default
   const commit = (await import('../../../../layers/sme-roster/server/api/roster/import/commit.post')).default
   const intake = (await import('../../../../layers/sme-roster/server/api/roster/import/intake/[id].get')).default
   const supplement = (await import('../../../../layers/sme-roster/server/api/roster/import/intake/[id]/supplement.post')).default
@@ -19,6 +21,8 @@ export async function startPostgresImportHttp(dir: string, token: string) {
   const researchPost = (await import('../../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
   const router = h3.createRouter()
    .post('/api/roster/import/commit', commit)
+   .post('/api/roster/import/preflight', preflight)
+   .get('/api/roster/import/duplicate-candidates', duplicate)
    .get('/api/roster/import/intake/:id', intake)
    .post('/api/roster/import/intake/:id/supplement', supplement)
    .get('/api/roster/uscc-research', researchGet)

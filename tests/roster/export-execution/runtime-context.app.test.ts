@@ -1,14 +1,16 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb, schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
+import { sql } from 'drizzle-orm'
+import pg from 'pg'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { createPostgresPublishedPresentationReader } from '../../../layers/sme-roster/lib/roster/official-published-presentation-postgres'
+import { readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { captureReceiptRuntimeContext, validateReceiptRuntimeContext } from '../../../layers/sme-roster/server/utils/receipt-runtime-context'
-import { importReceiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction-sqlite'
-import { createCurrentQualificationAssessmentReader, readCurrentQualificationAssessment } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readOfficialPublishedPresentation } from '../../../layers/sme-roster/lib/roster/official-published-presentation-sqlite'
+import { importPostgresReceiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -17,27 +19,37 @@ import { resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { createCurrentExportWorker } from '../../../layers/sme-roster/server/utils/current-export-worker-location'
 import { createEnterpriseReadProcess } from '../../../layers/sme-roster/server/utils/enterprise-read-process'
-import { preflightRosterImport, commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
-import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { HEADERS_409 } from '../../fixtures/current-export-409'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-let root: string, db: ReturnType<typeof initializeDb>
-beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(),'runtime-context-409-'))
-  db = initializeDb({ create: true, dbPath:join(root,'synthetic.db')})
-  vi.stubEnv('NUXT_LOG_DIR',join(root,'logs'))
-  for (const key of ['NUXT_API_TOKEN','NUXT_MCP_TOKEN','MIIT_COOKIE','NUXT_OCR_TOKEN','PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN']) vi.stubEnv(key,'')
+let root: string, db: NodePgDatabase
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let pool: pg.Pool
+beforeEach(async () => {
+  root = mkdtempSync(join(tmpdir(), 'runtime-context-409-'))
+  postgres = await postgresRuntimeFixture({ dir: root })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  db = drizzle(pool)
+  vi.stubEnv('NUXT_LOG_DIR', join(root, 'logs'))
+  for (const key of ['NUXT_API_TOKEN','NUXT_MCP_TOKEN','MIIT_COOKIE','NUXT_OCR_TOKEN','PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN']) vi.stubEnv(key, '')
+}, 60_000)
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  try { await pool?.end() }
+  finally {
+    postgres?.close()
+    rmSync(root, { recursive: true, force: true })
+  }
 })
-afterEach(() => { vi.unstubAllEnvs(); db.$client.close(); rmSync(root,{recursive:true,force:true}) })
-const saved = (key: 'sme-roster.miitCookie'|'core.ocrToken', value: string) => db.insert(schema.serviceCredential).values({key,value,updatedAt:'synthetic'}).run()
-const apply = (r: ReturnType<typeof importReceiptRedactor>, nameRaw: string | null) => r({evidenceId:1,eventId:2,revision:1,availability:'captured',nameRaw,sourceBindingKnown:true},'official_published_name')
+const saved = async (key: 'sme-roster.miitCookie'|'core.ocrToken', value: string) =>
+  db.insert(schema.serviceCredential).values({ key, value, updatedAt: 'synthetic' })
+const apply = (r: Awaited<ReturnType<typeof importPostgresReceiptRedactor>>, nameRaw: string | null) => r({evidenceId:1,eventId:2,revision:1,availability:'captured',nameRaw,sourceBindingKnown:true},'official_published_name')
 
-it('B02 preserves literal union order and omits unused runtime OCR with saved credentials', () => {
+it('B02 preserves literal union order and omits unused runtime OCR with saved credentials', async () => {
   vi.stubEnv('NUXT_API_TOKEN','E_API'); vi.stubEnv('NUXT_MCP_TOKEN','E_MCP')
-  saved('sme-roster.miitCookie','S_COOKIE'); saved('core.ocrToken','S_OCR')
-  const r = importReceiptRedactor(db,{additionalSecrets:['ADD']},{apiToken:'R_API',mcpToken:'R_MCP',ocrToken:'UNUSED_R_OCR'})
+  await saved('sme-roster.miitCookie','S_COOKIE'); await saved('core.ocrToken','S_OCR')
+  const r = await importPostgresReceiptRedactor(db,{additionalSecrets:['ADD']},{apiToken:'R_API',mcpToken:'R_MCP',ocrToken:'UNUSED_R_OCR'})
   expect(r.knownRedactors).toHaveLength(7)
   const literals = ['ADD','R_API','R_MCP','E_API','E_MCP','S_COOKIE','S_OCR']
   for (const [index, literal] of literals.entries()) {
@@ -50,49 +62,49 @@ it.each([
   {id:'runtime',runtime:'  R_OCR  ',env:'E_OCR',paddle:'P_OCR',selected:'R_OCR',unused:['E_OCR','P_OCR']},
   {id:'env',runtime:'  ',env:' E_OCR ',paddle:'P_OCR',selected:'E_OCR',unused:['P_OCR']},
   {id:'paddle',runtime:'',env:' ',paddle:' P_OCR ',selected:'P_OCR',unused:[]},
-])('B03 OCR precedence $id', ({runtime,env,paddle,selected,unused}) => {
+])('B03 OCR precedence $id', async ({runtime,env,paddle,selected,unused}) => {
   vi.stubEnv('NUXT_OCR_TOKEN',env); vi.stubEnv('PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN',paddle)
-  const r=importReceiptRedactor(db,{}, {ocrToken:runtime})
+  const r = await importPostgresReceiptRedactor(db,{}, {ocrToken:runtime})
   expect(String(apply(r,selected))).not.toContain(selected)
   for (const value of unused) expect(apply(r,value)).toBe(value)
 })
-it('B04 preserves empty filtering duplicate order and independent environment API sources', () => {
+it('B04 preserves empty filtering duplicate order and independent environment API sources', async () => {
   vi.stubEnv('NUXT_API_TOKEN','ENV_API'); vi.stubEnv('MIIT_COOKIE',' COOKIE_ENV ')
-  const r=importReceiptRedactor(db,{additionalSecrets:['DUP','','DUP']},{apiToken:'DUP',mcpToken:''})
+  const r = await importPostgresReceiptRedactor(db,{additionalSecrets:['DUP','','DUP']},{apiToken:'DUP',mcpToken:''})
   expect(r.knownRedactors).toHaveLength(3)
   for (const [i,value] of ['DUP','ENV_API','COOKIE_ENV'].entries()) expect(String(r.knownRedactors[i]!(value))).not.toContain(value)
 })
-it('B07 preserves typed name structural fields null and custom callback compatibility', () => {
-  const r=importReceiptRedactor(db,{}, {apiToken:'SECRET'})
+it('B07 preserves typed name structural fields null and custom callback compatibility', async () => {
+  const r = await importPostgresReceiptRedactor(db,{}, {apiToken:'SECRET'})
   expect(apply(r,null)).toBeNull()
   expect(apply(r,'SECRET企业')).not.toContain('SECRET')
   expect(r({evidenceId:1,nameRaw:'ordinary',apiToken:'SECRET'})).toEqual({evidenceId:1,nameRaw:'ordinary',apiToken:'[REDACTED]'})
-  const enterprise=db.insert(schema.enterprise).values({name:'Container',nameNorm:'Container'}).returning().get()
-  const record=db.insert(schema.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',nameRaw:'Container'}).returning().get()
-  const event=db.insert(schema.recordEvent).values({recordId:record.id,eventType:'award',year:2026,batchSeq:1}).returning().get()
-  const evidence=db.insert(schema.recordEvidence).values({recordEventId:event.id,sourceFile:'synthetic409.pdf'}).returning().get()
-  const batch=db.insert(schema.importBatch).values({idempotencyKey:'B07',sourceKind:'announcement',sourceIdentity:'synthetic409',status:'committed'}).returning().get()
-  db.insert(schema.officialEvidenceRowRevision).values({evidenceId:evidence.id,eventId:event.id,revision:1,capturedRecordId:record.id,capturedEnterpriseId:enterprise.id,nameRaw:'SECRET',path:'synthetic409.pdf',sourceBindingKnown:false,actor:{type:'agent',id:'synthetic409'},basis:'synthetic409',commandKind:'import',importBatchId:batch.id,createdAt:'synthetic409'}).run()
-  const callback=vi.fn(()=> 'custom') as unknown as ReturnType<typeof importReceiptRedactor>
-  const facts=readOfficialPublishedPresentation(db,[{evidenceId:evidence.id,eventId:event.id}],callback)
+  const enterprise=(await db.insert(schema.enterprise).values({name:'Container',nameNorm:'Container'}).returning())[0]!
+  const record=(await db.insert(schema.record).values({enterpriseId:enterprise.id,titleCode:'specialized_sme',source:'jxj',nameRaw:'Container'}).returning())[0]!
+  const event=(await db.insert(schema.recordEvent).values({recordId:record.id,eventType:'award',year:2026,batchSeq:1}).returning())[0]!
+  const evidence=(await db.insert(schema.recordEvidence).values({recordEventId:event.id,sourceFile:'synthetic409.pdf'}).returning())[0]!
+  const batch=(await db.insert(schema.importBatch).values({idempotencyKey:'B07',sourceKind:'announcement',sourceIdentity:'synthetic409',status:'committed',createdAt:'2026-01-01T00:00:00Z'}).returning())[0]!
+  await db.insert(schema.officialEvidenceRowRevision).values({evidenceId:evidence.id,eventId:event.id,revision:1,capturedRecordId:record.id,capturedEnterpriseId:enterprise.id,nameRaw:'SECRET',path:'synthetic409.pdf',sourceBindingKnown:0,actor:JSON.stringify({type:'agent',id:'synthetic409'}),basis:'synthetic409',commandKind:'import',importBatchId:batch.id,createdAt:'synthetic409'})
+  const callback=vi.fn(()=> 'custom') as unknown as Awaited<ReturnType<typeof importPostgresReceiptRedactor>>
+  const facts = await createPostgresPublishedPresentationReader(db, callback)([{evidenceId:evidence.id,eventId:event.id}])
   expect(facts.get(evidence.id)).toEqual({evidenceId:evidence.id,eventId:event.id,revision:1,availability:'captured',nameRaw:'custom',sourceBindingKnown:false})
   expect(callback).toHaveBeenCalledWith({evidenceId:evidence.id,eventId:event.id,revision:1,availability:'captured',nameRaw:'SECRET',sourceBindingKnown:false},'official_published_name')
-  const owned=readOfficialPublishedPresentation(db,[{evidenceId:evidence.id,eventId:event.id}],undefined,{apiToken:'SECRET'})
+  const owned = await createPostgresPublishedPresentationReader(db, await importPostgresReceiptRedactor(db, {}, {apiToken:'SECRET'}))([{evidenceId:evidence.id,eventId:event.id}])
   expect(owned.get(evidence.id)).toMatchObject({evidenceId:evidence.id,eventId:event.id,revision:1,availability:'captured',sourceBindingKnown:false})
   expect(owned.get(evidence.id)!.nameRaw).not.toContain('SECRET')
 })
-it('B08 omitted and empty context keep default full three title DTO and digest', () => {
-  const e=db.insert(schema.enterprise).values({name:'literal',nameNorm:'literal'}).returning().get()
+it('B08 omitted and empty context keep default full three title DTO and digest', async () => {
+  const e=(await db.insert(schema.enterprise).values({name:'literal',nameNorm:'literal'}).returning())[0]!
   const at=Date.parse('2026-06-01T00:00:00Z')
-  const expected=readCurrentQualificationAssessment(db.$client,e.id,at)
-  expect(createCurrentQualificationAssessmentReader(db.$client).read(e.id,at).snapshot).toEqual(expected)
-  expect(createCurrentQualificationAssessmentReader(db.$client,{}).read(e.id,at).snapshot).toEqual(expected)
-  expect(importReceiptRedactor(db)('ordinary')).toBe(importReceiptRedactor(db,{})('ordinary'))
+  const snapshot = await db.transaction(async tx => (await readPostgresCurrentDetailBatch(tx, [e.id], 'specialized_sme', at)).get(e.id)?.snapshot, { isolationLevel: 'repeatable read' })
+  expect(snapshot).toMatchObject({ assessmentVersion: QUALIFICATION_ASSESSMENT_VERSION, ruleVersion: CURRENT_RULE_VERSION })
+  expect(snapshot?.titles.map(title => title.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
+  expect((await importPostgresReceiptRedactor(db))('ordinary')).toBe((await importPostgresReceiptRedactor(db, {}, {}))('ordinary'))
   expect(captureReceiptRuntimeContext({apiToken:'',ocrToken:undefined,unrelated:'not copied'})).toEqual({apiToken:''})
 })
-it('B06 credential storage fault retains safe failure without credential contents', () => {
-  db.$client.exec('drop table service_credential')
-  expect(()=>importReceiptRedactor(db,{}, {apiToken:'SYNTHETIC_NO_LEAK'})).toThrow('凭据配置存储不可用，请检查数据库后重试。')
+it('B06 credential storage fault retains safe failure without credential contents', async () => {
+  await db.execute(sql`DROP TABLE business.service_credential`)
+  await expect(importPostgresReceiptRedactor(db,{}, {apiToken:'SYNTHETIC_NO_LEAK'})).rejects.toThrow('凭据配置存储不可用，请检查数据库后重试。')
 })
 it.each([
   {id:'null',value:null},{id:'array',value:[]},{id:'unknown',value:{extra:'literal'}},
@@ -105,7 +117,7 @@ it.each([
 ])('B09 rejects closed context $id with fixed error', ({value}) => {
   expect(()=>validateReceiptRuntimeContext(value)).toThrow(/^导出运行上下文不可用$/)
 })
-it('B09 accepts exact UTF8 and total transport boundaries without truncation', () => {
+it('B09 accepts exact UTF8 and total transport boundaries without truncation', async () => {
   const input={apiToken:'a'.repeat(16384),mcpToken:'b'.repeat(16384),ocrToken:'c'.repeat(16384)}
   const value=validateReceiptRuntimeContext(input)
   expect(value).toEqual(input); expect(Object.isFrozen(value)).toBe(true)
@@ -156,36 +168,42 @@ function assertWorkerArtifactPins409() {
   for (const [path,sha256] of Object.entries({ ...inventory.inputs, ...inventory.outputs })) expect(createHash('sha256').update(readFileSync(path)).digest('hex'),path).toBe(sha256)
 }
 
-function legalWorkerSeed409() {
-  const filesDir = join(root,'files'); mkdirSync(filesDir)
+async function legalWorkerSeed409() {
+  const filesDir = join(root, 'files')
+  mkdirSync(filesDir)
   const source = minimalPdf({ pages: 1 }), path = 'B409合成公布.pdf'
-  writeFileSync(join(filesDir,path),source)
-  const sha256 = createHash('sha256').update(source).digest('hex'), bytes = Buffer.byteLength(source)
-  const file = createClassifiedFile(db, { relPath: path, filename: path, ext: 'pdf', sha256, bytes, createdAt: '2026-01-01T00:00:00Z' }, { source: 'jxj', kind: 'announcement' })
-  const document = { source: 'jxj' as const, title: 'B409合成公布' }
-  const request: RosterImportRequest = {
-    idempotencyKey: 'actual-worker-409-legal-capture', sourceKind: 'announcement', sourceIdentity: 'B409合成公布',
-    payload: { announcement: { sourceDocument: document, records: [{
-      enterprise: { name: W409_NAMES.eligible, uscc: '91330211255994457P' }, titleCode: 'specialized_sme',
-      events: [{ eventType: 'award', year: 2026, batchSeq: 1, evidence: [{ sourceFile: path, attachment: null, page: 1, listNo: 1, publishedRow: {
-        nameRaw: W409_RAW_NAME, usccRaw: '91330211255994457P', districtRaw: null,
-        declaration: { kind: 'independent', sourceDocument: { ...document, path, docNumber: null, issueDate: null }, basis: '合成独立发布依据' },
-        storedFileId: file.id, path, sha256, bytes, attachment: null, sectionKey: '认定名单', listNo: 1, page: 1,
-        sourceBindingKnown: true, actor: { type: 'agent', id: 'synthetic409' }, basis: '合成逐行核实',
-      } }] }],
-    }] } },
-  }
-  const plan = preflightRosterImport(db,request,[],{ filesDir })
-  expect(plan.preflight.conflicts).toEqual([])
-  request.payload = { ...request.payload, ...(plan.preflight.officialEvidencePlanHash ? { officialEvidencePlanHash: plan.preflight.officialEvidencePlanHash } : {}) }
-  expect(commitRosterImport(db,request,[],{ filesDir, deferCandidateTasks: true }).status).toBe('committed')
-  const evidence = db.select().from(schema.recordEvidence).get()!
-  expect(readOfficialPublishedPresentation(db,[{ evidenceId: evidence.id, eventId: evidence.recordEventId }]).get(evidence.id)).toMatchObject({ availability: 'captured', revision: 1, nameRaw: W409_RAW_NAME, sourceBindingKnown: true })
+  writeFileSync(join(filesDir, path), source)
+  const sha256 = createHash('sha256').update(source).digest('hex')
+  const bytes = Buffer.byteLength(source)
+  const createdAt = '2026-01-01T00:00:00Z'
+  const [owner] = await db.insert(schema.enterprise).values({
+    name: W409_NAMES.eligible, nameNorm: W409_NAMES.eligible, usccNorm: '91330211255994457P',
+  }).returning()
+  const [record] = await db.insert(schema.record).values({
+    enterpriseId: owner!.id, titleCode: 'specialized_sme', source: 'jxj',
+  }).returning()
+  const [event] = await db.insert(schema.recordEvent).values({
+    recordId: record!.id, eventType: 'award', year: 2026, batchSeq: 1,
+  }).returning()
+  const [evidence] = await db.insert(schema.recordEvidence).values({
+    recordEventId: event!.id, sourceFile: path, page: 1, listNo: 1,
+  }).returning()
+  const [file] = await db.insert(schema.storedFile).values({ relPath: path, filename: path, ext: 'pdf', sha256, bytes: BigInt(bytes), createdAt }).returning()
+  const [document] = await db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'B409合成公布', path }).returning()
+  const [batch] = await db.insert(schema.importBatch).values({
+    idempotencyKey: 'actual-worker-409-legal-capture', sourceKind: 'announcement', sourceIdentity: path, status: 'committed', createdAt,
+  }).returning()
+  await db.insert(schema.officialEvidenceRowRevision).values({
+    evidenceId: evidence!.id, eventId: event!.id, revision: 1, capturedRecordId: record!.id, capturedEnterpriseId: owner!.id,
+    nameRaw: W409_RAW_NAME, usccRaw: owner!.usccNorm, path, sha256, bytes, sectionKey: '认定名单', listNo: 1, page: 1,
+    sourceDocumentId: document!.id, storedFileId: file!.id, sourceBindingKnown: 1,
+    actor: JSON.stringify({ type: 'agent', id: 'synthetic409' }), basis: '合成逐行核实', commandKind: 'import', importBatchId: batch!.id, createdAt,
+  })
   for (const [name, outcome] of [[W409_NAMES.pending, null], [W409_NAMES.excluded, 'failed']] as const) {
-    const enterprise = db.insert(schema.enterprise).values({ name, nameNorm: name }).returning().get()
-    const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: name }).returning().get()
-    const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2022, batchSeq: 1, decidedYear: outcome === null ? null : 2025, reviewOutcome: outcome }).returning().get()
-    db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, listNo: enterprise.id }).run()
+    const enterprise = (await db.insert(schema.enterprise).values({ name, nameNorm: name }).returning())[0]!
+    const record = (await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: name }).returning())[0]!
+    const event = (await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'review', year: 2022, batchSeq: 1, decidedYear: outcome === null ? null : 2025, reviewOutcome: outcome }).returning())[0]!
+    await db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: path, listNo: enterprise.id })
   }
 }
 
@@ -199,15 +217,12 @@ function workerBusinessDigest409(postgres: Awaited<ReturnType<typeof postgresRun
 }
 
 async function actualWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string, breakCredentialStorage = false) {
-  const postgres = await postgresRuntimeFixture({ dir: root, sourcePath: join(root, 'synthetic.db') })
-  try {
-    for (const [name, value] of Object.entries(postgres.env)) vi.stubEnv(name, value)
-    if (breakCredentialStorage) postgres.psql(['-c', 'DROP TABLE business.service_credential'])
-    const digest = workerBusinessDigest409(postgres)
-    const result = await observeWorker409(mode, context, caseId)
-    expect(workerBusinessDigest409(postgres)).toBe(digest)
-    return result
-  } finally { postgres.close() }
+  for (const [name, value] of Object.entries(postgres.env)) vi.stubEnv(name, value)
+  if (breakCredentialStorage) postgres.psql(['-c', 'DROP TABLE business.service_credential'])
+  const digest = workerBusinessDigest409(postgres)
+  const result = await observeWorker409(mode, context, caseId)
+  expect(workerBusinessDigest409(postgres)).toBe(digest)
+  return result
 }
 
 async function observeWorker409(mode: typeof workerModes409[number], context: unknown, caseId: string) {
@@ -250,10 +265,10 @@ async function observeWorker409(mode: typeof workerModes409[number], context: un
 // Pure B02/B03 cover every credential precedence partition. Both real worker
 // loaders retain end-to-end literal-cell and business-digest controls.
 it.each([{ mode: 'source' as const, ...ocrPartitions409[0] }, { mode: 'compiled' as const, ...ocrPartitions409[3] }])('B3 actual worker $mode OCR $id literal cells', async partition => {
-  legalWorkerSeed409()
+  await legalWorkerSeed409()
   for (const a of Object.values(W409)) for (const b of Object.values(W409)) if (a !== b) expect(a.includes(b)).toBe(false)
-  if (partition.savedCookie) saved('sme-roster.miitCookie',W409.savedCookie)
-  if (partition.savedOcr) saved('core.ocrToken',W409.savedOcr)
+  if (partition.savedCookie) await saved('sme-roster.miitCookie',W409.savedCookie)
+  if (partition.savedOcr) await saved('core.ocrToken',W409.savedOcr)
   vi.stubEnv('NUXT_API_TOKEN',W409.envApi); vi.stubEnv('NUXT_MCP_TOKEN',W409.envMcp)
   vi.stubEnv('MIIT_COOKIE',' ' + W409.envCookie + ' '); vi.stubEnv('NUXT_OCR_TOKEN',partition.envOcr)
   vi.stubEnv('PADDLEOCR_MCP_AISTUDIO_ACCESS_TOKEN',' ' + W409.paddle + ' ')
@@ -306,7 +321,7 @@ it.each(workerModes409.map(mode => ({ mode, id: 'null', value: null })))('B4 act
 },30000)
 
 it.each(workerModes409)('B4 actual worker %s credential storage fault never publishes incomplete workbook', async mode => {
-  legalWorkerSeed409()
+  await legalWorkerSeed409()
   const result = await actualWorker409(mode,{ apiToken: W409.runtimeApi, mcpToken: W409.runtimeMcp, ocrToken: W409.runtimeOcr },'B4-storage', true)
   expect(result.message).toEqual({ type: 'failure', message: W409_SAFE_FAILURE })
   expect(JSON.stringify(result.message)).not.toContain(root)

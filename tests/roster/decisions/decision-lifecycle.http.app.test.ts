@@ -1,6 +1,5 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -16,18 +15,13 @@ import { differenceReason } from '../../../db/postgresql/roster-selection-tables
 import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
-import { initializeDb, schema } from '../../../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 import historicalReceipts from '../../fixtures/decision-102-pre-browser-receipts.json'
 
 const dir = mkdtempSync(join(tmpdir(), 'decision-102-'))
-const dbPath = join(dir, 'synthetic.db')
 const curatedPath = join(dir, 'legacy.json')
-const sourceDb = initializeDb({ create: true, dbPath })
-const enterprise = sourceDb.insert(schema.enterprise).values({ name: '合成决定企业', nameNorm: '合成决定企业', usccNorm: '91330211255994457P' }).returning().get()
-const queryNative = submitNativePlatformQuery(sourceDb, { interface: 'apply_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW_UNCHANGED' })
-const query = { id: queryNative.queryId }
-sourceDb.$client.close()
+const enterprise = { id: 1, name: '合成决定企业', nameNorm: '合成决定企业', usccNorm: '91330211255994457P' }
+let query: { id: number }
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let pool: Pool
 let db: ReturnType<typeof drizzle<Record<string, never>>>
@@ -86,9 +80,15 @@ const value = (r: any) => JSON.parse(r.body.result.content[0].text)
 const scope = new URLSearchParams(Object.entries(coordinate).map(([k,v]) => [k,String(v)])).toString()
 beforeAll(async () => {
   await readDevelopmentDiscovery()
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  postgres = await postgresRuntimeFixture({ dir })
   pool = new Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
   db = drizzle({ client: pool })
+  await db.insert(enterpriseTable).values({ name: enterprise.name, nameNorm: enterprise.nameNorm, usccNorm: enterprise.usccNorm })
+  const source = await seedPostgresPlatformQuery(db, {
+    interface: 'apply_list', queryKey: enterprise.usccNorm, rdjb: '2', titleCode: 'specialized_sme',
+    queriedAt: '2026-10-18T00:00:00Z', status: 'success', rawResponse: 'SYNTHETIC_RAW_UNCHANGED',
+  })
+  query = { id: source.queryId }
   const cwd = resolve(import.meta.dirname, '../../..'); const port = await reserveLoopbackPort()
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, NUXT_BUILD_DIR: join(dir, 'build'), ...postgres.env, NUXT_DB_READONLY: '0', NUXT_API_TOKEN: 'synthetic-api-token', NUXT_MCP_TOKEN: 'synthetic-mcp-token', NUXT_CURATED_PATH: curatedPath, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming') } })
   let output = ''; for (const stream of [child.stdout,child.stderr]) stream.on('data', data => { output = (output + data).slice(-8000) })

@@ -29,7 +29,6 @@ function layerOf(path) {
 
 const paths = {
   '~/*': ['*'], '~~/*': ['*'], '@/*': ['*'], '@@/*': ['*'],
-  '@db': ['db/index'], '@db/*': ['db/*'],
   '#layers/*': ['layers/*'],
   '#core/*': ['layers/core/*'],
   '#sme-roster/*': ['layers/sme-roster/*'],
@@ -100,7 +99,10 @@ function reportAt(source, offset, statement, reason) {
 const files = layerDirs.flatMap(layerFiles)
 // Only repository modules participate in symbol resolution. External packages
 // cannot own a layer's tables, and type diagnostics belong to typecheck.
-const sharedSchema = resolve(root, 'db/schema.ts')
+const schemaDirectory = resolve(root, 'db/postgresql')
+const schemaFiles = existsSync(schemaDirectory)
+  ? readdirSync(schemaDirectory).filter(name => name.endsWith('.ts')).map(name => resolve(schemaDirectory, name))
+  : []
 const programOptions = { ...options, allowNonTsExtensions: true, noLib: true, types: [] }
 const host = ts.createCompilerHost(programOptions)
 host.getSourceFile = path => existsSync(path) ? readSource(path) : undefined
@@ -109,7 +111,7 @@ host.resolveModuleNames = (names, from) => names.map(name => {
   return target ? { resolvedFileName: target, extension: target.endsWith('.vue') ? ts.Extension.Tsx : undefined } : undefined
 })
 const program = ts.createProgram(
-  existsSync(sharedSchema) ? [...files, sharedSchema] : files,
+  [...files, ...schemaFiles],
   programOptions,
   host,
 )

@@ -1,5 +1,4 @@
 import { newJobId } from '../../../layers/core/lib/job'
-import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,11 +6,9 @@ import { createServer, type Server } from 'node:http'
 import * as h3 from 'h3'
 import pg from 'pg'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { schema } from '../../../db/client'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import type { TaskList, TaskSummary } from '../../../layers/core/lib/task-center'
@@ -68,18 +65,16 @@ async function queries() { return (await api(`/api/platform/queries?queryKey=${U
 beforeAll(async () => {
   if (!bin) return
   dir = mkdtempSync(join(tmpdir(), 'reconcile-pagination-'))
-  const dbPath = join(dir, 'source.db')
-  const source = initializeDb({ create: true, dbPath })
-  try {
-    installLeadListSchema(source.$client)
-    const enterprise = source.insert(schema.enterprise).values({ name: '合成企业', nameNorm: '合成企业', usccNorm: USCC }).returning().get()
-    source.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'miit', titleCode: 'specialized_sme' }).run()
-  } finally {
-    source.$client.close()
-  }
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath, bin })
+  postgres = await postgresRuntimeFixture({ dir, bin })
   admin = new pg.Pool({ connectionString: postgres.url })
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.db'))
+  const { rows: [enterprise] } = await admin.query(
+    'INSERT INTO business.enterprise (name, name_norm, uscc_norm) VALUES ($1, $1, $2) RETURNING id',
+    ['合成企业', USCC],
+  )
+  await admin.query(
+    'INSERT INTO business.record (enterprise_id, source, title_code) VALUES ($1, $2, $3)',
+    [enterprise.id, 'miit', 'specialized_sme'],
+  )
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', join(dir, 'exports'))
   vi.stubEnv('MIIT_COOKIE', '')
@@ -102,7 +97,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   if (!bin) return
   requests = new AbortController()
-  // Give each case an untouched database without rerunning offline conversion.
+  // Give each case an untouched database from the native fixture template.
   database = 'reconcile_case_' + ++dbSerial
   await admin!.query('CREATE DATABASE ' + database + ' TEMPLATE postgres')
   const url = new URL(postgres!.url)

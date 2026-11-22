@@ -16,7 +16,7 @@ import { planPlatformObservation, canonicalPlatformJson, PLATFORM_PROJECTION_RUL
 import { sourceFieldComparison, sourceValueKind } from './source-extraction'
 import { capturePostgresObservationFacts } from './postgres-platform-facts'
 import { relationEvidenceColumns } from './relation-evidence-fields'
-import type { SlotRelation } from './reconcile-slot-capture'
+import type { PlatformStoredRelation } from './read'
 import type { ApplyTargetInput } from './apply-target-writer'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -86,7 +86,8 @@ function persistedFields(row: RosterImportRelation, source: Source, createdAt: s
   return { ...fields,nameRaw:materializedText(row.nameRaw),usccRaw:materializedText(row.usccRaw),
     rawFields,titleRaw:materializedText(rawFields?.rdjb),
     year: typeof normalized.year === 'number' && Number.isFinite(normalized.year) ? Math.trunc(normalized.year) : null, createdAt } as unknown as
-      Omit<SlotRelation,'id'> & { titleRaw: string | null; createdAt: string }
+      Pick<PlatformStoredRelation, 'relationKey' | 'nameRaw' | 'usccRaw' | 'province' | 'status' | 'batch' |
+        'declareKind' | 'appliedAt' | 'awardBatchLabel' | 'year' | 'rawFields' | 'titleRaw' | 'createdAt'>
 }
 
 function writeObservationProjection(tx: Tx, source: Source, observationId: number, plan: Content,

@@ -1,44 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
-const materializers = ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']
-
-function sqliteFixtureImporter() {
-  const require = createRequire(import.meta.url)
-  const { createJiti } = createRequire(require.resolve('nuxt/package.json'))('jiti')
-  return createJiti(import.meta.url, { fsCache: false })
-}
-
-async function createEmptyBusinessSource(sourcePath) {
-  const jiti = sqliteFixtureImporter()
-  const { initializeDb } = await jiti.import(join(root, 'db/client.ts'))
-  const { installLeadListSchema } = await jiti.import(join(root, 'layers/lead-lists/install-schema.ts'))
-  const db = initializeDb({ create: true, dbPath: sourcePath, readOnly: false })
-  try { db.$client.transaction(() => installLeadListSchema(db.$client)).immediate() }
-  finally { db.$client.close() }
-}
-
-async function createEmptyLogSource(directory) {
-  const jiti = sqliteFixtureImporter()
-  const { createLogService } = await jiti.import(join(root, 'layers/core/lib/logging/sqlite-service.ts'))
-  const logs = createLogService({ directory })
-  try { await logs.policy() }
-  finally { await logs.close() }
-  return join(directory, 'events.db')
-}
-
 /**
- * Create an isolated PostgreSQL runtime. Historical tests can materialize their
- * SQLite source, and tests starting from empty runtime state can use native DDL.
- * @param {{ dir: string; sourcePath?: string; bin?: string; logsOnly?: boolean; native?: boolean }} options
+ * Create an isolated PostgreSQL runtime.
+ * @param {{ dir: string; bin?: string; logsOnly?: boolean }} options
  */
-export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.env.ROSTER_TEST_POSTGRES_BIN, logsOnly = false, native = !sourcePath }) {
-  if (native && sourcePath) throw new Error('A native PostgreSQL fixture cannot load a SQLite source')
+export async function postgresRuntimeFixture({ dir, bin = process.env.ROSTER_TEST_POSTGRES_BIN, logsOnly = false }) {
   if (!bin) throw new Error('Set ROSTER_TEST_POSTGRES_BIN to the PostgreSQL 19 bin directory')
   const binDir = resolve(bin)
   const version = execFileSync(join(binDir, 'postgres'), ['--version'], { encoding: 'utf8' }).trim()
@@ -51,6 +22,7 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
   const log = join(fixture, 'postgres.log')
   const user = 'runtime_fixture'
   const url = new URL('postgresql://' + user + '@localhost/postgres')
+  url.port = '5432'
   url.searchParams.set('host', socket)
   const pgEnv = {
     ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('PG'))),
@@ -60,7 +32,6 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
   /** @param {string[]} args */
   const psql = (args) => run('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', ...args])
   const node = (args) => execFileSync(process.execPath, args, { cwd: root, env: pgEnv, encoding: 'utf8', stdio: 'pipe' })
-  const materialize = (name, staging) => psql(['-v', 'staging=' + staging, '-f', 'upgrade/pg/sqlite-import/materialize-' + name + '.sql'])
   const close = () => {
     if (existsSync(join(data, 'postmaster.pid'))) run('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
     rmSync(socket, { recursive: true, force: true })
@@ -72,22 +43,7 @@ export async function postgresRuntimeFixture({ dir, sourcePath, bin = process.en
     const socketSetting = socket.replaceAll('\\', '\\\\').replaceAll("'", "''")
     appendFileSync(join(data, 'postgresql.conf'), "\nlisten_addresses = ''\nport = 5432\nunix_socket_directories = '" + socketSetting + "'\n")
     run('pg_ctl', ['-D', data, '-l', log, '-w', 'start'])
-    if (native) {
-      node(['scripts/initialize-postgresql.mjs', ...(logsOnly ? ['--logs-only'] : [])])
-    } else {
-      if (!logsOnly) {
-        if (!sourcePath) {
-          sourcePath = join(fixture, 'source.db')
-          await createEmptyBusinessSource(sourcePath)
-        }
-        node(['upgrade/pg/sqlite-import/stage-sqlite.mjs', resolve(sourcePath), 'fixture_business'])
-        for (const name of materializers) materialize(name, 'fixture_business')
-        node(['upgrade/pg/2026-11-data-compaction/steps/16-refresh-platform-digests.mjs'])
-      }
-      const logSource = await createEmptyLogSource(join(fixture, 'source-logs'))
-      node(['upgrade/pg/sqlite-import/stage-sqlite.mjs', logSource, 'fixture_logs'])
-      materialize('runtime-logs', 'fixture_logs')
-    }
+    node(['scripts/initialize-postgresql.mjs', ...(logsOnly ? ['--logs-only'] : [])])
     return {
       url: url.href, psql, close,
       env: {

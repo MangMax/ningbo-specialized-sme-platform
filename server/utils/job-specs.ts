@@ -1,6 +1,6 @@
 import { getAppModules } from '../../lib/app-modules'
 import { getJobSpec, registerJob } from '../../layers/core/server/utils/job-spec-registry'
-import type { JobSpec } from '../../layers/core/server/utils/job-runner'
+import type { JobSpec } from '../../layers/core/server/utils/job-contract'
 
 let installedSpecs: readonly JobSpec[] = []
 

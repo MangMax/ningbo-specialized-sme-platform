@@ -1,5 +1,6 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { schema } from '../../../db/client'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import * as schema from '../fixtures/postgres-tables'
 import { comparisonAppFixture } from './fixtures/comparison-app'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,60 +18,57 @@ import { reconcileKey } from '../../../layers/sme-roster/lib/reconcile'
  */
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-api-'))
 const { app, reconcilePath } = comparisonAppFixture(dir, 'comparison-request-fixture')
-const db = app.db
+
 
 const USCC = '91330211255994457P'
 const PLAIN_USCC = '91330211000000001X'
 
-function enterprise(name: string, uscc: string | null) {
-  return db
-    .insert(schema.enterprise)
-    .values({ name, nameNorm: name, usccNorm: uscc })
-    .returning({ id: schema.enterprise.id })
-    .get().id
-}
-function record(enterpriseId: number, source: 'jxj' | 'miit') {
-  db.insert(schema.record).values({ enterpriseId, source, titleCode: 'specialized_sme', district: '镇海区' }).run()
-}
+let withEvidence: number
+let plain: number
+async function seed() {
+  await app.prepare()
+  const db = app.db
+  const enterprise = async (name: string, uscc: string | null) =>
+    singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name, nameNorm: name, usccNorm: uscc }).returning({ id: schema.enterprise.id })).id
+  const record = (enterpriseId: number, source: 'jxj' | 'miit') =>
+    db.insert(schema.record).values({ enterpriseId, source, titleCode: 'specialized_sme', district: '镇海区' })
+  withEvidence = await enterprise('宁波上航测绘股份有限公司', USCC)
+  await record(withEvidence, 'miit')
+  plain = await enterprise('宁波无证据企业', PLAIN_USCC)
+  await db.insert(schema.record).values({ enterpriseId: plain, source: 'jxj', titleCode: 'specialized_sme', district: '余姚市' })
 
-const withEvidence = enterprise('宁波上航测绘股份有限公司', USCC)
-record(withEvidence, 'miit')
-const plain = enterprise('宁波无证据企业', PLAIN_USCC)
-db.insert(schema.record).values({ enterpriseId: plain, source: 'jxj', titleCode: 'specialized_sme', district: '余姚市' }).run()
+  await db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: withEvidence,
+      name: '宁波上航测绘有限公司',
+      nameNorm: '宁波上航测绘有限公司',
+      sourceKind: 'platform_business',
+      sourceRefId: 0, createdAt: '2026-10-16T00:00:00.000Z',
+      verificationStatus: 'confirmed',
+    })
+  await db.insert(schema.enterpriseAlias)
+    .values({
+      enterpriseId: plain,
+      name: '宁波待核实旧名',
+      nameNorm: '宁波待核实旧名',
+      sourceKind: 'platform_business',
+      sourceRefId: 0, createdAt: '2026-10-16T00:00:00.000Z',
+      verificationStatus: 'pending',
+    })
+  await seedPostgresPlatformQuery(db, { ...{ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' }, rawResponse: 'Explicit synthetic comparison source', relations: [{ sequenceNo: 1, relationKey: 'SQ1', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司' }] })
+  await db.insert(schema.differenceReason)
+    .values({
+      enterpriseId: withEvidence,
+      titleCode: 'specialized_sme',
+      direction: 'extra_in_miit',
+      status: 'confirmed_reason',
+      reasonCode: 'renamed',
+      measureCode: 'update_current_name',
+      verificationStatus: 'confirmed',
+      createdAt: '2026-10-16T00:00:00.000Z', recordedAt: '2026-10-16T00:00:00.000Z',
+    })
 
-db.insert(schema.enterpriseAlias)
-  .values({
-    enterpriseId: withEvidence,
-    name: '宁波上航测绘有限公司',
-    nameNorm: '宁波上航测绘有限公司',
-    sourceKind: 'platform_business',
-    sourceRefId: 0,
-    verificationStatus: 'confirmed',
-  })
-  .run()
-db.insert(schema.enterpriseAlias)
-  .values({
-    enterpriseId: plain,
-    name: '宁波待核实旧名',
-    nameNorm: '宁波待核实旧名',
-    sourceKind: 'platform_business',
-    sourceRefId: 0,
-    verificationStatus: 'pending',
-  })
-  .run()
-submitNativePlatformQuery(db, { ...{ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' }, rawResponse: 'Explicit synthetic comparison source', relations: [{ sequenceNo: 1, relationKey: 'SQ1', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司' }] })
-db.insert(schema.differenceReason)
-  .values({
-    enterpriseId: withEvidence,
-    titleCode: 'specialized_sme',
-    direction: 'extra_in_miit',
-    status: 'confirmed_reason',
-    reasonCode: 'renamed',
-    measureCode: 'update_current_name',
-    verificationStatus: 'confirmed',
-    recordedAt: '2026-10-16T00:00:00.000Z',
-  })
-  .run()
+}
 
 type ComparisonResponse = {
   rows: { enterpriseId: number; explanation: unknown; platform: unknown }[]
@@ -86,7 +84,10 @@ async function read(query: Record<string, string> = {}) {
   return response.json() as Promise<ComparisonResponse>
 }
 
-beforeAll(app.start, 90000)
+beforeAll(async () => {
+  await seed()
+  await app.start()
+}, 90000)
 afterAll(async () => {
   try { await app.close() } finally { rmSync(dir, { recursive: true, force: true }) }
 })

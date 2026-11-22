@@ -6,7 +6,9 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 
-const url = process.env.TEST_LEGACY_ROSTER_POSTGRES_URL
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 const token = 'curation-fixture-token'
 const scope = { enterpriseId: 9401, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const patch = { uscc: 'exact code', nameNorm: '同名企业', titleCode: scope.titleCode, direction: scope.direction, curated: true }
@@ -15,10 +17,11 @@ let path: string
 let request: ReturnType<typeof toWebHandler>
 
 beforeAll(async () => {
-  if (!url) return
   folder = mkdtempSync(join(tmpdir(), 'pg-legacy-curation-'))
   path = join(folder, 'annotations.json')
-  const client = new pg.Client({ connectionString: url })
+  postgres = await postgresRuntimeFixture({ dir: folder })
+  const url = postgres.url
+  const client = new pg.Client({ connectionString: postgres.url })
   await client.connect()
   try {
     await client.query(`
@@ -35,18 +38,17 @@ beforeAll(async () => {
   for (const [name, fn] of Object.entries({ createError, defineEventHandler, readBody, setHeader, setResponseStatus })) {
     vi.stubGlobal(name, fn)
   }
-  vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const curated = (await import('../../../layers/sme-roster/server/api/comparison/curated.patch')).default
   const decide = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/commands.post')).default
   request = toWebHandler(createApp().use(createRouter()
     .patch('/api/comparison/curated', curated)
     .post('/api/roster/decision-lifecycle/commands', decide)))
-})
+}, 60_000)
 
 afterAll(async () => {
   await closePostgresDirectoryDb()
+  postgres?.close()
   if (folder) rmSync(folder, { recursive: true, force: true })
-  vi.doUnmock('@db')
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -60,7 +62,7 @@ function send(method: string, path: string, body: unknown) {
 
 const curate = (body: unknown) => send('PATCH', '/api/comparison/curated', body)
 
-it.skipIf(!url)('keeps legacy JSON keys and notes, supports unmatched keys and rejects ambiguous exact names', async () => {
+it('keeps legacy JSON keys and notes, supports unmatched keys and rejects ambiguous exact names', async () => {
   const first = await curate({ ...patch, note: '原备注' })
   const result = await first.json()
   expect(first.status, JSON.stringify(result)).toBe(200)
@@ -88,11 +90,11 @@ it.skipIf(!url)('keeps legacy JSON keys and notes, supports unmatched keys and r
   })
 })
 
-it.skipIf(!url)('waits for concurrent lifecycle adoption and rejects the legacy file change', async () => {
+it('waits for concurrent lifecycle adoption and rejects the legacy file change', async () => {
   const initial = await curate({ ...patch, note: '保留此备注' })
   expect(initial.status).toBe(200)
   const before = readFileSync(path, 'utf8')
-  const pin = new pg.Client({ connectionString: url })
+  const pin = new pg.Client({ connectionString: postgres.url })
   await pin.connect()
   let adoption: Promise<Response> | undefined
   let annotation: Promise<Response> | undefined

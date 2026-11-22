@@ -31,7 +31,7 @@ SET LOCAL search_path TO business, pg_catalog;
 \ir roster-constraints.sql
 \ir roster-triggers.sql
 
-INSERT INTO enterprise_kernel_completion (id, version) VALUES (1, :'kernel_version');
+INSERT INTO enterprise_kernel_completion (id, version) VALUES (1, 1);
 INSERT INTO enterprise_source_channel (code, name) VALUES
   ('direct', '直接添加'), ('jxj', '经信局'), ('miit', '工信部'), ('research', '调研走访');
 INSERT INTO enterprise_source_list_type (code, name) VALUES

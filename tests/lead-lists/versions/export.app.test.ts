@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema as s } from '../../../db/client'
-import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { captureDiscovery, readDiscoveryArtifact } from '../../support/development-discovery.mjs'
 import { postgresLeadFixture } from './fixtures/postgres-leads'
 
 const fixture = postgresLeadFixture()
@@ -13,16 +14,21 @@ const filename = 'research-source.csv'
 let qualifiedId: number
 
 beforeAll(async () => {
-  await fixture.start(({ db, filesDir }) => {
+  await fixture.start(async ({ db, filesDir }) => {
     const name = '核对取得资格企业'
-    const qualified = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: 'SYNTHETIC-LEAD-EXPORT', district: '鄞州区', city: '宁波市' }).returning().get()
-    qualifiedId = qualified.id
-    const record = db.insert(s.record).values({ enterpriseId: qualifiedId, source: 'jxj', titleCode: 'little_giant', nameRaw: name }).returning().get()
+    const [qualified] = await db.insert(enterprise).values({
+      name, nameNorm: name, usccNorm: 'SYNTHETIC-LEAD-EXPORT', district: '鄞州区', city: '宁波市',
+    }).returning({ id: enterprise.id })
+    qualifiedId = qualified!.id
+    const [title] = await db.insert(record).values({
+      enterpriseId: qualifiedId, source: 'jxj', titleCode: 'little_giant', nameRaw: name,
+    }).returning({ id: record.id })
     const year = Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Shanghai', year: 'numeric' }).format(new Date()))
-    const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year, batchSeq: 1 }).returning().get()
-    db.insert(s.recordEvidence).values({
-      recordEventId: event.id, sourceFile: 'jxj/announcement/fixture.xlsx', attachment: '专精特新“小巨人”企业名单', listNo: qualifiedId,
-    }).run()
+    const [event] = await db.insert(recordEvent).values({ recordId: title!.id, eventType: 'award', year, batchSeq: 1 })
+      .returning({ id: recordEvent.id })
+    await db.insert(recordEvidence).values({
+      recordEventId: event!.id, sourceFile: 'jxj/announcement/fixture.xlsx', attachment: '专精特新“小巨人”企业名单', listNo: qualifiedId,
+    })
     writeFileSync(join(filesDir, filename), '企业名称\r\n核对取得资格企业\r\n')
   })
 }, 60_000)
@@ -36,7 +42,8 @@ async function post(path: string, body: object, status: number) {
 }
 
 it('exports preserved lead rows with effective roster titles for linked enterprises through the public task flow', async () => {
-  const discovery = await readDevelopmentDiscovery()
+  const artifact = process.env.TEST_DISCOVERY_ARTIFACT
+  const discovery = artifact ? readDiscoveryArtifact(artifact) : (await captureDiscovery()).spec
   expect(discovery.paths[`${base}/exports`]?.post).toBeDefined()
   expect(discovery.paths[`${base}/exports/{jobId}/download`]?.get).toBeDefined()
   const file = await post('/api/files/register', { relPath: filename }, 201)

@@ -1,25 +1,35 @@
-import { afterEach, expect, it } from 'vitest'
-
-
+import { expect, it } from 'vitest'
 import { nativeCorrespondenceFixture } from '../correspondence/fixtures/native-correspondence'
-import { getRecordCorrespondenceAudit, listRecordCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence'
-const fixtures: ReturnType<typeof nativeCorrespondenceFixture>[] = []
-const fixture = () => { const f = nativeCorrespondenceFixture(); fixtures.push(f); return f }
-afterEach(() => { for (const f of fixtures.splice(0)) f.close() })
+import { readFixtureAudit } from '../correspondence/fixtures/postgres-audit'
+import { listPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-postgres'
+import { readPostgresAnnualWriteScope, readPostgresQualifiedAnnualProcess } from '../../../layers/sme-roster/server/utils/event-annual-process-postgres'
+import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
+import { annualFixtureEvent, runAnnualFixtureTask, stageAnnualFixtureTask } from '../annual-correspondence/fixtures/native-annual'
 
-import { readAnnualWriteScope } from '../../../layers/sme-roster/server/utils/annual-correspondence-read'
-import { qualifyAnnualFinal, reconcileAnnualStep } from '../../../layers/sme-roster/server/utils/annual-correspondence'
-it('native annual decision scope keeps same-version old observation confirmation', () => {
- const f=fixture(),old=f.add();f.save(f.request('old-confirmation',[{action:'create',status:'confirmed',edge:f.edge(old.id)}]));const current=f.add()
- const scope=readAnnualWriteScope(f.db,f.event.id)!
- expect(scope.steps[0]!.currentRelationIds).toEqual([old.id,current.id])
- expect(qualifyAnnualFinal(f.db,scope)).toMatchObject({status:'confirmed',decisionRefs:[{relationId:old.id}]})
- expect(reconcileAnnualStep(f.db,readAnnualWriteScope,{eventId:f.event.id,generation:scope.generation,stepId:scope.steps[0]!.stepId})).toMatchObject({status:'existing',relationId:old.id})
- expect(listRecordCorrespondences(f.db)).toHaveLength(1)
+const createDb = useIsolatedPostgresCases()
+
+it('annual decision scope keeps same-version old observation confirmation', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  const old = await f.add()
+  await f.save(f.request('old-confirmation', [{ action: 'create', status: 'confirmed', edge: f.edge(old.id) }]))
+  const current = await f.add()
+  const scope = (await readPostgresAnnualWriteScope(f.db, f.event.id))!
+  expect(scope.steps[0]!.currentRelationIds).toEqual([old.id, current.id])
+  expect((await readPostgresQualifiedAnnualProcess(f.db, f.event.id))?.process.finalQualification).toMatchObject({
+    status: 'confirmed', decisionRefs: [{ relationId: old.id }],
+  })
+  const task = await stageAnnualFixtureTask(f.db, f.event.id, 'same-version')
+  expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId)).outcomes).toMatchObject([{ status: 'existing', relationId: old.id }])
+  expect(await listPostgresCorrespondences(f.db, {})).toHaveLength(1)
 })
-it('native annual scope protects an explicit manual rejection across new observations', () => {
- const f=fixture(),old=f.add();const id=f.save(f.request('reject',[{action:'create',status:'rejected',edge:f.edge(old.id)}])).correspondenceIds[0]!
- f.add({status:'终审不通过'});const scope=readAnnualWriteScope(f.db,f.event.id)!,audit=getRecordCorrespondenceAudit(f.db,id)
- expect(reconcileAnnualStep(f.db,readAnnualWriteScope,{eventId:f.event.id,generation:scope.generation,stepId:scope.steps[0]!.stepId})).toMatchObject({status:'protected'})
- expect(getRecordCorrespondenceAudit(f.db,id)).toEqual(audit)
+
+it('annual scope protects an explicit manual rejection across new observations', async () => {
+  const f = await nativeCorrespondenceFixture(createDb())
+  const old = await f.add()
+  const { correspondenceIds: [id] } = await f.save(f.request('reject', [{ action: 'create', status: 'rejected', edge: f.edge(old.id) }]))
+  await f.add({ status: '终审不通过' })
+  const audit = await readFixtureAudit(f.db, id!)
+  const task = await stageAnnualFixtureTask(f.db, f.event.id, 'protected')
+  expect(annualFixtureEvent(await runAnnualFixtureTask(f.db, task.jobId)).outcomes).toMatchObject([{ status: 'protected' }])
+  expect(await readFixtureAudit(f.db, id!)).toEqual(audit)
 })

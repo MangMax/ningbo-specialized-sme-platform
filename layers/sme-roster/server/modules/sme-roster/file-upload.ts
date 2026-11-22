@@ -7,7 +7,7 @@ import {
   type FileSource,
 } from '../../../lib/stored-file'
 import { fileRegistrationFacts, splitRegistrationPath, UploadRegistrationError } from '../../../../core/server/utils/file-store-contract'
-import type { RegistrationWriter } from '../../../../core/server/utils/file-store'
+import type { RegistrationWriter } from '../../../../core/server/utils/file-store-contract'
 import {
   activePostgresPhysicalIntent, lockOrRegisterPostgresFile, postgresFileIdentity, readPostgresFile, type PostgresFileDb,
 } from '../../../../core/server/utils/file-store-postgres'

@@ -4,9 +4,8 @@ import { createError } from 'h3'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { filePhysicalIntent, storedFile } from '../../../../db/postgresql/file-tables'
 import { postgresFileCategoryRules, serverFileCategories } from './file-category-runtime'
-import type { FileCategoryServer } from './file-store'
 import type { LogContext } from '../../lib/logging'
-import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, UploadRegistrationError, type FileQuery, type FileRow, type ScannedFile } from './file-store-contract'
+import { FileMaintenanceError, MAX_PAGE_SIZE, registerLandedFile, selectedFileFilters, type FileCategoryServer, type FileQuery, type FileRow, type ScannedFile } from './file-store-contract'
 
 export type PostgresFileDb = NodePgDatabase
 
@@ -97,8 +96,7 @@ export function listPostgresFiles(
   const page = params.page ?? 1
   const pageSize = Math.min(MAX_PAGE_SIZE, params.pageSize ?? 50)
   const offset = (BigInt(page) - BigInt(1)) * BigInt(pageSize)
-  // Drizzle has no translate or COLLATE API. SQLite LIKE folds ASCII case only
-  // and treats backslashes literally. Escape backslashes for PostgreSQL's LIKE.
+  // Search folds ASCII case only and treats backslashes in the query literally.
   const foldAscii = (column: typeof storedFile.filename | typeof storedFile.displayName) =>
     sql`translate(${column}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') COLLATE "C"`
   const pattern = params.q ? `%${params.q.replace(/[A-Z]/g, letter => letter.toLowerCase()).replaceAll('\\', '\\\\')}%` : undefined
@@ -156,9 +154,6 @@ export async function registerPostgresFile(db: PostgresFileDb, root: string, bod
   requirePostgresFileWrite()
   const { checkAdmission, resolveFileRegistration } = postgresFileCategoryRules
   const { registration: { preparePostgres }, relPath, input } = resolveFileRegistration(body)
-  if (!preparePostgres) {
-    throw new UploadRegistrationError('此文件分类尚未接入 PostgreSQL 文件库', 503)
-  }
   return registerLandedFile(root, relPath, async () => {
     const writer = await preparePostgres(input)
     return file => writer(db, file)

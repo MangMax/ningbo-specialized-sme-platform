@@ -1,4 +1,3 @@
-import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,23 +5,21 @@ import ExcelJS from 'exceljs'
 import { readExportWorkbook } from '../../support/read-workbook'
 import { Readable } from 'node:stream'
 import { createServer, type Server } from 'node:http'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import * as schema from '../fixtures/postgres-tables'
 import { eq } from 'drizzle-orm'
 import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { schema } from '../../../db'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { patchCuration } from '../../../layers/sme-roster/lib/curation'
+import { patchCuration } from '../../../layers/sme-roster/lib/curation-model'
 import { getPostgresComparison } from '../../../layers/sme-roster/lib/comparison'
 import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-export-'))
-const snapshot = join(dir, 'test.db')
-const db = initializeDb({ create: true, dbPath: snapshot })
 const pgBin = process.env.TEST_ROSTER_COMPARISON_PG_BIN ?? process.env.ROSTER_TEST_POSTGRES_BIN
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let server: Server
@@ -32,7 +29,10 @@ let headers: Record<string, string> = {}
 let handler: (event: unknown) => Promise<Uint8Array | Readable>
 
 beforeAll(async () => {
-  if (!pgBin) return
+  postgres = await postgresRuntimeFixture({ dir, bin: pgBin })
+  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  const db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
@@ -46,13 +46,13 @@ beforeAll(async () => {
   }))
   handler = (await import('../../../layers/sme-roster/server/api/export.get'))
     .default as unknown as typeof handler
-  const seed = (
+  const seed = async (
     name: string,
     source: 'jxj' | 'miit',
     titleCode: string,
     usccNorm: string | null,
   ) => {
-    const enterpriseId = db
+    const enterpriseId = singlePostgresFixtureRow(await db
       .insert(schema.enterprise)
       .values({
         name,
@@ -61,43 +61,37 @@ beforeAll(async () => {
         city: '嘉兴市',
         regStatus: '注销',
       })
-      .returning({ id: schema.enterprise.id })
-      .get().id
-    db.insert(schema.record)
+      .returning({ id: schema.enterprise.id })).id
+    await db.insert(schema.record)
       .values({ enterpriseId, source, titleCode, district: '鄞州区' })
-      .run()
     return enterpriseId
   }
   // 超过一页,验证导出未被页面参数截断;其他称号与反方向必须被排除。
   for (let i = 0; i < 27; i++)
-    seed(
+    await seed(
       `市专${String(i).padStart(2, '0')}`,
       'jxj',
       'specialized_sme',
       i ? `USCC${i}` : null,
     )
-  seed('反方向', 'miit', 'specialized_sme', '=001234567890123456')
-  seed('其他称号', 'jxj', 'innovative_sme', 'INNOVATIVE')
-  const textEnterprise = seed('=宁波文本\n企业', 'jxj', 'little_giant', '001234567890123456')
+  await seed('反方向', 'miit', 'specialized_sme', '=001234567890123456')
+  await seed('其他称号', 'jxj', 'innovative_sme', 'INNOVATIVE')
+  const textEnterprise = await seed('=宁波文本\n企业', 'jxj', 'little_giant', '001234567890123456')
   for (const source of ['jxj', 'miit'] as const) {
-    const recordId = db.insert(schema.record).values({
+    const recordId = singlePostgresFixtureRow(await db.insert(schema.record).values({
       enterpriseId: textEnterprise, source, titleCode: 'specialized_sme', district: '鄞州区',
-    }).returning({ id: schema.record.id }).get().id
-    const eventId = db.insert(schema.recordEvent).values({
+    }).returning({ id: schema.record.id })).id
+    const eventId = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({
       recordId, eventType: source === 'jxj' ? 'award' : 'maintain',
       year: source === 'jxj' ? 2024 : 2025, batchSeq: 1,
-    }).returning({ id: schema.recordEvent.id }).get().id
-    db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: `${source}-出处.docx`, attachment: '附件一', listNo: 7 }).run()
+    }).returning({ id: schema.recordEvent.id })).id
+    await db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: `${source}-出处.docx`, attachment: '附件一', listNo: 7 })
   }
-  const company = db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, 'USCC1')).get()!
-  db.insert(schema.enterpriseAlias).values([
-    { enterpriseId: company.id, name: '可信曾用名', nameNorm: '可信曾用名', sourceKind: 'manual', verificationStatus: 'confirmed' },
-    { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', verificationStatus: 'pending' },
-  ]).run()
-  installLeadListSchema(db.$client)
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: snapshot, bin: pgBin })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
-  vi.stubEnv('NUXT_DB_READONLY', '1')
+  const company = singlePostgresFixtureRow(await db.select({ id: schema.enterprise.id }).from(schema.enterprise).where(eq(schema.enterprise.usccNorm, 'USCC1')))!
+  await db.insert(schema.enterpriseAlias).values([
+    { enterpriseId: company.id, name: '可信曾用名', nameNorm: '可信曾用名', sourceKind: 'manual', createdAt: '2026-11-01T00:00:00Z', verificationStatus: 'confirmed' },
+    { enterpriseId: company.id, name: '待核曾用名', nameNorm: '待核曾用名', sourceKind: 'manual', createdAt: '2026-11-01T00:00:00Z', verificationStatus: 'pending' },
+  ])
   const app = createApp()
   app.use('/api/export', handler as never)
   server = createServer(toNodeListener(app))
@@ -110,7 +104,6 @@ afterAll(async () => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
     postgres?.close()
-    db.$client.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -124,7 +117,7 @@ async function exported(params: Record<string, unknown>) {
   return wb.worksheets[0]!
 }
 
-describe.skipIf(!pgBin)('PostgreSQL comparison export route', () => {
+describe('PostgreSQL comparison export route', () => {
   it('preserves ledger count grain and combined source event year filters over HTTP', async () => {
     const all = await fetch(`${baseUrl}/api/export?${new URLSearchParams({ q: '宁波文本', page: '9', pageSize: '1' })}`)
     const fullSheet = (await readExportWorkbook(new Uint8Array(await all.arrayBuffer()))).worksheets[0]!
@@ -299,7 +292,13 @@ describe.skipIf(!pgBin)('PostgreSQL comparison export route', () => {
     const curatedPath = join(dir, 'curated-with-exclusion.json')
     patchCuration(curatedPath, { uscc: 'USCC26', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true })
     vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath }))
-    const baseline = readBaselineComparison(db)
+    const db = usePostgresDirectoryDb()
+    const sources = await db.select({
+      enterpriseId: schema.enterprise.id, titleCode: schema.record.titleCode, source: schema.record.source,
+      name: schema.enterprise.name, district: schema.record.district, uscc: schema.enterprise.usccNorm,
+      currentCity: schema.enterprise.city, regStatus: schema.enterprise.regStatus,
+    }).from(schema.record).innerJoin(schema.enterprise, eq(schema.record.enterpriseId, schema.enterprise.id)).orderBy(schema.record.id)
+    const baseline = readBaselineComparison(sources)
     const comparison = await usePostgresDirectoryDb().transaction(tx => getPostgresComparison(tx),
       { isolationLevel: 'repeatable read', accessMode: 'read only' })
     expect(comparison).toEqual(baseline)

@@ -1,11 +1,10 @@
 /** Ingestion-boundary extraction shared with the frozen-source upgrade. */
-import type * as schema from '../../../../db/schema'
 import type { PlatformStoredRelation } from './read'
 import { processFactsFromRow } from './identity'
 import { normalizePlatformRelation } from './normalization'
 import { checkedBusinessStatus } from '../../../../db/business-status-contract'
 import type { PlatformRow } from './types'
-type Kind=NonNullable<typeof schema.platformApplyProjection.$inferInsert.sourceTitleKind>
+type Kind = 'absent' | 'null' | 'array' | 'text' | 'number' | 'boolean' | 'object' | 'invalid'
 export function sourceValueKind(v:unknown):Kind {
   if(v===undefined)return 'absent'
   if(v===null)return 'null'
@@ -13,6 +12,12 @@ export function sourceValueKind(v:unknown):Kind {
   switch(typeof v) {case 'string':return 'text';case 'number':return Number.isFinite(v)?'number':'invalid';case 'boolean':return 'boolean';case 'object':return 'object';default:return 'invalid'}
 }
 const fieldKeys={province:'szsfmc',status:'cszt',batch:'whpc',declareKind:'sblx',appliedAt:'sqsj',awardBatchLabel:'personuuid',year:'year'} as const
+type Field = keyof typeof fieldKeys
+type ComparisonValues = {
+  [F in Field as `stored${Capitalize<F>}` | `parsed${Capitalize<F>}` | `reconciled${Capitalize<F>}`]: F extends 'year' ? number | null : string | null
+} & Record<`stored${Capitalize<Field>}Kind` | `parsed${Capitalize<Field>}Kind`, Kind>
+  & Record<`${Field}Conflict`, number>
+
 // These seven fields are the accepted normalization contract, not a mixed business table.
 function textFieldComparison(source:string,stored:Omit<Pick<PlatformStoredRelation,keyof typeof fieldKeys>, 'declareKind'> & { declareKind: string | null },row:Record<string,unknown>|null,state:'valid'|'invalid'|'absent') {
   const process=source==='apply_list'||source==='business_list'
@@ -28,14 +33,7 @@ function textFieldComparison(source:string,stored:Omit<Pick<PlatformStoredRelati
     const cap=f[0]!.toUpperCase()+f.slice(1)
     return [[`stored${cap}Kind`,sourceValueKind(v)],[`stored${cap}`,storedValue],[`parsed${cap}Kind`,process?(state==='valid'?sourceValueKind(row?.[key]):state==='invalid'?'invalid':'absent'):'absent'],[`parsed${cap}`,parsedValue],[`reconciled${cap}`,normalized[f]],[`${f}Conflict`,Number(normalized.normalizationConflicts.some(c=>c.field===f))]]
   })
-  return Object.fromEntries(entries) as Pick<typeof schema.platformApplyProjection.$inferInsert,
-    'storedProvinceKind'|'storedProvince'|'parsedProvinceKind'|'parsedProvince'|'reconciledProvince'|'provinceConflict'|
-    'storedStatusKind'|'storedStatus'|'parsedStatusKind'|'parsedStatus'|'reconciledStatus'|'statusConflict'|
-    'storedBatchKind'|'storedBatch'|'parsedBatchKind'|'parsedBatch'|'reconciledBatch'|'batchConflict'|
-    'storedDeclareKindKind'|'storedDeclareKind'|'parsedDeclareKindKind'|'parsedDeclareKind'|'reconciledDeclareKind'|'declareKindConflict'|
-    'storedAppliedAtKind'|'storedAppliedAt'|'parsedAppliedAtKind'|'parsedAppliedAt'|'reconciledAppliedAt'|'appliedAtConflict'|
-    'storedAwardBatchLabelKind'|'storedAwardBatchLabel'|'parsedAwardBatchLabelKind'|'parsedAwardBatchLabel'|'reconciledAwardBatchLabel'|'awardBatchLabelConflict'|
-    'storedYearKind'|'storedYear'|'parsedYearKind'|'parsedYear'|'reconciledYear'|'yearConflict'>
+  return Object.fromEntries(entries) as ComparisonValues
 }
 
 /** Native business status is checked independently; other comparison fields retain v1. */

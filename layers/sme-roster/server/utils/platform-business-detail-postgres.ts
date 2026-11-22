@@ -13,7 +13,8 @@ import type { RosterPlatformQueryRow } from '../../lib/roster/enterprise-roster'
 import type { PlatformDetailObservation } from '../../lib/roster/platform-business-detail'
 import { groupPlatformBusinessDetails } from '../../lib/roster/platform-business-detail'
 import { projectBusinessProcessObservationFact } from './platform-business-processes-projection'
-import { readPostgresPlatformBusinessGroups, type readPlatformBusinessGroups } from './platform-business-record-postgres'
+import type { PlatformBusinessGroup } from '../../lib/platform/business-record'
+import { readPostgresPlatformBusinessGroups } from './platform-business-record-postgres'
 import { projectDeclarationObservationFact } from './platform-declarations-projection'
 import { projectRecognizedObservationFact } from './platform-recognized-projection'
 
@@ -50,7 +51,7 @@ export function archiveObservations(enterpriseId: number, queries: RosterPlatfor
   })
 }
 
-export function groupBusinessDetails(groups: ReturnType<typeof readPlatformBusinessGroups>, typedFields: Map<number,PlatformObservationFact>) {
+export function groupBusinessDetails(groups: PlatformBusinessGroup[], typedFields: Map<number,PlatformObservationFact>) {
   const observations = groups.flatMap(g => g.observationRefs).map((o): PlatformDetailObservation => ({ relationId: o.relationId, queryId: o.queryId, queriedAt: o.queriedAt, businessRecord: o.businessRecord, existingCorrespondenceIds: o.existingCorrespondenceIds, existingCorrespondences: o.existingCorrespondences, conflicts: o.conflicts, titleCode: o.titleCode, enterpriseId: o.enterpriseId, usccRaw: o.usccRaw, nameRaw: o.nameRaw, typedFields: typedFields.get(o.relationId)?.projectionVersionId != null ? typedFields.get(o.relationId)! : null })).sort((a, b) => a.relationId - b.relationId)
   return groupPlatformBusinessDetails(observations)
 }

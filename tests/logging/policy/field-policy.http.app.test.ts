@@ -139,9 +139,9 @@ for (const field of LOG_FIELD_PROFILES[0].fields) it(`real request hook omits ${
   // Existing stdout is intentionally limited to ten lines/second. Reserve a fresh
   // window before the specific request whose projection is compared with storage.
   await new Promise(resolve => setTimeout(resolve, 1050))
-  const health = await call('/api/health?private=' + PRIVATE); expect(health.status).toBe(200)
-  const event = (await logFor(health.requestId)).find(e => e.operation === 'http.request')
-  expect(event).toMatchObject({ source: 'http', outcome: 'success', level: 'info', requestId: health.requestId, fieldCapture: { profile: 'http', revision: saved.body.revision, disabled: [field.key] } })
+  const kinds = await call('/api/jobs/kinds?private=' + PRIVATE); expect(kinds.status).toBe(200)
+  const event = (await logFor(kinds.requestId)).find(e => e.operation === 'http.request')
+  expect(event).toMatchObject({ source: 'http', outcome: 'success', level: 'info', requestId: kinds.requestId, fieldCapture: { profile: 'http', revision: saved.body.revision, disabled: [field.key] } })
   expect(event).not.toHaveProperty(field.key)
   for (const retained of LOG_FIELD_PROFILES[0].fields.filter(f => f.key !== field.key)) expect(event).toHaveProperty(retained.key)
   const detail = await call('/api/logs/' + event.id, { headers: api }); expect(detail.status).toBe(200); expect(detail.body).toEqual(event)

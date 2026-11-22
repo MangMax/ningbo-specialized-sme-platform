@@ -18,25 +18,6 @@ const finished = () => {
 }
 
 describe('independent runtime literals', () => {
-  it('R_native_fixture_reopen_preserves_completion_and_rows', async () => {
-    const { mkdtemp, rm } = await import('node:fs/promises')
-    const { tmpdir } = await import('node:os')
-    const directory = await mkdtemp(join(tmpdir(), '445-native-fixture-'))
-    let db: Awaited<ReturnType<typeof fresh445FixtureDB>> | undefined
-    try {
-      const path = join(directory, 'business.sqlite')
-      db = await fresh445FixtureDB(path)
-      db.$client.exec("INSERT INTO enterprise(name,name_norm) VALUES('445 fixture','445 fixture')")
-      db.$client.close()
-      db = await fresh445FixtureDB(path)
-      expect(db.$client.prepare('SELECT name FROM enterprise').all()).toEqual([{ name: '445 fixture' }])
-      expect(db.$client.prepare('SELECT schema_version FROM platform_runtime_completion WHERE id=1').get()).toEqual({ schema_version: 71613 })
-      expect(db.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('platform_query','platform_relation')").all()).toEqual([])
-    } finally {
-      if (db?.$client.open) db.$client.close()
-      await rm(directory, { recursive: true, force: true })
-    }
-  })
   it('R_reserved_task_keys_preserve_ordinary_metadata', () => {
     expect(acceptsSessionFrame({ method: 'tools/call', params: { _meta: { ordinary: 'kept' } } })).toBe(true)
     expect(acceptsSessionFrame({ method: 'tools/call', params: { _meta: { 'io.modelcontextprotocol/related-task': { taskId: 'x' } } } })).toBe(false)
@@ -191,11 +172,6 @@ describe('bridge helper negatives', () => {
     expect(runtime.snapshot()).toEqual({ owners: 0, requests: 0, poisoned: false })
   })
 })
-
-async function fresh445FixtureDB(dbPath: string) {
-  const { initializeDb } = await import('../../../db/client')
-  return initializeDb({ dbPath, create: true })
-}
 
 async function refusal445NativeResponse() {
   const { EventEmitter } = await import('node:events')

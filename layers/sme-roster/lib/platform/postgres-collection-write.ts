@@ -9,7 +9,7 @@ import type { ApplyTargetInput } from './apply-target-writer'
 import { capturePostgresCollectionFacts } from './postgres-platform-facts'
 import { platformCollectionReuseSha256 } from './collection-reuse-digest'
 import { encodePlatformExactCell } from './postgres-platform-insert'
-import { witnessConditionNames, WITNESS_RULE, captureWitnessPosition, type captureWitnessInputs } from './recognized-witness-capture'
+import { witnessConditionNames, WITNESS_RULE, captureWitnessPosition, type WitnessCapture } from './recognized-witness-capture'
 import { CANDIDATE_SCOPE_RULE } from './candidate-scope-capture'
 import { RDJB_TITLE_CODES } from './recognized-evidence'
 
@@ -22,7 +22,7 @@ function witnessInput(evidence: Evidence) {
   const conditions = Object.fromEntries(witnessConditionNames.map(name => {
     const value = evidence.effectiveConditions[name]
     return [name, { value: value ?? null, kind: value === undefined ? 'absent' : value === null ? 'null' : 'text' }]
-  })) as ReturnType<typeof captureWitnessInputs>['conditions']
+  })) as WitnessCapture['conditions']
   const gate = evidence.source === 'queryBusList' && evidence.status === 'success' && evidence.completeness === 'complete' &&
     evidence.fullRange && evidence.effectiveConditions.combination === 'and'
   return { state: 'captured' as const, gate: Number(gate), pages: JSON.stringify(evidence.pages), conditions, errorName: null, error: null }

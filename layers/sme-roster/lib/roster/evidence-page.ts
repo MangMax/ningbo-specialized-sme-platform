@@ -4,7 +4,7 @@
  * ── 这一层解决的是哪件事 ────────────────────────────────────────────────
  *
  * 台账的「出处」是 `(文件 / 附件 / 序号 / 页码)` 四元组,而 `record_evidence.page`
- * 是**PDF 实际页序**(见 `layers/sme-roster/lib/roster-import-client.ts` 与 `db/schema.ts`)。
+ * 是**PDF 实际页序**(见 `layers/sme-roster/lib/roster-import-client.ts` 与 `db/postgresql/ledger-tables.ts`)。
  * 两个数字很容易被当成一回事,而它们完全是两回事:
  *
  *   **序号**(`list_no`)是名单里的行号,**页码**(`page`)是这一行印在 PDF 的第几页。

@@ -1,7 +1,11 @@
-import type * as schema from '../../../../db/schema'
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
+import type { storedFile as StoredFileTable } from '../../../../db/postgresql/file-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
 import type { PublishedPresentation } from '../../lib/roster/correspondence-view'
 import { sanitizeEvidence } from './evidence-redaction'
-import type { listRecordCorrespondenceRefs, CorrespondenceRead } from './record-correspondence'
+import type { CorrespondenceRead } from './record-correspondence-model'
+import type { readPostgresCorrespondenceRefs } from './record-correspondence-postgres-refs'
 
 export type SourceKind = 'event' | 'relation' | 'export_row'
 
@@ -22,7 +26,7 @@ export function correspondenceSourceSelections(rows: readonly CorrespondenceRead
   return { eventIds, relationIds, exportRowIds, occurrences }
 }
 
-export type SourceEvidence = typeof schema.recordEvidence.$inferSelect
+export type SourceEvidence = typeof RecordEvidenceTable.$inferSelect
 
 export function correspondencePublishedScope(evidence: SourceEvidence[], occurrences: number[]) {
   const scope = evidence.map(e => ({ evidenceId: e.id, eventId: e.recordEventId }))
@@ -32,11 +36,11 @@ export function correspondencePublishedScope(evidence: SourceEvidence[], occurre
 }
 
 export function projectCorrespondenceSources({ events, evidenceRows, files, sortedLinks, exports, targetDisplays, presentation }: {
-  events: { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect }[]
+  events: { event: OfficialEventRow; record: RosterRecordRow }[]
   evidenceRows: SourceEvidence[]
-  files: (Pick<typeof schema.storedFile.$inferSelect, 'id' | 'relPath' | 'bytes' | 'removedAt'> & { sha256: string | null })[]
-  sortedLinks: ReturnType<typeof listRecordCorrespondenceRefs>
-  exports: { row: typeof schema.platformExportRow.$inferSelect; batch: typeof schema.platformExportBatch.$inferSelect }[]
+  files: (Pick<typeof StoredFileTable.$inferSelect, 'id' | 'relPath' | 'removedAt'> & { bytes: number; sha256: string | null })[]
+  sortedLinks: Awaited<ReturnType<typeof readPostgresCorrespondenceRefs>>
+  exports: { row: typeof PlatformExportRowTable.$inferSelect; batch: typeof PlatformExportBatchTable.$inferSelect }[]
   targetDisplays: ReadonlyMap<number, unknown>
   presentation: PublishedPresentation
 }) {

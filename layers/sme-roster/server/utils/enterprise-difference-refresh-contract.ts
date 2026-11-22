@@ -1,7 +1,7 @@
 import { createError } from 'h3'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type { selectDifferenceCollections } from '../../lib/platform/difference-sources'
+import type { platformCollection } from '../../../../db/postgresql/platform-tables'
 import type { PlatformComparison } from '../../lib/roster/platform-comparison'
 
 export const enterpriseDifferenceRefreshInput = z.strictObject({ enterpriseIds: z.array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)).min(1).max(10000).refine(ids => new Set(ids).size === ids.length, 'Duplicate enterprise IDs').optional() })
@@ -42,7 +42,7 @@ export const refreshProjectionColumns = {
   platform_recognized_projection: ['validity_date_raw','maintenance_year','maintenance_batch','source_validity_date','source_maintenance_batch','source_maintenance_year_absent','district','award_note','title_raw','name_raw','uscc_raw'],
 } satisfies Record<string, string[]>
 
-type RefreshCollection = Pick<ReturnType<typeof selectDifferenceCollections>[number]['collection'],
+type RefreshCollection = Pick<typeof platformCollection.$inferSelect,
   'id' | 'interface' | 'queryKey' | 'rdjb' | 'titleCode' | 'queriedAt' | 'status'>
 
 type RefreshMaterials = {

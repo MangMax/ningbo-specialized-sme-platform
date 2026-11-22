@@ -1,4 +1,4 @@
-import { submitNewFixtureAnnouncement } from '../imports/fixtures/reviewed-announcement'
+import { submitNewFixtureAnnouncement } from './fixtures/submit-announcement'
 import { comparisonAppFixture } from './fixtures/comparison-app'
 import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'

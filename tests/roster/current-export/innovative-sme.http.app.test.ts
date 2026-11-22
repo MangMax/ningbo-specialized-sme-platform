@@ -1,7 +1,7 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
-import { reviewCurrentExportDecision, confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
+import { readDevelopmentDiscovery, businessIdentity, expectedBusinessIdentity } from './fixtures/specialized-export'
+import { confirmCurrentExportExclusion } from '../fixtures/qualification-decisions'
 import { createHash } from 'node:crypto'
 
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import { schema as s } from '../../../db/client'
+import * as s from '../fixtures/postgres-tables'
 import { nativeAppAdapter } from '../../support/native-app'
 
 // Only synthetic fixtures are written here. Assertions use real HTTP and XLSX bytes.
@@ -20,7 +20,7 @@ const titleCode = 'innovative_sme'
 const endpoint = '/api/roster/exports/current/innovative-sme'
 const token = 'synthetic-export-119-token'
 const app = nativeAppAdapter({ dir, token })
-let db = app.db
+let db: typeof app.db
 const headers = { 'content-type': 'application/json', authorization: `Bearer ${token}` }
 const year = new Date().getFullYear()
 let starting: Promise<void> | undefined
@@ -33,18 +33,19 @@ const submit = async (clientRequestId: string, extra = {}) => {
 
 type Event = Pick<typeof s.recordEvent.$inferInsert, 'eventType' | 'year' | 'decidedYear' | 'reviewOutcome' | 'batchSeq'>
 const award: Event = { eventType: 'award', year, batchSeq: 1 }
-function record(enterpriseId: number, name: string, events: Event[] = [award], title = titleCode) {
-  const row = db.insert(s.record).values({ enterpriseId, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
-  const eventRows = events.map(event => {
-    const rowEvent = db.insert(s.recordEvent).values({ recordId: row.id, ...event }).returning().get()
-    db.insert(s.recordEvidence).values({ recordEventId: rowEvent.id, sourceFile: `jxj/announcement/${title}-synthetic.xlsx`, attachment: '合成名单', listNo: rowEvent.id }).run()
-    return rowEvent
-  })
+async function record(enterpriseId: number, name: string, events: Event[] = [award], title = titleCode) {
+  const row = (await db.insert(s.record).values({ enterpriseId, titleCode: title, source: 'jxj', nameRaw: name }).returning())[0]!
+  const eventRows = []
+  for (const event of events) {
+    const rowEvent = (await db.insert(s.recordEvent).values({ recordId: row.id, ...event }).returning())[0]!
+    await db.insert(s.recordEvidence).values({ recordEventId: rowEvent.id, sourceFile: `jxj/announcement/${title}-synthetic.xlsx`, attachment: '合成名单', listNo: rowEvent.id })
+    eventRows.push(rowEvent)
+  }
   return { record: row, events: eventRows }
 }
-function candidate(name: string, events: Event[] = [award], title = titleCode) {
-  const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: `TEST-119-${name}`, district: '鄞州区', city: '宁波市' }).returning().get()
-  return { enterprise, ...record(enterprise.id, name, events, title) }
+async function candidate(name: string, events: Event[] = [award], title = titleCode) {
+  const enterprise = (await db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: `TEST-119-${name}`, district: '鄞州区', city: '宁波市' }).returning())[0]!
+  return { enterprise, ...await record(enterprise.id, name, events, title) }
 }
 async function terminal(id: string) {
   const deadline = Date.now() + 30000
@@ -106,6 +107,7 @@ beforeAll(async () => { discovery = await readDevelopmentDiscovery() }, 90000)
 beforeEach(async () => {
   await starting?.catch(() => {})
   await app.resetBusiness()
+  await app.prepare()
   db = app.db
   starting = undefined
 }, 90_000)
@@ -117,33 +119,32 @@ afterAll(async () => {
 })
 
 it('创新型专用入口交付六表与共享任务产物', async () => {
-  const fresh = candidate('创新型新认定')
+  const fresh = await candidate('创新型新认定')
   const { wb, job } = await workbook('119-fresh')
   expect(job.result.counts).toEqual({ eligible: 1, pending: 0, excluded: 0 })
-  expect(rows(wb, '有效企业').map(row => [...businessIdentity(row),row[5]])).toEqual([[...expectedBusinessIdentity(db,fresh.enterprise.id), '创新型中小企业']])
+  expect(rows(wb, '有效企业').map(row => [...businessIdentity(row),row[5]])).toEqual([[...await expectedBusinessIdentity(db,fresh.enterprise.id), '创新型中小企业']])
   expect(rows(wb, '有效企业')[0]![12]).toContain('innovative_sme-synthetic.xlsx')
   expect(job.result.dataVersion).toMatch(/^sha256:[a-f0-9]{64}$/)
 })
 
-function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | 'deregistered' | 'pending_review' | 'other', extra = {}) {
-  const decision = db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), ...extra }).returning().get()
-  reviewCurrentExportDecision(db,decision)
+async function decision(enterpriseId: number, reasonCode: 'moved_out' | 'moved_in' | 'deregistered' | 'pending_review' | 'other', extra = {}) {
+  const decision = (await db.insert(s.differenceReason).values({ enterpriseId, titleCode, direction: 'extra_in_miit', status: 'confirmed_reason', reasonCode, verificationStatus: 'confirmed', lifecycleAction: 'replace', basis: '合成已确认主体事实', effectiveAt: '2025-01-01T00:00:00Z', recordedAt: new Date().toISOString(), createdAt: new Date().toISOString(), retiredEvidenceValidity: 'valid', retiredEvidenceReviewed: true, ...extra }).returning())[0]!
   return decision
 }
 
 it('创新型按稳定主体去重且多称号分别保留', async () => {
-  const twins = [candidate('同名主体甲'), candidate('同名主体乙')]
+  const twins = [await candidate('同名主体甲'), await candidate('同名主体乙')]
   for (const twin of twins) {
-    db.update(s.enterprise).set({ name: '同名企业', nameNorm: '同名企业' }).where(eq(s.enterprise.id, twin.enterprise.id)).run()
-    db.update(s.record).set({ nameRaw: '同名企业' }).where(eq(s.record.id, twin.record.id)).run()
+    await db.update(s.enterprise).set({ name: '同名企业', nameNorm: '同名企业' }).where(eq(s.enterprise.id, twin.enterprise.id))
+    await db.update(s.record).set({ nameRaw: '同名企业' }).where(eq(s.record.id, twin.record.id))
   }
-  const multiple = candidate('多称号企业', [{ eventType: 'award', year: year - 5 }, award])
-  record(multiple.enterprise.id, '多称号企业', [award], 'little_giant')
-  record(multiple.enterprise.id, '多称号企业', [award], 'specialized_sme')
-  const giant = candidate('只有小巨人', [award], 'little_giant')
-  const province = candidate('只有专精特新', [award], 'specialized_sme')
-  const noOwnAward = candidate('不得借用其他称号公布', [])
-  record(noOwnAward.enterprise.id, '不得借用其他称号公布', [award], 'little_giant')
+  const multiple = await candidate('多称号企业', [{ eventType: 'award', year: year - 5 }, award])
+  await record(multiple.enterprise.id, '多称号企业', [award], 'little_giant')
+  await record(multiple.enterprise.id, '多称号企业', [award], 'specialized_sme')
+  const giant = await candidate('只有小巨人', [award], 'little_giant')
+  const province = await candidate('只有专精特新', [award], 'specialized_sme')
+  const noOwnAward = await candidate('不得借用其他称号公布', [])
+  await record(noOwnAward.enterprise.id, '不得借用其他称号公布', [award], 'little_giant')
   const { wb, job } = await workbook('119-isolation')
   // Original facts: three own awards, two upper-only identities and one empty-own + giant.
   // #738 removes the lower-history gate; overlapping titles still count once.
@@ -155,7 +156,7 @@ it('创新型按稳定主体去重且多称号分别保留', async () => {
   expect(job.result.counts).toEqual({ eligible: 6, pending: 0, excluded: 0 })
   for (const sheet of ['已到期', '已注销（吊销）', '已迁出', '未认定']) expect(rows(wb, sheet)).toEqual([])
   expect(rows(wb, '有效企业').filter(row => row[2] === '同名企业')).toHaveLength(2)
-  expect(rows(wb, '有效企业').filter(row => matchesBusinessIdentity(db, row, multiple.enterprise.id))).toHaveLength(1)
+  expect(rows(wb, '有效企业').filter(row => row[2] === multiple.enterprise.name && row[3] === multiple.enterprise.usccNorm)).toHaveLength(1)
   for (const [name, source] of [['多称号企业', 'innovative_sme'], ['只有小巨人', 'little_giant'], ['只有专精特新', 'specialized_sme'], ['不得借用其他称号公布', 'little_giant']]) {
     const row = rows(wb, '有效企业').find(row => row[2] === name)!
     expect(row[5]).toBe('创新型中小企业')
@@ -177,14 +178,14 @@ it('创新型按稳定主体去重且多称号分别保留', async () => {
     const crossJob = await terminal((await json(response)).jobId)
     expect(crossJob.state).toBe('done'); expect(crossJob.kind).toBe(job.kind)
     const cross = await download(crossJob)
-    for (const id of expectedIds) expect(rows(cross.wb, '有效企业').some(row => matchesBusinessIdentity(db,row,id))).toBe(true)
-    expect(rows(cross.wb, '有效企业').filter(row => matchesBusinessIdentity(db, row, multiple.enterprise.id))).toHaveLength(1)
+    for (const id of expectedIds) expect(rows(cross.wb, '有效企业').map(businessIdentity)).toContainEqual(await expectedBusinessIdentity(db, id))
+    expect(rows(cross.wb, '有效企业').filter(row => row[2] === multiple.enterprise.name && row[3] === multiple.enterprise.usccNorm)).toHaveLength(1)
   }
 })
 
 // Native source facts live in this case's independent database generation.
-function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' | 'failed' | 'no_record', key = enterprise.usccNorm!, rowStatus?: string) {
-  const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status, rawResponse: JSON.stringify({ status, rowStatus: rowStatus ?? null }), relations: rowStatus == null ? [] : [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, status: rowStatus, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+async function query(enterprise: typeof s.enterprise.$inferSelect, status: 'success' | 'failed' | 'no_record', key = enterprise.usccNorm!, rowStatus?: string) {
+  const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: key, rdjb: '1', titleCode, queriedAt: new Date().toISOString(), status, rawResponse: JSON.stringify({ status, rowStatus: rowStatus ?? null }), relations: rowStatus == null ? [] : [{ sequenceNo: 1, enterpriseId: enterprise.id, nameRaw: enterprise.name, usccRaw: enterprise.usccNorm, status: rowStatus, declareKind: 'update', verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
   return { id: native.queryId, relationIds: native.relationIds }
 }
 
@@ -231,24 +232,24 @@ it('创新型入口鉴权参数边界与OpenAPI可发现', async () => {
 })
 
 it('上级继承仍受主体与事实时点边界约束并优先自身期间', async () => {
-  const own = candidate('自身期间优先', [{ eventType: 'award', year: year - 1, batchSeq: 1 }])
-  record(own.enterprise.id, own.enterprise.name, [award], 'little_giant')
-  candidate('未来上级不提前有效', [{ eventType: 'award', year: year + 1, batchSeq: 1 }], 'little_giant')
-  candidate('旧上级不按年龄到期', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
-  const expired = candidate('正式期间到期上级不带入', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  const own = await candidate('自身期间优先', [{ eventType: 'award', year: year - 1, batchSeq: 1 }])
+  await record(own.enterprise.id, own.enterprise.name, [award], 'little_giant')
+  await candidate('未来上级不提前有效', [{ eventType: 'award', year: year + 1, batchSeq: 1 }], 'little_giant')
+  await candidate('旧上级不按年龄到期', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
+  const expired = await candidate('正式期间到期上级不带入', [{ eventType: 'award', year: year - 5, batchSeq: 1 }], 'little_giant')
   // Same award age, different source fact: only the explicit formal interval expires.
   // Bind the period to this event's evidence and source version, without a review fiction.
-  const evidence = db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, expired.events[0]!.id)).get()!
+  const evidence = (await db.select().from(s.recordEvidence).where(eq(s.recordEvidence.recordEventId, expired.events[0]!.id)))[0]!
   const sourceBytes = Buffer.from(`合成小巨人正式有效期：${year - 5}-01-01 至 ${year - 2}-12-31（含首尾）`)
   const sourceSha256 = createHash('sha256').update(sourceBytes).digest('hex')
-  db.insert(s.storedFile).values({ relPath: evidence.sourceFile, filename: 'little_giant-synthetic.xlsx', ext: 'xlsx', bytes: sourceBytes.length, sha256: sourceSha256 }).run()
-  db.update(s.recordEvent).set({ formalValidity: {
+  await db.insert(s.storedFile).values({ relPath: evidence.sourceFile, filename: 'little_giant-synthetic.xlsx', createdAt: '2026-01-01T00:00:00Z', ext: 'xlsx', bytes: BigInt(sourceBytes.length), sha256: sourceSha256 })
+  await db.update(s.recordEvent).set({ formalValidity: JSON.stringify({
     evidenceId: evidence.id, sourceSha256, statementPages: [1],
     interval: { validFrom: `${year - 5}-01-01`, validThrough: `${year - 2}-12-31` },
-  } }).where(eq(s.recordEvent.id, expired.events[0]!.id)).run()
+  }) }).where(eq(s.recordEvent.id, expired.events[0]!.id))
   for (const [name, kind] of [['注销上级不带入', 'cancelled'], ['迁出上级不带入', 'moved_out']] as const) {
-    const c = candidate(name, [award], 'little_giant')
-    db.insert(s.enterpriseFactRevision).values({ enterpriseId: c.enterprise.id, factId: 1, revision: 1, status: 'confirmed', fact: { kind, source: { reference: 'synthetic-official', statement: 'verified' }, effective: { precision: 'day', value: '2025-01-01' }, observed: { precision: 'day', value: '2025-01-01' }, city: null }, action: 'assert', actor: { type: 'agent', id: 'synthetic' }, basis: 'verified', createdAt: '2025-01-01T00:00:00Z' }).run()
+    const c = await candidate(name, [award], 'little_giant')
+    await db.insert(s.enterpriseFactRevision).values({ enterpriseId: c.enterprise.id, factId: 1, revision: 1, status: 'confirmed', fact: JSON.stringify({ kind, source: { reference: 'synthetic-official', statement: 'verified' }, effective: { precision: 'day', value: '2025-01-01' }, observed: { precision: 'day', value: '2025-01-01' }, city: null }), action: 'assert', actor: JSON.stringify({ type: 'agent', id: 'synthetic' }), basis: 'verified', createdAt: '2025-01-01T00:00:00Z' })
   }
   const expected: Record<string, string[]> = {
     effective: ['自身期间优先', '旧上级不按年龄到期'], expired: [], terminated: ['注销上级不带入'],

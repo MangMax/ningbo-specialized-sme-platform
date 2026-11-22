@@ -7,7 +7,7 @@ import { fileDeclaration669 as declaration, fileParseAudit105 as audit, rosterFi
 import { aggregateParts, compareParts, partKey, type StoredFilePart } from '../../lib/file-parts'
 import { normalizeAttachment } from '../../lib/attachment'
 import { SOURCE_ORDER } from '../../lib/labels'
-import type { FileQueryFilters } from '../../../core/server/utils/file-store'
+import type { FileQueryFilters } from '../../../core/server/utils/file-store-contract'
 import type { RosterFileFields } from '../modules/sme-roster/files'
 import { registeredSummary681 } from './registered-declaration-summary'
 

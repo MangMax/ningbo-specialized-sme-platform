@@ -2,7 +2,7 @@ import { legacyExportSheet, writeLegacyXlsx } from '../utils/legacy-export-xlsx'
 import { appLog, requestLogContext } from '../../../core/lib/logging'
 import { usePostgresRosterDb } from '../utils/postgres-roster-db'
 import { allPostgresLedgerRecords } from '../../lib/query-postgres'
-import type { EventType } from '#sme-roster/lib/query'
+import type { EventType } from '#sme-roster/lib/query-projection'
 import {
   TITLES,
   SOURCES,

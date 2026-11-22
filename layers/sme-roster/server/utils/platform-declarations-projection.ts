@@ -1,16 +1,15 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
-import type { storedApplyProjection as p } from '../../lib/platform/apply-stored-schema'
+import type { platformApplyProjection } from '../../../../db/postgresql/platform-tables'
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts'
-import type { vp } from './platform-declarations-target'
 
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'nameRaw', 'usccRaw'] as const;
 
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 
 export function projectDeclarationObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof vp.$inferSelect | null;
+    relationId: number; source: typeof platformApplyProjection.$inferSelect;
+    version: typeof platformApplyProjection.$inferSelect | null;
     originalName: string | null; originalUscc: string | null;
 }): PlatformObservationFact {
     const source = row.source, version = row.version, typed = version?.versionId != null;

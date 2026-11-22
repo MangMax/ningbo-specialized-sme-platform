@@ -6,12 +6,10 @@ import {
   platformCollection as collection,
   platformObservationAssignment as assignment,
 } from '../../../../db/postgresql/platform-tables'
-import type { readDifferenceObservation } from './difference-sources'
-
-type Observation = NonNullable<ReturnType<typeof readDifferenceObservation>>
+import type { DifferenceObservation } from './difference-sources'
 
 export async function readPostgresDifferenceObservations(db: Pick<NodePgDatabase, 'select'>, relationIds: readonly number[]) {
-  if (!relationIds.length) return new Map<number, Observation>()
+  if (!relationIds.length) return new Map<number, DifferenceObservation>()
   const original = alias(assignment, 'original')
   const current = db.select({
     enterpriseId: assignment.enterpriseId, verificationStatus: assignment.verificationStatus, matchBasis: assignment.matchBasis,
@@ -26,6 +24,6 @@ export async function readPostgresDifferenceObservations(db: Pick<NodePgDatabase
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .crossJoinLateral(current)
     // Drizzle has no scalar = ANY(array) builder. One array keeps legacy batches below the bind limit.
-    .where(sql`${observation.publicId} = any(${sql.param(relationIds)}::bigint[])`) as Observation[]
+    .where(sql`${observation.publicId} = any(${sql.param(relationIds)}::bigint[])`) as DifferenceObservation[]
   return new Map(rows.map(row => [row.id, row]))
 }

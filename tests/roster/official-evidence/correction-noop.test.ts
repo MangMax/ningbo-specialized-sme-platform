@@ -9,7 +9,7 @@ import { createApp, createRouter, toNodeListener, defineEventHandler } from 'h3'
 import { afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { OfficialPublishedRow, RosterImportPayload, RosterImportRequest, RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
-import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction'
+import type { EvidenceCorrectionRequest } from '../../../layers/sme-roster/server/utils/roster-evidence-correction-model'
 
 const createDatabase = useIsolatedPostgresCases()
 const closes: (() => void | Promise<void>)[] = []

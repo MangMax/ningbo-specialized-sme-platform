@@ -5,7 +5,7 @@ import { Button } from '#core/app/components/ui/button'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-import type { FileRow } from '#core/server/utils/file-store'
+import type { FileRow } from '#core/server/utils/file-store-contract'
 
 const open = defineModel<boolean>('open', { default: false })
 const props = withDefaults(

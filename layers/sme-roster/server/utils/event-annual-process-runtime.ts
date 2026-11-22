@@ -2,7 +2,6 @@ import { z } from 'zod'
 import type { EventAnnualProcessRead } from '../../lib/roster/annual-process'
 import { readPostgresQualifiedAnnualProcess } from './event-annual-process-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
-import type { handleEventAnnualProcessRequest } from './event-annual-process-api'
 
 const id = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -50,7 +49,7 @@ export async function dispatchRuntimeEventAnnualProcessMcp(args: { eventId: unkn
   return annualMcpResult(await handleRuntimeEventAnnualProcessRequest({ method: 'GET', id: eventId, query }))
 }
 
-export function annualMcpResult(output: ReturnType<typeof handleEventAnnualProcessRequest>) {
+export function annualMcpResult(output: ReturnType<typeof annualResponse> | ReturnType<typeof error>) {
   if (output.status === 200) return output.body
   return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(output.body) }] }
 }

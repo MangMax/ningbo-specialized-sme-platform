@@ -1,4 +1,5 @@
-import { resolveUploadPlacement } from '../../../layers/core/server/utils/stored-files'
+import { createFileCategoryRules } from '../../../layers/core/server/utils/file-category-rules'
+import { rosterFileServerCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
@@ -19,6 +20,7 @@ import { createTus, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation 
  * 断言落位路径正确且与源**逐字节一致**;再断言非法 metadata 400、同名落 ` (n)`。
  */
 
+const { resolveUploadPlacement } = createFileCategoryRules([rosterFileServerCategory])
 const BASE = 'http://localhost'
 
 /** 把声明的 metadata 编成 tus 的 `Upload-Metadata` 头值(base64 值)。 */

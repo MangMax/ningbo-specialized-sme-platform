@@ -1,15 +1,20 @@
 import { platformNormalizationConflict, type PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts'
-import type { storedProcessProjection as p } from '../../lib/platform/process-stored-schema'
-import type { vp } from './platform-business-processes-target'
+import type { platformBusinessProjection } from '../../../../db/postgresql/platform-tables'
+
+type Projection = typeof platformBusinessProjection.$inferSelect
+type Source = Omit<Projection, 'storedStatus' | 'reconciledStatus'> & {
+  storedStatus: string | Buffer | null
+  reconciledStatus: string | Buffer | null
+}
 
 const comparisonFields = ['province', 'status', 'batch', 'declareKind', 'appliedAt', 'awardBatchLabel', 'year'] as const;
 
 const modeledFields = ['declareKind', 'year', 'appliedAt', 'status', 'batch', 'awardBatchLabel', 'province', 'nameRaw', 'usccRaw'] as const;
 
 export function projectBusinessProcessObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof vp.$inferSelect | null;
+    relationId: number; source: Source;
+    version: Projection | null;
     originalName: string | null; originalUscc: string | null;
 }): PlatformObservationFact {
     const source = row.source, version = row.version, typed = version?.versionId != null;

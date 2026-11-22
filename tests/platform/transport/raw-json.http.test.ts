@@ -44,7 +44,7 @@ async function waitForBatch(batchId: string) {
 }
 
 function snapshotBusinessData() {
-  return execFileSync(join(postgres!.env.NUXT_POSTGRES_BIN, 'pg_dump'), [
+  return execFileSync(join(process.env.ROSTER_TEST_POSTGRES_BIN!, 'pg_dump'), [
     '--dbname', postgres!.url, '--data-only', '--schema', 'business',
     '--restrict-key', 'RawArchiveTestFixture',
   ], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024 })

@@ -1,21 +1,20 @@
 import { createHash } from 'node:crypto'
-import type { SelectResultFields } from 'drizzle-orm/query-builders/select.types'
 import { periodContains, type PlatformQualificationFact } from './platform-qualification'
 import type { RecognizedWitnessReader } from './recognized-witness-reader'
 import { adjudicateQualificationCycles as adjudicate407Cycles } from './qualification-cycles-407'
-import type { CurrentAssessmentInputs } from './current-assessment-inputs'
 import type { evaluateEnterpriseFactEffects } from './enterprise-fact-effects'
 import { formalValiditySchema } from './formal-validity'
 import type { FormalValidity } from '../../../../db/record-event-formal-validity'
 import { currentQualification102 } from '../../server/utils/decision-lifecycle-102/contract'
-import type { listRecordCorrespondenceRefs, createEnterpriseTitleCorrespondenceRefsReader } from '../../server/utils/record-correspondence'
+import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
+import type { readPostgresCorrespondenceRefs } from '../../server/utils/record-correspondence-postgres-refs'
+import type { dispositionFactSchema } from '../../server/utils/title-cycle-disposition-model'
+import type { QueryAssessment, QueryCoverageSource, projectQueryCoverage } from './query-assessment-projection'
+import type { DifferenceObservation } from '../platform/difference-sources'
+import type { PlatformInterface } from '../labels'
+import type { z } from 'zod'
 import type { OfficialPublishedFact, OfficialPublishedScope } from './official-published-presentation'
-import type { readQueryAssessment, readQueryCoverage, QueryCoverageSource } from './query-assessment'
-import type { readDifferenceObservation } from '../platform/difference-sources'
-import type { differencePublicColumns } from '../platform/difference-reference-target'
-import type { readDifferencePlatformEffects } from './difference-platform-effects'
 import { normalizeName, normalizeUscc } from '../domain'
-import type { IdentityKeyVariants } from './current-identity-keys'
 import { computeTitleLifecycle, type LifecycleEvent } from './lifecycle'
 import { adjudicateQualificationCycles, awardTime, originTime, factTime, qualificationEventAppliesAt, type QualificationEvent } from './qualification-cycles'
 import { RDJB_TITLE_CODES } from '../platform/recognized-evidence'
@@ -75,7 +74,7 @@ export type QualificationAssessmentReadOptions = {
   assessmentVersion?: typeof FROZEN_HIGHEST_HONOR_ASSESSMENT_VERSION | typeof INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION | typeof QUALIFICATION_ASSESSMENT_VERSION | typeof PREVIOUS_QUALIFICATION_ASSESSMENT_VERSION | typeof LEGACY_QUALIFICATION_ASSESSMENT_VERSION
   ownQueryIds?: readonly number[]
   publishedNames?: PublishedNameAssessmentInput
-  coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof readQueryCoverage>
+  coverageForTitle?: (title: CurrentTitle) => ReturnType<typeof projectQueryCoverage>
 }
 export interface CurrentQualificationAssessment {
   effectiveQualification?: { status: 'effective' | 'expired' | 'terminated' | 'moved_out' | 'unrecognized'; basis: string; presentationBasis?: string[]; localRuleBasis?: string[]; notes: string[]; source?: PlatformQualificationFact; supportingTitle?: CurrentTitle }
@@ -93,7 +92,7 @@ export interface CurrentQualificationAssessment {
     truncated: boolean
     observations: (QueryCoverageSource & { applicability: 'at_or_before_as_of' | 'after_as_of' | 'unknown_time'; rows: { relationId: number; status: string | null; year: number | null; batch: string | null }[] })[]
   }
-  correspondence: { status: 'requires_revalidation' | 'confirmed' | 'candidate' | 'unmatched'; message: string; refs: ReturnType<typeof listRecordCorrespondenceRefs> }
+  correspondence: { status: 'requires_revalidation' | 'confirmed' | 'candidate' | 'unmatched'; message: string; refs: Awaited<ReturnType<typeof readPostgresCorrespondenceRefs>> }
   completeness: { status: 'incomplete' | 'recorded'; message: string; gaps: string[]; eventIds: number[]; fieldGaps?: (OfficialEventFieldGap & { eventId: number })[]; publishedNames: { evidenceId: number; availability: OfficialPublishedFact['availability']; nameKnown: boolean }[] }
   evidence: { eventId: number; revision: number; eventType: string; year: number | null; batchSeq: number | null; decidedYear: number | null; reviewOutcome: string | null; formalValidity?: FormalValidity | null; validityInvalid?: boolean; evidenceIds: number[] }[]
   sourceVersions: { evidenceId: number; eventId: number; sourceFile: string; storedFileId: number | null; sha256: string | null; bytes: number | null; removedAt: string | null; capturedRevision: number | null; capturedSha256: string | null }[]
@@ -151,65 +150,67 @@ export interface CurrentWorkbookFacts {
 }
 export type CurrentPlatformReference = { id: number; queryId: number } & CurrentWorkbookFacts['platform'][number]
 export type CandidateEvent = LifecycleEvent & { batchSeq: number|null; nameRaw: string|null; usccRaw: string|null; source: string; revision: number; formalValidity?: FormalValidity; validityInvalid?: boolean; formalValidityInputHash?: string; recordId?: number }
-export type CandidateFile = NonNullable<ReturnType<CurrentAssessmentInputs['files']['get']>>
+export type CandidateFile = { id: number; sha256: string; bytes: number; removedAt: string | null }
+type QualificationPlatformEffect = CurrentPlatformReference & {
+  interface: PlatformInterface; status: string | null; year: number | null; batch: string | null
+}
 export function formatQualificationCorrespondence(ref: { id: number; revision: number; status: string; requiresRevalidation?: boolean }) {
   return `correspondence:${ref.id}@${ref.revision} ${ref.status}${ref.requiresRevalidation ? ' 来源需重新核实' : ''}`
 }
 
 export type CandidateResult = { row: CurrentRow; group: CurrentGroup; effectiveStatus: import('./current-status').CurrentStatus; applicablePublication: boolean }
-type DispositionRow = NonNullable<ReturnType<CurrentAssessmentInputs['dispositions']['get']>>[number]
 export type QualificationDisposition = {
-  disposition: Pick<DispositionRow['disposition'], 'id' | 'revision' | 'status' | 'kind' | 'fact'>
-  file: Pick<NonNullable<DispositionRow['file']>, 'removedAt' | 'sha256'> | null
-  cycle: Pick<NonNullable<DispositionRow['cycle']>, 'id' | 'revision' | 'eventType' | 'year' | 'batchSeq'> | null
-  record: Pick<NonNullable<DispositionRow['record']>, 'enterpriseId' | 'titleCode' | 'source'> | null
+  disposition: { id: string; revision: number; status: string; kind: z.infer<typeof dispositionFactSchema>['kind']; fact: z.infer<typeof dispositionFactSchema> }
+  file: Pick<CandidateFile, 'removedAt' | 'sha256'> | null
+  cycle: Pick<CandidateEvent, 'id' | 'revision' | 'eventType' | 'year' | 'batchSeq'> | null
+  record: { enterpriseId: number; titleCode: string; source: string } | null
 }
 export type CandidateDetail = {
   expandAssessment?: boolean
   giant?: CurrentRow
   specialized?: CurrentRow
   qualificationOnly?: boolean
-  platformEffects?: ReturnType<typeof readDifferencePlatformEffects>
+  platformEffects?: QualificationPlatformEffect[]
 }
 type CandidateReader = (
   enterpriseId: number, title: CurrentTitle, year: number, executionTime?: number,
-  keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants },
   includeFilterFacts?: boolean, includeReferences?: boolean, assessmentOptions?: QualificationAssessmentReadOptions,
   includePendingFilterFacts?: boolean, suppliedPlatformRefs?: readonly CurrentPlatformReference[],
-  preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<typeof listRecordCorrespondenceRefs>,
+  preparedCorrespondences?: (enterpriseId: number, titleCode: string) => Awaited<ReturnType<typeof readPostgresCorrespondenceRefs>>,
   observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation,
   detail?: CandidateDetail,
 ) => CandidateResult
 export interface CandidateSource {
-  enterprise: NonNullable<ReturnType<CurrentAssessmentInputs['enterprises']['get']>>
+  enterprise: {
+    id: number; name: string; name_norm: string; uscc_norm: string | null; district: string | null; city: string | null
+  }
   events: CandidateEvent[]
   evidence: CurrentWorkbookFacts['evidence']
   readValidityRows(): {id:number;recordId:number;value:string|null}[]
   readFile(path: string): CandidateFile | undefined
   readAliases(): {id:number;name:string;version:number}[]
   readDispositions(): QualificationDisposition[]
-  readPlatformEffects?(): ReturnType<typeof readDifferencePlatformEffects>
-  readCorrespondences?(): ReturnType<typeof listRecordCorrespondenceRefs>
+  readPlatformEffects?(): QualificationPlatformEffect[]
+  readCorrespondences?(): Awaited<ReturnType<typeof readPostgresCorrespondenceRefs>>
   correspondenceReferences?(): string[]
-  readLegacyHeads?(): SelectResultFields<ReturnType<typeof differencePublicColumns>>[]
-  readLegacyAssessment?(title: string, direction: 'missing_in_miit' | 'extra_in_miit'): ReturnType<typeof readQueryAssessment>
+  readLegacyHeads?(): Parameters<typeof publicVersion102>[0][]
+  readLegacyAssessment?(title: string, direction: 'missing_in_miit' | 'extra_in_miit'): QueryAssessment
   readLegacyReceipt?(id: number): {basis:string;effectiveAt:string}|undefined
-  readLegacyObservation?(id: number): ReturnType<typeof readDifferenceObservation>
+  readLegacyObservation?(id: number): DifferenceObservation | undefined
   readFactEffects(effectiveOnly: boolean): ReturnType<typeof evaluateEnterpriseFactEffects>
   readPlatformFacts(): PlatformQualificationFact[]
   readWitnesses?: RecognizedWitnessReader['readMany']
   readPublishedNames?(scope: OfficialPublishedScope[]): OfficialPublishedFact[]
   readCaptureVersion(id: number): {revision:number;sha256:string|null}|undefined
-  readCoverage?(): ReturnType<typeof readQueryCoverage>
+  readCoverage?(): ReturnType<typeof projectQueryCoverage>
 }
 
 export function evaluateCandidate(
   source: CandidateSource, readCandidate: CandidateReader,
   enterpriseId: number, title: CurrentTitle, year: number, executionTime = Date.now(),
-  keys?: { queries: IdentityKeyVariants; relations: IdentityKeyVariants },
   includeFilterFacts = false, includeReferences = true, assessmentOptions?: QualificationAssessmentReadOptions,
   includePendingFilterFacts = false, suppliedPlatformRefs?: readonly CurrentPlatformReference[],
-  preparedCorrespondences?: (enterpriseId: number, titleCode: string) => ReturnType<ReturnType<typeof createEnterpriseTitleCorrespondenceRefsReader>>,
+  preparedCorrespondences?: (enterpriseId: number, titleCode: string) => Awaited<ReturnType<typeof readPostgresCorrespondenceRefs>>,
   observePublishedForCurrent?: CurrentPublishedNameObservation, observeCycles?: CurrentCycleObservation,
   detail: CandidateDetail = {},
 ): CandidateResult {
@@ -506,7 +507,7 @@ export function evaluateCandidate(
   let giant: CurrentRow | undefined
   const needsGiant = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
   if (inheritanceMode && title !== 'little_giant' && (!frozenInheritance || history.length || expandAssessment) && needsGiant) {
-    giant = detail.giant ?? readCandidate(enterpriseId, 'little_giant', year, executionTime, keys, false, includeReferences,
+    giant = detail.giant ?? readCandidate(enterpriseId, 'little_giant', year, executionTime, false, includeReferences,
       { ...assessmentOptions, assessmentVersion: frozenInheritance ? INDEPENDENT_QUALIFICATION_ASSESSMENT_VERSION : QUALIFICATION_ASSESSMENT_VERSION }, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment }).row
     if ((frozenInheritance ? history.length > 0 : effectiveStatus !== 'effective') && giant.group === 'eligible' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out') {
       effectiveStatus = 'effective'
@@ -520,7 +521,7 @@ export function evaluateCandidate(
   let specialized: CurrentRow | undefined
   const needsSpecialized = !detail.qualificationOnly || effectiveStatus === 'expired' || effectiveStatus === 'unrecognized'
   if (inheritanceMode && !frozenInheritance && title === 'innovative_sme' && needsSpecialized) {
-    specialized = detail.specialized ?? readCandidate(enterpriseId, 'specialized_sme', year, executionTime, keys, false, includeReferences,
+    specialized = detail.specialized ?? readCandidate(enterpriseId, 'specialized_sme', year, executionTime, false, includeReferences,
       assessmentOptions, false, undefined, preparedCorrespondences, undefined, undefined, { expandAssessment, giant, qualificationOnly: detail.qualificationOnly }).row
     if (effectiveStatus !== 'effective' && effectiveStatus !== 'terminated' && effectiveStatus !== 'moved_out' && specialized.group === 'eligible') {
       effectiveStatus = 'effective'
@@ -739,7 +740,7 @@ export function evaluateLoadedCurrentQualification(
     const input = inputs.get(title)!
     const filtering = title === filterTitle && mode !== 'workbook'
     const result = evaluateCandidate(input, () => { throw new Error('Qualification dependencies must be evaluated in title order') },
-      input.enterprise.id, title, year, asOf, undefined, filtering, mode !== 'scan', mode === 'scan' ? undefined : {},
+      input.enterprise.id, title, year, asOf, filtering, mode !== 'scan', mode === 'scan' ? undefined : {},
       filtering, input.platformReferences, undefined, title === filterTitle ? observePresentation : undefined, undefined,
       { giant: evaluated.get('little_giant')?.row, specialized: evaluated.get('specialized_sme')?.row, qualificationOnly: mode === 'scan' })
     evaluated.set(title, result)
@@ -793,7 +794,7 @@ export function assessLegacyQualificationInputs(enterpriseId: number, asOf: numb
   const titles = CURRENT_TITLES.map(title => {
     const input = inputs.get(title)!
     const result = evaluateCandidate(input, () => { throw new Error('Legacy qualification does not inherit titles') },
-      input.enterprise.id, title, date.getUTCFullYear(), asOf, undefined, false, true, { assessmentVersion })
+      input.enterprise.id, title, date.getUTCFullYear(), asOf, false, true, { assessmentVersion })
     return result.row.assessment!
   })
   const scope = { enterpriseId, asOf: date.toISOString(), ruleVersion: LEGACY_CURRENT_RULE_VERSION, assessmentVersion }

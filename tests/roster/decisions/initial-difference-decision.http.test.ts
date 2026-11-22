@@ -1,4 +1,4 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { createServer, type Server } from 'node:http'
@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb, schema } from '../../../db/client'
+import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -16,15 +16,15 @@ let server: Server, base: string
 const scope = { enterpriseId: 1, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
 const body = (key: string, expectedCurrentId: number | null = null) => ({ ...scope, action: 'replace', expectedCurrentId, idempotencyKey: key, basis: '人工核对保留公布历史', effectiveAt: '2026-10-24T00:00:00Z', decision: { status: 'confirmed_reason', reasonCode: 'other', measureCode: 'keep_history', verificationStatus: 'confirmed' } })
 beforeAll(async () => {
-  const sourcePath = join(dir, 'synthetic.db')
-  const source = initializeDb({ create: true, dbPath: sourcePath })
-  try {
-    source.insert(schema.enterprise).values({ id: 1, name: '274合成', nameNorm: '274合成' }).run()
-    submitNativePlatformQuery(source, { queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success', queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}' })
-  } finally { source.$client.close() }
-  postgres = await postgresRuntimeFixture({ dir, sourcePath })
+  postgres = await postgresRuntimeFixture({ dir })
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
+  const db = usePostgresDirectoryDb()
+  await db.insert(enterprise).values({ name: '274合成', nameNorm: '274合成' })
+  await seedPostgresPlatformQuery(db, {
+    queryKey: 'name:274合成', interface: 'apply_list', rdjb: '2', status: 'success',
+    queriedAt: '2026-10-24T00:00:00Z', rawResponse: '{"synthetic":"unaltered"}',
+  })
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-only', }))
   const command = (await import('../../../layers/sme-roster/server/api/roster/decision-lifecycle/browser-commands.post')).default

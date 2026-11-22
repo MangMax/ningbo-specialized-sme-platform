@@ -1,26 +1,28 @@
-import { submitNativePlatformQuery } from '../fixtures/native-query'
-import { initializeDb } from '../../../db/client'
+import { seedPostgresPlatformQuery } from '../fixtures/postgres-query'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, setHeader, defineEventHandler, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 const dir = mkdtempSync(join(tmpdir(), 'platform-query-http-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
 let server: ReturnType<typeof createServer>, base: string
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
-const earlier = submitNativePlatformQuery(db, {
-  interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂',
-  relations: [{ sequenceNo: 1, relationKey: 'apply-42', nameRaw: '合成企业', rawFields: { id: 'apply-42', qymc: '合成企业', hiddenOriginal: { text: '离线字段' } } }],
-})
-const id = earlier.queryId
-const laterId = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-20', status: 'partial', rawResponse: '再次采集' }).queryId
+let id: number
+let laterId: number
+let earlier: Awaited<ReturnType<typeof seedPostgresPlatformQuery>>
 beforeAll(async () => {
-  postgres = await postgresRuntimeFixture({dir, sourcePath: join(dir, 'test.sqlite')})
+  postgres = await postgresRuntimeFixture({ dir })
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  const db = usePostgresDirectoryDb()
+  earlier = await seedPostgresPlatformQuery(db, {
+    interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-19', status: 'partial', rawResponse: '完整原文🙂',
+    relations: [{ sequenceNo: 1, relationKey: 'apply-42', nameRaw: '合成企业', rawFields: { id: 'apply-42', qymc: '合成企业', hiddenOriginal: { text: '离线字段' } } }],
+  })
+  id = earlier.queryId
+  laterId = (await seedPostgresPlatformQuery(db, { interface: 'apply_list', queryKey: 'synthetic:http', queriedAt: '2026-10-20', status: 'partial', rawResponse: '再次采集' })).queryId
   vi.stubGlobal('defineEventHandler', defineEventHandler)
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
@@ -36,7 +38,6 @@ afterAll(async () => {
   postgres?.close()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
-  db.$client.close()
   rmSync(dir, { recursive: true, force: true })
 })
 it('the exact query ID opens the earlier extracted record when two captures share a query key', async () => {

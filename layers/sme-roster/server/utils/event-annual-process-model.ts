@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { record as RecordTable, recordEvent as RecordEventTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformQueryTitleScope as PlatformQueryTitleScopeTable } from '../../../../db/postgresql/platform-query-scope-tables'
+import type { platformCollection as PlatformCollectionTable, platformCollectionPage as PlatformCollectionPageTable } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup, ScopedPlatformObservation } from '../../lib/platform/business-record'
 import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { ANNUAL_PROCESS_RULE_VERSION, buildAnnualProcess, type AnnualProcessCoverage, type AnnualProcessScopeGap, type AnnualProcessSourceRefs } from '../../lib/roster/annual-process'
 import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
-import type { readPlatformBusinessMetadata } from './platform-business-record-read'
-import type { annualEventHeader, readAnnualComparisonBatch } from './event-annual-process-read'
+import type { BusinessMetadataRow } from './platform-business-record-postgres'
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
@@ -16,7 +18,11 @@ export type Titles = Array<{ relationId: number; queryId: number; relationKey: s
 
 export type Queries = Array<{ queryId: number; interface: 'apply_list' | 'business_list' | 'recognized_list'; queryKey: string; rdjb: string; titleCode: string | null; queriedAt: string; status: 'success' | 'failed' | 'no_record' | 'not_queried' | 'partial'; completeness: string | null; fullRangeValue: number | null }>
 
-type AnnualEventHeader = NonNullable<ReturnType<ReturnType<typeof annualEventHeader>['get']>>
+type AnnualEventHeader = {
+  event: typeof RecordEventTable.$inferSelect
+  record: typeof RecordTable.$inferSelect
+  enterprise: Pick<typeof EnterpriseTable.$inferSelect, 'nameNorm' | 'usccNorm'>
+}
 
 export function scopeAnnualEvent(joined: AnnualEventHeader) {
   if (joined.record.source !== 'jxj' || !['award', 'review'].includes(joined.event.eventType)) return null
@@ -29,7 +35,7 @@ export function scopeAnnualEvent(joined: AnnualEventHeader) {
   return { joined, event, owner, titleCode, businessYear, kind, identity }
 }
 
-export function prepareAnnualObservations(scope: AnnualEventScope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: ReturnType<typeof readPlatformBusinessMetadata>, suppliedFacts: ReadonlyMap<number, AnnualObservationFacts>) {
+export function prepareAnnualObservations(scope: AnnualEventScope, rows: Rows, titleScopeRows: Titles, queries: Queries, metadata: Map<number, BusinessMetadataRow>, suppliedFacts: ReadonlyMap<number, AnnualObservationFacts>) {
   const { joined, event, owner, titleCode, businessYear, kind } = scope
   const eventId = event.id
   const coverage: AnnualProcessCoverage[] = queries.map(row => ({ queryId: row.queryId, interface: row.interface, queriedAt: row.queriedAt, status: row.status, completeness: row.completeness, fullRange: row.fullRangeValue == null ? null : row.fullRangeValue === 1 }))
@@ -120,7 +126,7 @@ export const unavailable = (): never => { throw new Error('platform_comparison_s
 
 export const resource = (): never => { throw new Error('input_resource_limit') }
 
-type ClosureMetadata = ReturnType<typeof readPlatformBusinessMetadata> extends Map<number, infer M> ? M : never
+type ClosureMetadata = BusinessMetadataRow
 
 type ClosureNode = ClosureMetadata & { queryId: number; relationKey: string | null; usccRaw: string | null; isAnnualRow: number }
 
@@ -194,7 +200,12 @@ function classifyComparisonClosure(nodes: ClosureNode[], history: ClosureHistory
   return { metadataOnly, hasCurrentRoot: current.size > 0 }
 }
 
-type AnnualComparisonRequest = Parameters<typeof readAnnualComparisonBatch>[2]
+export type AnnualComparisonRequest = {
+  enterpriseId: number
+  titleCode: string
+  eventIds: readonly number[]
+  selectedQueryIds: readonly number[]
+}
 
 type ComparisonEntry = ReturnType<typeof projectAnnualProcess>
 
@@ -203,10 +214,10 @@ export function admitAnnualComparison({ request, entries, history, decisions, hi
   request: AnnualComparisonRequest; entries: ComparisonEntry[]; history: Map<number, number[]>
   decisions: (Omit<ClosureDecision, 'relationId'> & { relationId: number | null })[]
   historicalQueries: (Omit<ClosureHistory, 'recordId'> & { recordId: number | null })[]
-  queryRows: { id: number; collection: Pick<typeof schema.platformCollection.$inferSelect,
+  queryRows: { id: number; collection: Pick<typeof PlatformCollectionTable.$inferSelect,
     'id' | 'rdjb' | 'titleCode' | 'interface' | 'parseState' | 'scopeMode'> }[]
-  pages: Pick<typeof schema.platformCollectionPage.$inferSelect, 'collectionId' | 'rdjb'>[]
-  titleScopes: Pick<typeof schema.platformQueryTitleScope.$inferSelect, 'collectionId' | 'rdjb'>[]
+  pages: Pick<typeof PlatformCollectionPageTable.$inferSelect, 'collectionId' | 'rdjb'>[]
+  titleScopes: Pick<typeof PlatformQueryTitleScopeTable.$inferSelect, 'collectionId' | 'rdjb'>[]
   metadata: Map<number, ClosureMetadata>; hasUnboundProcessCollection: () => boolean
 }) {
   const ids = [...new Set(request.eventIds)], selected = new Set(request.selectedQueryIds)

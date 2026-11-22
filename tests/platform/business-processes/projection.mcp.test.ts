@@ -17,7 +17,8 @@ let commit: typeof import('../../../layers/sme-roster/server/mcp/tools/save_rost
 
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: join(dir, 'files'), mcpToken: 'synthetic-mcp-token' }))

@@ -6,17 +6,24 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { nativeAppAdapter } from '../../support/native-app'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { schema as s } from '../../../db/client'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import * as s from '../fixtures/postgres-tables'
 const dir = mkdtempSync(join(tmpdir(), 'qualification-confirmation-'))
 const token = 'synthetic-qualification'
 const app = nativeAppAdapter({ dir, token, launch: ({ cwd, port }) => ({ args: [join(cwd, '.output/server/index.mjs')], env: { NODE_ENV: 'production', HOST: '127.0.0.1', PORT: String(port), NUXT_MCP_TOKEN: token } }) })
 const client = new Client({ name: 'synthetic-qualification', version: '1' })
 let tools: Awaited<ReturnType<Client['listTools']>>
 let discovery: any
-const enterprise = app.db.insert(s.enterprise).values({ name: '合成迁入验收', nameNorm: '合成迁入验收', usccNorm: '91330211255994457P' }).returning().get()
-const source = submitNativePlatformQuery(app.db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+async function seed() {
+  await app.prepare()
+  const enterprise = singlePostgresFixtureRow(await app.db.insert(s.enterprise).values({ name: '合成迁入验收', nameNorm: '合成迁入验收', usccNorm: '91330211255994457P' }).returning())
+  const source = await seedPostgresPlatformQuery(app.db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-11-16T00:00:00Z', status: 'success', rawResponse: '{}', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm!, nameRaw: enterprise.name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+  return { enterprise, source }
+}
+let seeded: Awaited<ReturnType<typeof seed>>
 beforeAll(async () => {
+  seeded = await seed()
  discovery = await readDevelopmentDiscovery()
  await app.start()
  await client.connect(new StreamableHTTPClientTransport(new URL(app.url('/mcp')), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
@@ -25,6 +32,7 @@ beforeAll(async () => {
 }, 90000)
 afterAll(async () => { await client.close(); await app.close(); rmSync(dir, { recursive: true, force: true }) })
 it('discovers and confirms source-bound qualification across real HTTP and MCP with public readback', async () => {
+  const { enterprise, source } = seeded
  for (const name of ['preflight_qualification_decision', 'commit_qualification_decision']) {
   const tool = tools.tools.find(t => t.name === name)
   expect(tool).toBeDefined()

@@ -1,4 +1,6 @@
-import type * as schema from '../../../../db/schema'
+import type { record as RecordTable, recordEvent as RecordEventTable, recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformCollection as PlatformCollectionTable, platformCollectionPage as PlatformCollectionPageTable, platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
+import type { differenceReason as DifferenceReasonTable } from '../../../../db/postgresql/roster-selection-tables'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLES } from '../../lib/labels'
 import type { PlatformBusinessMetadata } from '../../lib/platform/business-record'
@@ -7,20 +9,44 @@ import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { platformRowTitle } from '../../lib/platform/row-title'
 import { fileNameOf } from '../../../core/lib/preview'
 import { groupComparisonBusinessObservations, recordComparisonInput, type ComparisonSourceCatalogInput, type HistoricalClassification, type RecordComparisonInput } from '../../lib/roster/record-comparison'
-import type { registeredFileAtLocator } from '../../../core/server/utils/file-read-identity'
-import type { StoredFileContentIdentity } from '../../../core/server/utils/file-content-identity'
-import type { comparisonFormalCounts, iterateComparisonFormalEvents } from './record-comparison-formal'
-import type { readComparisonTargetIdentities, readComparisonTargetRelations, ComparisonTargetQueryFacts } from './record-comparison-target-sources'
-import type { listRecordCorrespondences } from './record-correspondence'
-import type { selected, getRecordComparison } from './record-comparison'
+import type { StoredFileContentIdentity } from '../../../core/server/utils/file-identity'
+import type { OfficialSourceDocument } from './official-source-directory-postgres'
+import type { CorrespondenceRead } from './record-correspondence-model'
+import type { BusinessMetadataRow } from './platform-business-record-postgres'
+import type { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
+import type { projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 
-export type Query = PlatformStoredQuery & { comparisonFacts: ComparisonTargetQueryFacts }
+type ComparisonTargetQueryFacts = {
+  id: number
+  collection: typeof PlatformCollectionTable.$inferSelect & Pick<PlatformStoredQuery, 'interface' | 'status'>
+  evidencePresent: boolean
+  pages: (typeof PlatformCollectionPageTable.$inferSelect)[]
+  unfinished: ReturnType<typeof projectPostgresUnfinishedPositions>
+  conditions: Record<string, unknown> | null
+  scopes: string[]
+}
 
-export type Relation = ReturnType<typeof readComparisonTargetRelations>[number]
+export type Query = Pick<PlatformStoredQuery, 'id' | 'interface' | 'queryKey' | 'queriedAt' | 'status' | 'titleCode' | 'rdjb'> & { comparisonFacts: ComparisonTargetQueryFacts }
 
-type Event = Omit<typeof schema.recordEvent.$inferSelect, 'formalValidity'>
+type ComparisonIdentity = {
+  id: number
+  observationId: number
+  queryId: number
+  sequenceNo: number
+  relationKey: string | null
+  enterpriseId: number | null
+  matchBasis: string
+  verificationStatus: string
+  nameRaw: string | null
+  usccRaw: string | null
+}
 
-type Edge = ReturnType<typeof listRecordCorrespondences>[number]
+type ObservationComparisonFact = Awaited<ReturnType<typeof readPostgresObservationComparisonFacts>> extends Map<number, infer Fact> ? Fact : never
+export type Relation = ComparisonIdentity & ObservationComparisonFact
+
+type Event = Omit<typeof RecordEventTable.$inferSelect, 'formalValidity'>
+
+type Edge = CorrespondenceRead
 
 export const unique = <T>(rows: T[]) => [...new Set(rows)]
 
@@ -44,7 +70,7 @@ const publicEdge = (edge: Edge) => ({ id: edge.id, type: edge.type, role: edge.r
 
 const publicRelation = (relation: Relation, query: Query) => ({ id: relation.id, queryId: query.id, interface: query.interface, sequenceNo: relation.sequenceNo, relationKey: relation.relationKey, enterpriseId: relation.enterpriseId, usccRaw: relation.usccRaw, nameRaw: relation.nameRaw, status: relation.status, declareKind: relation.declareKind, appliedAt: relation.appliedAt, awardBatchLabel: relation.awardBatchLabel, year: relation.year, normalizationConflicts: relation.normalizationConflicts, verificationStatus: relation.verificationStatus, queriedAt: query.queriedAt, titleCode: relationTitle(relation, query), rdjb: query.rdjb, sourceRdjb: comparisonPosition(query, relation.sequenceNo).sourceRdjb, sourcePage: comparisonPosition(query, relation.sequenceNo).sourcePage })
 
-const publicExport = (row: typeof schema.platformExportRow.$inferSelect, batch: typeof schema.platformExportBatch.$inferSelect) => ({ id: row.id, batchId: batch.id, sourceRowNo: row.sourceRowNo, usccRaw: row.usccRaw, nameRaw: row.nameRaw, district: row.district, province: row.province, city: row.city, regStatus: row.regStatus, titleCode: batch.titleCode, collectedOn: batch.collectedOn, sha256: batch.sha256 })
+const publicExport = (row: typeof PlatformExportRowTable.$inferSelect, batch: typeof PlatformExportBatchTable.$inferSelect) => ({ id: row.id, batchId: batch.id, sourceRowNo: row.sourceRowNo, usccRaw: row.usccRaw, nameRaw: row.nameRaw, district: row.district, province: row.province, city: row.city, regStatus: row.regStatus, titleCode: batch.titleCode, collectedOn: batch.collectedOn, sha256: batch.sha256 })
 
 function comparisonPosition(query: Query, sequenceNo: number) {
   if (!query.comparisonFacts.evidencePresent) return { sourceRdjb: null, sourcePage: null }
@@ -142,13 +168,32 @@ export function validatedComparisonInput(input: RecordComparisonInput) {
   return parsed
 }
 
-export type SelectedRecordComparison = ReturnType<typeof selected>
+export type SelectedRecordComparison = {
+  input: ReturnType<typeof validatedComparisonInput>
+  queries: Query[]
+  batches: (typeof PlatformExportBatchTable.$inferSelect)[]
+  documents: (OfficialSourceDocument & { contentIdentity: {
+    registered: StoredFileContentIdentity | null
+    status: 'unknown'
+    historical: 'unknown'
+  } })[]
+  relations: Array<{ relation: Relation; query: Query }>
+  exports: Array<{ row: Omit<typeof PlatformExportRowTable.$inferSelect, 'rawFields'> & { rawFields: null }; batch: typeof PlatformExportBatchTable.$inferSelect }>
+  edges: Edge[]
+  unavailableEdges: Edge[]
+  businessMetadata: Map<number, BusinessMetadataRow>
+}
 
-type FormalEvent = ReturnType<typeof iterateComparisonFormalEvents> extends Generator<infer T> ? T : never
+export type FormalEvent = {
+  event: Event
+  record: Pick<typeof RecordTable.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'source' | 'usccRaw' | 'nameRaw'>
+  uscc: string | null
+  inSelectedSource: boolean
+}
 
-type FormalCount = ReturnType<typeof comparisonFormalCounts> extends Generator<void, infer T> ? T : never
+type FormalCount = { events: number; enterpriseTitles: number }
 
-type PageEvidence = { evidence: typeof schema.recordEvidence.$inferSelect; registered: StoredFileContentIdentity | null }
+type PageEvidence = { evidence: typeof RecordEvidenceTable.$inferSelect; registered: StoredFileContentIdentity | null }
 
 export type ComparisonRead =
   | undefined
@@ -326,7 +371,7 @@ export function* compareRecordInputs(source: SelectedRecordComparison, paginate 
 
 }
 
-type Reason = typeof schema.differenceReason.$inferSelect
+type Reason = typeof DifferenceReasonTable.$inferSelect
 
 type LegacyImpactReason = Pick<Reason, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt'> & {
   evidenceQueryId: number | null
@@ -334,7 +379,7 @@ type LegacyImpactReason = Pick<Reason, 'id' | 'enterpriseId' | 'titleCode' | 'di
 }
 
 export function projectLegacyComparisonImpact(source: SelectedRecordComparison,
-  comparison: ReturnType<typeof getRecordComparison>, owners: ReadonlyMap<number, string | null>,
+  comparison: ReturnType<typeof compareRecordInputs> extends Generator<unknown, infer Result, any> ? Result : never, owners: ReadonlyMap<number, string | null>,
   { legacyRows, total, pageReasons }: { legacyRows: number; total: number; pageReasons: LegacyImpactReason[] },
 ) {
   const { input } = source
@@ -361,7 +406,7 @@ export interface SourceEnterpriseLink {
   mergedFromEnterpriseId: number | null
 }
 
-type CatalogIdentity = ReturnType<typeof readComparisonTargetIdentities>[number] & { relationId: number; enterpriseName: string | null }
+type CatalogIdentity = ComparisonIdentity & { relationId: number; enterpriseName: string | null }
 
 export function projectSourceEnterpriseLinks(relationRows: CatalogIdentity[], aliases: ReadonlyMap<string, { note: string | null }>) {
   const links = new Map<number, { confirmedEnterprises: SourceEnterpriseLink[]; recordNames: string[] }>()
@@ -405,14 +450,14 @@ export function comparisonCatalogWindows(filter: ComparisonSourceCatalogInput, c
   return { dw: window('official_document'), qw: window('query'), bw: window('export_batch') }
 }
 
-export function projectCatalogDocument(row: import('./official-source-directory').OfficialSourceDocument, registered: ReturnType<typeof registeredFileAtLocator>) {
+export function projectCatalogDocument(row: OfficialSourceDocument, registered: StoredFileContentIdentity | null) {
   return { kind: 'official_document' as const, id: row.id, label: row.title ?? fileNameOf(row.path), subtitle: row.docNumber, titleCode: null, titleName: null, observedAt: row.issueDate, status: 'available', selectable: true, path: row.path, contentIdentity: { registered, status: 'unknown' as const, historical: 'unknown' as const } }
 }
 
-export function projectCatalogQuery(row: typeof schema.platformCollection.$inferSelect & { conditions: Record<string, unknown> | null }, enterpriseLinks: ReturnType<typeof projectSourceEnterpriseLinks>) {
+export function projectCatalogQuery(row: typeof PlatformCollectionTable.$inferSelect & { conditions: Record<string, unknown> | null }, enterpriseLinks: ReturnType<typeof projectSourceEnterpriseLinks>) {
   return { kind: 'query' as const, id: row.id, label: `${row.interface === 'business_list' ? '业务关联' : row.interface === 'apply_list' ? '申报流程' : '已认定名单'} · ${row.titleCode ? TITLES[row.titleCode] : row.rdjb || '多称号'} · ${row.queryKey}`, subtitle: row.interface, titleCode: row.titleCode, titleName: row.titleCode ? TITLES[row.titleCode] : null, observedAt: row.queriedAt, status: row.status, selectable: true, rdjb: row.rdjb, completeness: row.completeness ?? 'unknown', fullRange: Boolean(row.fullRange), conditions: row.conditions, ...(enterpriseLinks.get(row.id) ?? { confirmedEnterprises: [], recordNames: [] }) }
 }
 
-export function projectCatalogExport(row: typeof schema.platformExportBatch.$inferSelect) {
+export function projectCatalogExport(row: typeof PlatformExportBatchTable.$inferSelect) {
   return { kind: 'export_batch' as const, id: row.id, label: `${TITLES[row.titleCode]} · ${row.year} · ${row.originalFilename}`, subtitle: row.originalFilename, titleCode: row.titleCode, titleName: TITLES[row.titleCode], observedAt: row.collectedOn, status: row.importStatus, selectable: row.importStatus === 'imported', sha256: row.sha256, rowCount: row.rowCount, replacedBatchId: row.replacedBatchId }
 }

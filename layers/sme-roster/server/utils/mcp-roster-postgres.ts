@@ -1,6 +1,6 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { and, count, desc, eq, sql } from 'drizzle-orm'
-import type * as schema from '../../../../db/schema'
+import type { differenceReason as DifferenceReasonTable } from '../../../../db/postgresql/roster-selection-tables'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { platformCollection } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
@@ -66,7 +66,7 @@ export interface ListDifferenceRow extends QueryAssessment {
   reasonCode: string | null
   measureCode: string | null
   movedIn: { city: string | null; titleCode: string | null; year: number | null; batch: number | null } | null
-  factReferences?: NonNullable<typeof schema.differenceReason.$inferSelect.factReferences>
+  factReferences?: NonNullable<typeof DifferenceReasonTable.$inferSelect.factReferences>
   verificationStatus: string
   recordedAt: string
   evidence: { queryId: number; queriedAt: string; interface: string; status: string } | null
@@ -77,7 +77,7 @@ export type ListDifferencesResult = {
   counts: Record<string, Record<string, number>>
 }
 
-type DifferenceRow = Pick<typeof schema.differenceReason.$inferSelect, 'enterpriseId' | 'titleCode' | 'direction' | 'status' |
+type DifferenceRow = Pick<typeof DifferenceReasonTable.$inferSelect, 'enterpriseId' | 'titleCode' | 'direction' | 'status' |
   'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt' | 'factReferences' | 'movedInCity' | 'movedInTitleCode' | 'movedInYear' | 'movedInBatch'>
   & { name: string; queryId: number | null; queriedAt: string | null; queryInterface: string | null; queryStatus: string | null }
 

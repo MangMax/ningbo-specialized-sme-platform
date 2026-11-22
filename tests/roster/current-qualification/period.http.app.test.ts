@@ -1,17 +1,17 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 
-// Synthetic isolated SQLite; real Nuxt HTTP and read worker, no vendor/production evidence.
+// Synthetic isolated PostgreSQL data, served through Nuxt and the real read worker.
 const f = qualificationExportFixture()
 const year = new Date(Date.now() + 8 * 3600000).getUTCFullYear()
 beforeAll(async () => {
-  f.candidate('irregular477', [
+  await f.candidate('irregular477', [
     { eventType: 'award', year: year - 5, batchSeq: 1 },
     { eventType: 'review', year: year - 5, decidedYear: year - 2, batchSeq: 1, reviewOutcome: 'passed' },
     { eventType: 'review', year: year - 5, decidedYear: year, batchSeq: 1, reviewOutcome: 'passed' },
     { eventType: 'review', year: year - 5, decidedYear: year + 2, batchSeq: 1, reviewOutcome: 'passed' },
   ])
-  f.candidate('cross-origin477',[
+  await f.candidate('cross-origin477',[
     {eventType:'award',year:year-6,batchSeq:1},
     {eventType:'award',year:year-3,batchSeq:1},
     {eventType:'review',year:year-6,decidedYear:year-1,batchSeq:1,reviewOutcome:'passed'},

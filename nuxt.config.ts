@@ -195,7 +195,6 @@ export default defineNuxtConfig({
   alias: {
     '#core': fileURLToPath(new URL('./layers/core', import.meta.url)),
     '#sme-roster': fileURLToPath(new URL('./layers/sme-roster', import.meta.url)),
-    '@db': fileURLToPath(new URL('./db', import.meta.url)),
   },
 
   // 忽略代理 worktree 与本地库目录:它们各自的 node_modules 若被 dev 文件监听扫进来

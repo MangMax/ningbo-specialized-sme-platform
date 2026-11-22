@@ -12,7 +12,8 @@ import { record } from '../../../../db/postgresql/ledger-tables'
 import { newJobId } from '../../../core/lib/job'
 import type { PlatformLiveQueryResult } from '../../lib/platform/live-query'
 import { runPlatformLiveQuery } from './platform-live-query'
-import { type JobContext, type JobSpec } from '../../../core/server/utils/job-runner'
+import type { JobSpec } from '../../../core/server/utils/job-contract'
+import type { PostgresJobContext } from '../../../core/server/utils/job-runner-postgres'
 
 import { reusePostgresCollectedPlatformResult } from './platform-collection-reuse'
 import type { RosterImportRequest } from '../../lib/roster-import-client'
@@ -65,7 +66,7 @@ function refresh(result: Receipt) {
   result.counts.rows=result.items.reduce((n,i)=>n+(i.rows??0),0)
   result.counts.unfinished=result.items.filter(i=>!i.complete).length
 }
-type SnapshotContext = Pick<JobContext, 'jobId' | 'logContext'> & {
+type SnapshotContext = Pick<PostgresJobContext, 'jobId' | 'logContext'> & {
   cancelled(): boolean | Promise<boolean>
   progress(done:number,total:number): void | Promise<void>
   checkpoint(result:Receipt): void | Promise<void>

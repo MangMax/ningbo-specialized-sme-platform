@@ -1,27 +1,20 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { expect, it } from 'vitest'
-import { createLogService } from '../../../layers/core/lib/logging/sqlite-service'
+import { createPostgresLogService } from '../../../layers/core/lib/logging/postgres-service'
 
 it('keeps historical events unmarked and combines module with other list and clear filters', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'log-module-migration-'))
-  const seed = createLogService({ directory })
+  const runtime = await postgresRuntimeFixture({ dir: directory, logsOnly: true })
+  const seed = createPostgresLogService({ postgresUrl: runtime.url })
   const event = { source: 'http', operation: 'http.request', outcome: 'success' } as const
   const oldId = seed.emit(event)
   await seed.flush()
   await seed.close()
 
-  // Recreate the pre-module shape and preserve the original indexed ID and JSON.
-  const db = new Database(join(directory, 'events.db'))
-  const columns = db.pragma('table_info(log_events)') as { name: string }[]
-  if (columns.some(column => column.name === 'module')) {
-    db.exec('DROP INDEX log_module; ALTER TABLE log_events DROP COLUMN module')
-    db.exec("UPDATE log_events SET summary=json_remove(summary,'$.module'), detail=json_remove(detail,'$.module')")
-  }
-  db.close()
-  const service = createLogService({ directory })
+  const service = createPostgresLogService({ postgresUrl: runtime.url })
   try {
     expect(await service.detail(oldId!)).toMatchObject({ id: oldId, module: null })
     service.emit({ ...event, module: 'sme-roster' })
@@ -42,6 +35,7 @@ it('keeps historical events unmarked and combines module with other list and cle
     expect((await service.list({ module: 'sme-roster' })).rows).toMatchObject([{ source: 'mcp' }])
   } finally {
     await service.close()
+    runtime.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })

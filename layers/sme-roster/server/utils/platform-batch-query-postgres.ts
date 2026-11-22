@@ -4,14 +4,15 @@ import { recognizedConditionShape, platformQueryTitles, type PlatformLiveQueryRe
 import { cookieRedactor } from '../../lib/platform/client'
 import { newJobId } from '../../../core/lib/job'
 import { MAX_BATCH_ATTEMPTS, PLATFORM_BATCH_KIND, platformBatchInputSchema, platformBatchStatusSchema, platformBatchItemSchema, platformBatchRetrySchema, type PlatformBatchItem, type PlatformBatchParams, type PlatformBatchResult } from '../../lib/platform/batch-query'
-import type { JobContext, JobSpec } from '../../../core/server/utils/job-runner'
+import type { JobSpec } from '../../../core/server/utils/job-contract'
+import type { PostgresJobContext } from '../../../core/server/utils/job-runner-postgres'
 import { getJobSpec, registerJob } from '../../../core/server/utils/job-spec-registry'
 import { runPlatformLiveQuery } from './platform-live-query'
 import { appLog, newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
 import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
 import { getPostgresJob, reopenPostgresJob } from '../../../core/server/public'
-import type { JobRow } from '../../../core/server/utils/job-store'
+import type { JobRow } from '../../../core/server/utils/job-contract'
 import { summarizePostgresBatches } from './jobs/batch-summary-postgres'
 import {
   platformBatchCheckpoint, readPostgresPlatformBatchResult, readPostgresPlatformBatchSegments,
@@ -26,7 +27,7 @@ function initialItem(entry: PlatformBatchParams['items'][number]): PlatformBatch
   const titles = platformQueryTitles(q)
   return { itemId: entry.itemId, status: 'not_queried', completeness: 'not_queried', segments: [], unfinished: titles.map(rdjb => ({ source: q.source, rdjb, page: q.startPage })) }
 }
-type BatchContext = Pick<JobContext, 'jobId' | 'logContext'> & {
+type BatchContext = Pick<PostgresJobContext, 'jobId' | 'logContext'> & {
   cancelled(): boolean | Promise<boolean>
   progress(done: number, total: number): void | Promise<void>
   checkpoint(result: PlatformBatchResult, update?: PlatformBatchSegmentUpdate): void | Promise<void>

@@ -15,8 +15,7 @@ import { projectAnnualFinalQualification } from './annual-correspondence-contrac
 import { projectAnnualWriteScope } from './annual-correspondence-projection'
 import { normalizedUscc } from './event-archive-discovery-model'
 import { readPostgresAnnualDecisionRefs, readPostgresAnnualProcessEntry } from './event-annual-process-postgres'
-import { type readAnnualComparisonBatch } from './event-annual-process-read'
-import { admitAnnualComparison } from './event-annual-process-model'
+import { admitAnnualComparison, type AnnualComparisonRequest } from './event-annual-process-model'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 import { projectPlatformComparisonProcesses } from './platform-comparison-input-model'
 
@@ -48,7 +47,7 @@ async function hasUnboundProcessCollection(tx: Tx, enterpriseId: number) {
   return rows.length > 0
 }
 
-async function readAnnualComparisonProcesses(tx: Tx, request: Parameters<typeof readAnnualComparisonBatch>[2],
+async function readAnnualComparisonProcesses(tx: Tx, request: AnnualComparisonRequest,
   hasUnboundCollection: () => Promise<boolean>,
 ) {
   const eventIds = [...new Set(request.eventIds)]

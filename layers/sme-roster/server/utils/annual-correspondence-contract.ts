@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import { ANNUAL_CORRESPONDENCE_RULE, ANNUAL_CORRESPONDENCE_VERSION, type AnnualDecisionRef, type AnnualFinalQualification, type AnnualStepOutcome } from '../../lib/roster/annual-correspondence'
 import type { CorrespondenceRequest } from './record-correspondence-model'
-import type { decisions } from './annual-correspondence'
+import type { readPostgresAnnualDecisionRefs } from './event-annual-process-postgres'
+
+type AnnualDecisionRows = Awaited<ReturnType<typeof readPostgresAnnualDecisionRefs>>
 
 /** Private write port, populated only by the complete shared annual reader.
  * currentRelationIds identifies the selected version; protectionRelationIds also
@@ -45,7 +47,7 @@ export function validAnnualDecisionQuery(titleCode: string, queryTitle: string |
     (queryTitle ?? scopedTitle) === titleCode && !(queryTitle && scopedTitle && queryTitle !== scopedTitle)
 }
 
-function assessAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: ReturnType<typeof decisions>) {
+function assessAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: AnnualDecisionRows) {
   const sameTarget = rows.filter(r => r.eventId === scope.eventId && r.enterpriseId === scope.enterpriseId && r.titleCode === scope.titleCode &&
     (r.role === 'context_only' || r.role === (scope.declareKind === 'apply' ? 'supports_award' : 'supports_review')))
   const protectedRows = sameTarget.filter(r => r.status === 'rejected' || r.status === 'unlinked')
@@ -54,11 +56,11 @@ function assessAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: 
   return { rows, protectedRows, current, confirmed }
 }
 
-function refs(rows: ReturnType<typeof decisions>): AnnualDecisionRef[] {
+function refs(rows: AnnualDecisionRows): AnnualDecisionRef[] {
   return rows.map(({ id, relationId, revision, status, requiresRevalidation }) => ({ id, relationId, revision, status, requiresRevalidation }))
 }
 
-export function projectAnnualFinalQualification(scope: AnnualWriteScope, rows: ReturnType<typeof decisions>, expectedGeneration = scope.generation): AnnualFinalQualification {
+export function projectAnnualFinalQualification(scope: AnnualWriteScope, rows: AnnualDecisionRows, expectedGeneration = scope.generation): AnnualFinalQualification {
   if (scope.generation !== expectedGeneration) return { stepId: null, status: 'blocked', decisionRefs: [], reasons: ['source_generation_changed'] }
   const step = scope.steps.find(s => s.stepId === scope.finalCandidateStepId)
   if (!step) return { stepId: null, status: 'none', decisionRefs: [], reasons: scope.reasons }
@@ -70,10 +72,10 @@ export function projectAnnualFinalQualification(scope: AnnualWriteScope, rows: R
   return { stepId: step.stepId, status: 'eligible', decisionRefs: [], reasons: ['decision_required'] }
 }
 
-export function planAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: ReturnType<typeof decisions>):
-  { outcome: AnnualStepOutcome } | { relationId: number; request: CorrespondenceRequest; created: (rows: ReturnType<typeof decisions>) => AnnualStepOutcome } {
+export function planAnnualStep(scope: AnnualWriteScope, step: AnnualWriteStep, rows: AnnualDecisionRows):
+  { outcome: AnnualStepOutcome } | { relationId: number; request: CorrespondenceRequest; created: (rows: AnnualDecisionRows) => AnnualStepOutcome } {
   const state = assessAnnualStep(scope, step, rows)
-  const outcome = (status: AnnualStepOutcome['status'], rows: ReturnType<typeof decisions>, reasons: string[], relationId = step.preferredRelationId): AnnualStepOutcome => ({ stepId: step.stepId, status, relationId, decisionRefs: refs(rows), reasons })
+  const outcome = (status: AnnualStepOutcome['status'], rows: AnnualDecisionRows, reasons: string[], relationId = step.preferredRelationId): AnnualStepOutcome => ({ stepId: step.stepId, status, relationId, decisionRefs: refs(rows), reasons })
   if (state.protectedRows.length) return { outcome: outcome('protected', state.protectedRows, ['protected_decision']) }
   if (!step.eligible) return { outcome: outcome('needs_review', [], step.reasons) }
   if (state.confirmed.length) return { outcome: outcome('existing', state.confirmed, [], state.confirmed[0]!.relationId) }

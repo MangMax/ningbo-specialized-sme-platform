@@ -4,13 +4,9 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setImmediate } from 'node:timers/promises'
-import Database from 'better-sqlite3'
 import { count, eq } from 'drizzle-orm'
 import { createApp, createRouter, defineEventHandler, getRouterParam, readBody, setResponseStatus, toNodeListener } from 'h3'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { initializeDb } from '../../../db/client'
-import * as s from '../../../db/schema'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { job } from '../../../db/postgresql/job-tables'
@@ -19,58 +15,20 @@ import { platformBusinessObservation, platformBusinessRecordVersion } from '../.
 import { readPostgresPlatformQueries } from '../../../layers/sme-roster/lib/platform/postgres-query-read'
 import { newJobId } from '../../../layers/core/lib/job'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
-import { getJob } from '../../../layers/core/server/utils/job-store'
 import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { commitPostgresPlatformCollection } from '../../../layers/sme-roster/server/utils/collection-import-postgres'
-import { snapshotOperation } from '../../../layers/sme-roster/server/utils/difference-snapshot-sqlite'
 import { differenceSnapshotSpec } from '../../../layers/sme-roster/server/utils/difference-snapshot'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'difference-snapshot-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'own.db') })
-afterAll(() => { db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
-it('backs up before task writes and keeps missing archives unfinished on idempotent retry', async () => {
-  const result = await snapshotOperation(db, dir, { action: 'create', clientRequestId: 'fixture' })
-  const backup = result.params.backup as { path: string; sha256: string }
-  expect(createHash('sha256').update(readFileSync(backup.path)).digest('hex')).toBe(backup.sha256)
-  const copy = new Database(backup.path, { readonly: true })
-  expect(copy.prepare('select count(*) n from job where id=?').get(result.id)).toEqual({ n: 0 })
-  copy.close()
-  await settled(result.id)
-  expect((await snapshotOperation(db, dir, { action: 'create', clientRequestId: 'fixture' })).id).toBe(result.id)
-})
-
-async function settled(id: string, store = db) {
-  for (let i=0;i<100;i++) { const row=getJob(store,id)!; if (!['queued','running'].includes(row.state)) return row; await setImmediate() }
-  throw new Error('job did not settle')
-}
 function archive(source: PlatformLiveQueryResult['source'], broken = false): PlatformLiveQueryResult {
   const titles = source === 'queryList' ? [null] : ['1','2','3']
   return { source, status: broken ? 'partial' : 'no_record', effectiveConditions: { uscc: '91330200123456789X', combination: 'and' }, titleScope: { mode: source === 'queryList' ? 'source_default' : 'selected', rdjb: titles.filter((x): x is string => x !== null) }, queriedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z', rows: [], dataRows: [], pages: titles.flatMap(rdjb => (broken ? [1,2] : [1]).map(page => ({ source, rdjb, page, maxPage: broken ? 2 : 1, status: broken && page === 2 ? 'failed' as const : 'success' as const, fetchedCount: broken && page === 1 ? 50 : 0, declaredTotal: broken ? 51 : 0, error: null }))), fetchedCount: 0, declaredTotal: 0, completeness: broken ? 'partial' : 'complete', fullRange: true, unfinished: broken ? [{ source, rdjb: titles[0]!, page: 2 }] : [], error: null, limits: { maxRequests: 100, maxRows: 5000, maxDurationMs: 60000, pageSize: 50 } }
 }
-it('keeps unmatched published enterprise coverage unknown rather than zero', async () => {
-  const published = db.insert(s.enterprise).values({ name: 'unmatched', nameNorm: 'unmatched' }).returning().get()
-  db.insert(s.record).values({ enterpriseId: published.id, titleCode: 'innovative_sme', source: 'jxj' }).run()
-  const row=await snapshotOperation(db,dir,{action:'create',clientRequestId:'unmatched'})
-  const done=await settled(row.id)
-  expect(done.state).toBe('failed')
-  expect(done.result).toMatchObject({counts:{enterprises:1,unfinished:7}})
-  const result=done.result as {items:{enterpriseId:number;rows:number|null;reason:string|null}[]}
-  expect(result.items.filter(i=>i.reason==='missing_uscc'||i.reason==='provider_failed_or_partial_pagination')).toHaveLength(7)
-  expect(result.items.filter(i=>i.reason==='missing_uscc'||i.reason==='provider_failed_or_partial_pagination').every(i=>i.rows===null)).toBe(true)
-})
-
-it('rejects retry after backup checksum changes without changing the checkpoint', async () => {
-  const row=await snapshotOperation(db,dir,{action:'create',clientRequestId:'checksum'})
-  const prior=await settled(row.id)
-  appendFileSync((row.params.backup as {path:string}).path, 'tamper')
-  await expect(snapshotOperation(db,dir,{action:'retry',jobId:row.id})).rejects.toThrow('Backup checksum mismatch')
-  expect(getJob(db,row.id)!.result).toEqual(prior.result)
-})
 vi.mock('../../../layers/sme-roster/server/utils/platform-live-query', () => ({ runPlatformLiveQuery: vi.fn(async (input: {source: PlatformLiveQueryResult['source']}) => ({...archive((input as {source:PlatformLiveQueryResult['source']}).source,true),pages:[],effectiveConditions:{combination:'and'},unfinished:[],completeness:'partial'})) }))
 vi.mock('@nuxtjs/mcp-toolkit/server', () => ({ defineMcpTool: (tool: unknown) => tool }))
 
@@ -105,7 +63,7 @@ describe('PostgreSQL snapshot public handlers', () => {
 
   beforeEach(() => {
     registerJob(differenceSnapshotSpec)
-    // Clone the materialized template so each scenario owns its tasks and history.
+    // Clone the native template so each scenario owns its tasks and history.
     const database = 'snapshot_case_' + ++scenario
     fixture.psql(['-c', 'CREATE DATABASE ' + database + ' TEMPLATE postgres'])
     vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', databaseUrl(database))
@@ -129,6 +87,7 @@ describe('PostgreSQL snapshot public handlers', () => {
     } finally {
       vi.unstubAllGlobals()
       fixture?.close()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 
@@ -421,19 +380,19 @@ describe('PostgreSQL snapshot public handlers', () => {
       expect(item.segments[1].unfinished).toContainEqual({source:'queryList',rdjb:null,page:3})
     }
   }, 30_000)
-})
-
-it('freezes exactly selected published enterprise IDs and rejects unknown IDs without creating a task', async()=>{
- const store=initializeDb({create:true,dbPath:join(dir,'selected.db')})
- try {
-  const ids=['selected','excluded'].map(name=>store.insert(s.enterprise).values({name,nameNorm:name}).returning().get().id)
-  for(const enterpriseId of ids)store.insert(s.record).values({enterpriseId,titleCode:'innovative_sme',source:'jxj'}).run()
-  const row=await snapshotOperation(store,dir,{action:'create',clientRequestId:'selected',enterpriseIds:[ids[0],ids[0]]})
-  const done=await settled(row.id,store)
-  expect((done.result as {scope:{enterpriseId:number}[]}).scope.map(e=>e.enterpriseId)).toEqual([ids[0]])
-  await expect(snapshotOperation(store,dir,{action:'create',clientRequestId:'selected',enterpriseIds:[ids[1]]})).rejects.toThrow('different enterprise scope')
-  const count=store.$client.prepare('select count(*) n from job').get()
-  await expect(snapshotOperation(store,dir,{action:'create',clientRequestId:'invalid',enterpriseIds:[99999]})).rejects.toThrow('published enterprises')
-  expect(store.$client.prepare('select count(*) n from job').get()).toEqual(count)
- }finally{store.$client.close()}
+  it('freezes exactly selected published enterprise IDs and rejects unknown IDs without creating a task', async () => {
+    const selected = await publishedEnterprise('selected')
+    const excluded = await publishedEnterprise('excluded')
+    const body = { action: 'create', clientRequestId: 'selected', enterpriseIds: [selected.id, selected.id] }
+    const row = await publicHttp(body)
+    const done = await settledPostgres(row.id)
+    expect((done.result as { scope: { enterpriseId: number }[] }).scope.map(item => item.enterpriseId)).toEqual([selected.id])
+    expect((await publicHttp(body)).id).toBe(row.id)
+    const otherScope = await fetch(snapshotUrl, { method: 'POST', headers, body: JSON.stringify({ ...body, enterpriseIds: [excluded.id] }) })
+    expect(otherScope.status).toBe(409)
+    const before = await db.$count(job)
+    const unknown = await fetch(snapshotUrl, { method: 'POST', headers, body: JSON.stringify({ ...body, clientRequestId: 'unknown', enterpriseIds: [99999] }) })
+    expect(unknown.status).toBe(400)
+    expect(await db.$count(job)).toBe(before)
+  })
 })

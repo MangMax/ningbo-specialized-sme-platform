@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,47 +10,20 @@ import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-
 import { readRuntimeImportReceipt } from '../../../layers/sme-roster/server/utils/import-receipts-runtime'
 import { handlePostgresRosterImportRequest } from '../../../layers/sme-roster/server/utils/roster-import-http'
 import { submitRosterImportMcp } from '../../../layers/sme-roster/server/utils/roster-import-mcp-submission'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-vi.mock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
-
-const bin = process.env.ROSTER_TEST_POSTGRES_BIN
 const queriedAt = '2026-11-11T00:00:00Z'
 const queryKey = 'name:孤立历史'
-describe.skipIf(!bin)('native PostgreSQL platform collection references and import receipts', () => {
+describe('native PostgreSQL platform collection references and import receipts', () => {
   let root: string
-  let data: string
-  let started = false
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   let client: pg.Client
   const token = 'isolated-platform-observation-test'
-  const command = (name: string, args: string[]) =>
-    execFileSync(join(bin!, name), args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), 'platform-observation-pg-'))
-    data = join(root, 'pg')
-    const port = await reserveLoopbackPort()
-    const url = 'postgresql://platform_fixture@127.0.0.1:' + port + '/postgres'
-    command('initdb', ['-D', data, '-U', 'platform_fixture', '-A', 'trust', '--no-locale', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', data, '-l', join(root, 'postgres.log'), '-o', '-h 127.0.0.1 -p ' + port + ' -k ' + root, '-w', 'start'])
-    started = true
-    client = new pg.Client({ connectionString: url })
+    runtime = await postgresRuntimeFixture({ dir: root })
+    client = new pg.Client({ connectionString: runtime.url, options: '-c search_path=business,public' })
     await client.connect()
-    await client.query(`
-      CREATE SCHEMA business;
-      SET search_path TO business;
-      CREATE TABLE enterprise (id bigint PRIMARY KEY, name_norm text, uscc_norm text);
-      CREATE TABLE enterprise_merge (from_enterprise_id bigint, into_enterprise_id bigint);
-      CREATE TABLE stored_file (id bigint PRIMARY KEY);
-      CREATE TABLE service_credential (key text, value text, updated_at text);
-      CREATE SCHEMA fixture;
-      CREATE TABLE fixture.job (id text, kind text, params text, state text, progress text, result text,
-        error text, created_at text, started_at text, finished_at text);
-    `)
-    command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-c', 'SET search_path TO business,pg_catalog',
-      ...['roster-schema', 'roster-platform-schema', 'roster-review-schema', 'roster-constraints', 'roster-triggers']
-        .flatMap(file => ['-f', 'db/postgresql/' + file + '.sql'])])
-    command('psql', ['-X', '-w', '-d', url, '-v', 'ON_ERROR_STOP=1', '-v', 'staging=fixture', '-f', 'upgrade/pg/sqlite-import/materialize-jobs.sql'])
     await client.query(`
       INSERT INTO platform_collection(id,public_id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version)
       VALUES (1,91,'recognized_list',$1,'2',$2,$2,'success','unknown','unknown','absent','fixture');
@@ -65,7 +37,7 @@ describe.skipIf(!bin)('native PostgreSQL platform collection references and impo
     vi.stubGlobal('createError', createError)
     vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: root }))
     vi.stubEnv('NUXT_DB_READONLY', '0')
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
   }, 60_000)
 
   afterAll(async () => {
@@ -74,7 +46,7 @@ describe.skipIf(!bin)('native PostgreSQL platform collection references and impo
       await client?.end()
     } finally {
       try {
-        if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
+        runtime?.close()
       } finally {
         if (root) rmSync(root, { recursive: true, force: true })
         vi.unstubAllGlobals()
@@ -171,7 +143,6 @@ describe.skipIf(!bin)('native PostgreSQL platform collection references and impo
   })
 
   it('replays matching export rows and rejects changed raw fields before recording a replacement', async () => {
-    await client.query("INSERT INTO title (code,name_zh,level,rank) VALUES ('specialized_sme','专精特新中小企业','provincial',2)")
     const snapshot = {
       titleCode: 'specialized_sme', year: 2024, collectedOn: '2026-11-18',
       originalFilename: '隔离快照.xlsx', sha256: 'a'.repeat(64),

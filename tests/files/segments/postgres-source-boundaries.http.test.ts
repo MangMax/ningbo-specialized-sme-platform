@@ -1,12 +1,11 @@
-import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { createApp, createRouter, defineEventHandler, getQuery, getRouterParam, setHeader, toNodeListener } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { initializeDb } from '../../../db/client'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { minimalPdf } from '../../support/minimal-pdf'
 
 const bin = process.env.ROSTER_TEST_POSTGRES_BIN
@@ -20,24 +19,20 @@ const token = 'fixture-segments-api-secret'
 
 describe.runIf(Boolean(bin))('PostgreSQL browser file segments', () => {
   let dir: string
-  let started = false
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
   let server: ReturnType<typeof createServer>
   let base: string
-  const run = (name: string, args: string[], env?: NodeJS.ProcessEnv) =>
-    execFileSync(join(bin!, name), args, { env, stdio: 'pipe' })
 
   beforeAll(async () => {
     dir = mkdtempSync('/tmp/file-segments-pg-')
     writeFileSync(join(dir, filename), source)
     writeFileSync(join(dir, syncFilename), source)
-    const snapshot = join(dir, 'source.sqlite')
-    const sqlite = initializeDb({ create: true, dbPath: snapshot })
-    try {
-      sqlite.$client.prepare(`INSERT INTO stored_file (id,rel_path,filename,ext,bytes,sha256,created_at)
-        VALUES (?,?,?,'pdf',?,?,'2025-01-01')`).run(fileId, filename, filename, source.length, sha256)
-      sqlite.$client.prepare(`INSERT INTO stored_file (id,rel_path,filename,ext,bytes,sha256,created_at)
-        VALUES (?,?,?,'pdf',?,?,'2025-01-01')`).run(syncFileId, syncFilename, syncFilename, source.length, sha256)
-      sqlite.$client.exec(`
+    runtime = await postgresRuntimeFixture({ dir, bin })
+    runtime.psql(['-c', `
+        SET search_path TO business,public;
+        INSERT INTO stored_file (id,rel_path,filename,ext,bytes,sha256,created_at) VALUES
+          (${fileId},'${filename}','${filename}','pdf',${source.length},'${sha256}','2025-01-01'),
+          (${syncFileId},'${syncFilename}','${syncFilename}','pdf',${source.length},'${sha256}','2025-01-01');
         INSERT INTO roster_file_classification(file_id,source,kind,parse_state) VALUES (9,'jxj','announcement','failed'), (10,'jxj','announcement','parsed');
         INSERT INTO enterprise(id,name,name_norm) VALUES (1,'示例企业','示例企业');
         INSERT INTO record(id,enterprise_id,title_code,source) VALUES (1,1,'specialized_sme','jxj');
@@ -47,24 +42,9 @@ describe.runIf(Boolean(bin))('PostgreSQL browser file segments', () => {
           VALUES (9,'specialized_sme','award',2022,1,'附件1',1,'derived'),
             (10,'specialized_sme','award',NULL,NULL,'附件1',1,'derived');
 
-      `)
-    } finally {
-      sqlite.$client.close()
-    }
-
-    const env = { PATH: process.env.PATH, LANG: 'C', PGHOST: dir, PGPORT: '5432',
-      PGUSER: 'segments_fixture', PGDATABASE: 'postgres', PGSQL_BIN: join(bin!, 'psql') }
-    run('initdb', ['-A', 'trust', '-E', 'UTF8', '--locale=C', '-U', env.PGUSER, '-D', join(dir, 'pg')], env)
-    run('pg_ctl', ['-w', '-D', join(dir, 'pg'), '-l', join(dir, 'pg.log'), '-o', "-c listen_addresses='' -k " + dir, 'start'], env)
-    started = true
-    execFileSync(process.execPath, ['upgrade/pg/sqlite-import/stage-sqlite.mjs', snapshot, 'staged'], { env, stdio: 'pipe' })
-    for (const name of ['enterprise-directory', 'enterprise-identity', 'jobs', 'file-and-lead-lists', 'roster']) {
-      run('psql', ['-Xwq', '-v', 'staging=staged', '-f', 'upgrade/pg/sqlite-import/materialize-' + name + '.sql'], env)
-    }
-    rmSync(snapshot)
-    vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
+    `])
     vi.stubEnv('NUXT_DB_READONLY', '0')
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', 'postgresql://segments_fixture@localhost/postgres?host=' + encodeURIComponent(dir))
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
     vi.stubEnv('NUXT_POSTGRES_LOG_URL', undefined)
     vi.stubGlobal('defineEventHandler', defineEventHandler)
     vi.stubGlobal('getQuery', getQuery)
@@ -92,7 +72,7 @@ describe.runIf(Boolean(bin))('PostgreSQL browser file segments', () => {
     } finally {
       vi.unstubAllGlobals()
       vi.unstubAllEnvs()
-      if (started) run('pg_ctl', ['-w', '-D', join(dir, 'pg'), '-m', 'fast', 'stop'])
+      runtime?.close()
       if (dir) rmSync(dir, { recursive: true, force: true })
     }
   })

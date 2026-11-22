@@ -1,7 +1,9 @@
 import { createError } from 'h3'
 import { z } from 'zod'
 import { normalizeName } from '../../lib/domain'
-import type { view } from './alias-maintenance'
+import type { enterpriseAlias } from '../../../../db/postgresql/enterprise-tables'
+
+export type EnterpriseAliasView = Omit<typeof enterpriseAlias.$inferSelect, 'updatedAt' | 'originalName'> & { originalName: string }
 
 export const positiveId = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -44,7 +46,7 @@ export function boundedAliasPage<T>(result: T): T {
   return result
 }
 
-export function decideEnterpriseAlias(before: ReturnType<typeof view>, request: z.infer<typeof aliasDecisionSchema>) {
+export function decideEnterpriseAlias(before: EnterpriseAliasView, request: z.infer<typeof aliasDecisionSchema>) {
   if (before.version !== request.expectedVersion) fail(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
   if (request.action !== 'correct' && request.changes != null) fail(400, 'alias_input_invalid', '仅更正操作接收changes')
   if (request.action === 'confirm' && before.verificationStatus === 'confirmed') fail(409, 'alias_transition_invalid', '该别名已经确认')

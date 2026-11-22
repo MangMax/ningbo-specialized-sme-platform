@@ -120,10 +120,19 @@ it('real TUS policy keeps HTTP profile MCP transport and legacy PATCH independen
   const before = await call('/api/logs/policy', { headers: api })
   const legacy = await call('/api/logs/policy', { method: 'PATCH', headers: { ...api, 'content-type': 'application/json' }, body: JSON.stringify(base) })
   expect(legacy.status).toBe(200); expect(legacy.body.fieldControls).toEqual(before.body.fieldControls)
-  const health = await call('/api/health'); expect(health.status).toBe(200); expect(health.body).toEqual(initialHealth)
+  const health = await call('/api/health')
+  expect(health.status).toBe(200)
+  expect(health.body).toEqual(initialHealth)
+  const kinds = await call('/api/jobs/kinds')
+  expect(kinds.status).toBe(200)
   let http: any
-  await expect.poll(async () => { const listed = await call('/api/logs?' + new URLSearchParams({ requestId: health.requestId }), { headers: api }); http = listed.body.rows.find((e: any) => e.source === 'http'); return !!http }).toBe(true)
-  expect(http).toMatchObject({ httpMethod: 'GET', httpRoute: '/api/health', statusCode: 200, durationMs: expect.any(Number) }); expect(http).not.toHaveProperty('fieldCapture')
+  await expect.poll(async () => {
+    const listed = await call('/api/logs?' + new URLSearchParams({ requestId: kinds.requestId }), { headers: api })
+    http = listed.body.rows.find((event: any) => event.source === 'http')
+    return !!http
+  }).toBe(true)
+  expect(http).toMatchObject({ httpMethod: 'GET', httpRoute: '/api/jobs/kinds', statusCode: 200, durationMs: expect.any(Number) })
+  expect(http).not.toHaveProperty('fieldCapture')
   const transport = await call('/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) })
   expect(transport.status).toBe(200)
   let mcp: any

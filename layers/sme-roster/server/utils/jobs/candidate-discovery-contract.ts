@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { EVENT_ARCHIVE_RULE_VERSION } from '../event-archive-discovery-model'
-import type { CorrespondenceEdge } from '../record-correspondence'
+import type { CorrespondenceEdge } from '../record-correspondence-model'
 import { JOB_ID_RE } from '../../../../core/lib/job'
 
 export const CANDIDATE_JOB_KIND = 'event-archive-candidates'

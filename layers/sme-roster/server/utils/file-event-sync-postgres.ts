@@ -1,6 +1,8 @@
 import { eq, getTableName, or, sql, type Table } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import type * as schema from '../../../../db/schema'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { RegisteredDeclaration } from './registered-declaration-summary'
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { importBatch } from '../../../../db/postgresql/import-tables'
@@ -22,8 +24,8 @@ const numberIds = (ids: readonly number[]) => sql`${sql.param(ids)}::bigint[]`
 
 // Stored plans fingerprint JSON.stringify output. Preserve the original logical column order
 // and JSON casts independently of the PostgreSQL table's column declaration order.
-function fingerprintRow<T extends Table>(shape: Table, table: Table) {
-  return sql<T['$inferSelect']>`${postgresRosterRow(shape, getTableName(table))}`
+function fingerprintRow<T>(shape: Table, table: Table) {
+  return sql<T>`${postgresRosterRow(shape, getTableName(table))}`
 }
 
 async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
@@ -37,7 +39,7 @@ async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
   }).from(storedFile).innerJoin(fileTable, eq(fileTable.fileId, storedFile.id)).where(eq(storedFile.id, id))
   if (!file || file.removedAt) fail('file_unavailable','文件不存在或已移出',404)
   const source = fileEventSyncPhysical((await preflightPostgresParse(db,id,{kind:'file'},dir)).inputRef,dir)
-  const declarations = (await db.select({ row: fingerprintRow<typeof schema.fileDeclaration669>(fileDeclaration669, fileDeclaration669) })
+  const declarations = (await db.select({ row: fingerprintRow<RegisteredDeclaration>(fileDeclaration669, fileDeclaration669) })
     .from(fileDeclaration669).where(eq(fileDeclaration669.fileId, id))
     .orderBy(sql`${fileDeclaration669.declarationId} COLLATE "C"`).limit(1001))
     .map(({ row }) => ({ ...row, active: Boolean(row.active) }))
@@ -46,29 +48,29 @@ async function snapshot(db: Db, id: number, dir: string, request: SyncRequest) {
   if (refs.length>limit || declarations.length>1000) fail('capacity','超过3000出处或1000声明；须先缩小文件维护范围，不截断',413)
   const eventIds = [...new Set(refs.map(row=>row.recordEventId))].sort((a,b)=>a-b)
   const owners = await db.select({
-    event: fingerprintRow<typeof schema.recordEvent>(recordEvent, recordEvent),
-    record: fingerprintRow<typeof schema.record>(record, record),
+    event: fingerprintRow<OfficialEventRow>(recordEvent, recordEvent),
+    record: fingerprintRow<RosterRecordRow>(record, record),
     enterprise: { id: enterprise.id, name: enterprise.name },
   }).from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
     .innerJoin(enterprise, eq(enterprise.id, record.enterpriseId))
     .where(sql`${recordEvent.id} = ANY(${numberIds(eventIds)})`).orderBy(recordEvent.id)
   const byEvent = db.select({
-    id: recordEvidence.id, row: fingerprintRow<typeof schema.recordEvidence>(recordEvidence, recordEvidence).as('row'),
+    id: recordEvidence.id, row: fingerprintRow<typeof RecordEvidenceTable.$inferSelect>(recordEvidence, recordEvidence).as('row'),
   }).from(recordEvidence).where(sql`${recordEvidence.recordEventId} = ids.id`)
     .orderBy(recordEvidence.id).limit(301).as('evidence_by_event')
   const evidence = (await db.select({ row: byEvent.row }).from(sql`unnest(${numberIds(eventIds)}) ids(id)`)
     .innerJoinLateral(byEvent, sql`TRUE`).orderBy(byEvent.id)).map(({ row }) => row)
   const siblingIds = [...new Set(owners.map(row=>row.record.id))]
   const byRecord = db.select({
-    id: recordEvent.id, row: fingerprintRow<typeof schema.recordEvent>(recordEvent, recordEvent).as('row'),
+    id: recordEvent.id, row: fingerprintRow<OfficialEventRow>(recordEvent, recordEvent).as('row'),
   }).from(recordEvent).where(sql`${recordEvent.recordId} = ids.id`).orderBy(recordEvent.id).limit(limit + 1).as('events_by_record')
   const siblings = (await db.select({ row: byRecord.row }).from(sql`unnest(${numberIds(siblingIds)}) ids(id)`)
     .innerJoinLateral(byRecord, sql`TRUE`).orderBy(byRecord.id)).map(({ row }) => row)
-  const official = (await db.select({ row: fingerprintRow<typeof schema.officialEvidenceRowRevision>(officialRevision, officialRevision) })
+  const official = (await db.select({ row: fingerprintRow<Omit<FileSyncEventSources['official'][number], 'sourceBindingKnown'> & { sourceBindingKnown: number }>(officialRevision, officialRevision) })
     .from(officialRevision).where(sql`${officialRevision.evidenceId} = ANY(${numberIds(evidence.map(row => row.id))})`)
     .orderBy(officialRevision.evidenceId, officialRevision.revision)).map(({ row }) => row)
   const byCorrespondence = db.select({
-    id: recordCorrespondence.id, row: fingerprintRow<typeof schema.recordCorrespondence>(recordCorrespondence, recordCorrespondence).as('row'),
+    id: recordCorrespondence.id, row: fingerprintRow<FileSyncEventSources['correspondences'][number]>(recordCorrespondence, recordCorrespondence).as('row'),
   }).from(recordCorrespondence).where(or(
     sql`${recordCorrespondence.eventId} = ids.id`, sql`${recordCorrespondence.predecessorEventId} = ids.id`,
   )).orderBy(recordCorrespondence.id).limit(301).as('correspondence_by_event')
@@ -171,7 +173,7 @@ export async function commitPostgresFileEventSync(db: Db,id: number,request: Syn
       const correction = { ...request,idempotencyKey:`file-event-sync-chunk:${id}:${request.idempotencyKey}:${chunk}`,
         sourceIdentity:`file-event-sync:${id}:${planHash}`,operations:plan.operations.slice(chunk*chunkSize,(chunk+1)*chunkSize) }
       const preflight = await preflightPostgresEventCorrections(tx,correction)
-      await commitPostgresEventCorrections(tx,correction,(preflight as {planHash:string}).planHash)
+      await commitPostgresEventCorrections(tx,correction,(preflight as { planHash?: string }).planHash!)
       plan.expectedFingerprint = (await snapshot(tx,id,dir,request)).fingerprint
       plan.failedEvents = 0
       plan.updated += correction.operations.length

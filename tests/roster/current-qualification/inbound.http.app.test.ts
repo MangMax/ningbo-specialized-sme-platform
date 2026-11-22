@@ -1,27 +1,24 @@
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema as s } from '../../../db/client'
+import * as s from '../fixtures/postgres-tables'
 import { nativeAppAdapter } from '../../support/native-app'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { seedRetiredEvidenceState } from '../fixtures/retired-evidence-state'
 import { writePostgresCurrentWorkbook } from '../../../layers/sme-roster/lib/roster/current-workbook-postgres'
-import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
 import type { DecisionCommand102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/contract'
-import { readEvidenceToken113 } from '../../../layers/sme-roster/server/utils/evidence-impact-113'
-import { createCurrentCandidateReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
 
 const dir = mkdtempSync(join(tmpdir(), 'issue305-inbound-'))
 const app = nativeAppAdapter({ dir, token: 'issue305-synthetic' })
-const db = app.db
+let db: typeof app.db
 let pool: pg.Pool
 const titles = ['little_giant', 'specialized_sme', 'innovative_sme'] as const
 const year = new Date().getFullYear(), reawardYear = year - 1
@@ -50,26 +47,28 @@ async function post(body: unknown): Promise<{ versionId: number }> {
   return response.json()
 }
 beforeAll(async () => {
+  await app.prepare()
+  db = app.db
   const decisions: { command: DecisionCommand102; qualification: object }[] = []
   for (const title of titles) for (const c of cases) {
     const name = `issue305-inbound-${title}-${c.id}`
     // Stage source facts once before exercising the reviewed qualification commands.
     const code = sourceCodes[identityIndex++]!
     codes.set(name, code)
-    const enterprise = db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: code, city: '宁波市' }).returning().get()
+    const enterprise = (await db.insert(s.enterprise).values({ name, nameNorm: name, usccNorm: code, city: '宁波市' }).returning())[0]!
     ids.set(name, enterprise.id)
-    const record = db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning().get()
+    const record = (await db.insert(s.record).values({ enterpriseId: enterprise.id, titleCode: title, source: 'jxj', nameRaw: name }).returning())[0]!
     const events = [{ eventType: 'award' as const, year: 2020, decidedYear: 2020, batchSeq: 1 },
       ...(c.review ? [{ eventType: 'review' as const, year: 2020, batchSeq: 1, ...c.review }] : []),
       ...(c.formalAward ? [{ eventType: 'award' as const, year: reawardYear, decidedYear: reawardYear, batchSeq: 1 }] : [])]
     for (const input of events) {
-      const event = db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning().get()
-      db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 }).run()
+      const event = (await db.insert(s.recordEvent).values({ recordId: record.id, ...input }).returning())[0]!
+      await db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'issue305/inbound-history.pdf', attachment: c.id, listNo: event.id, page: 1 })
     }
     const rdjb = { little_giant: '3', specialized_sme: '2', innovative_sme: '1' }[title]
-    const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: code, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
+    const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: name, rdjb, titleCode: title, queriedAt: new Date().toISOString(), status: 'success', rawResponse: JSON.stringify({ synthetic: name }), relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: code, nameRaw: name, verificationStatus: 'confirmed', matchBasis: 'uscc' }] })
     // A real, current interface period must not override applicable publication.
-    submitSyntheticRecognizedCollection(db, { rdjb, queriedAt: new Date().toISOString(), rows: [{ enterpriseId: null, raw: { id: name, qymc: name, tyshxydm: code, rdjb, rdtime: `${reawardYear}-01-01`, rddqrq: `${year+2}-12-31`, sfyx: '1', szsmc: '宁波市' } }] })
+    await submitSyntheticRecognizedCollection(db, { rdjb, queriedAt: new Date().toISOString(), rows: [{ enterpriseId: null, raw: { id: name, qymc: name, tyshxydm: code, rdjb, rdtime: `${reawardYear}-01-01`, rddqrq: `${year+2}-12-31`, sfyx: '1', szsmc: '宁波市' } }] })
     const query = { id: native.queryId }, relation = { id: native.relationIds[0]! }
     const scope = { enterpriseId: enterprise.id, titleCode: title, direction: 'extra_in_miit' as const }
     const qualification = { titleCode: title, validFrom: `${reawardYear}-01-01T00:00:00Z`, validUntil: `${year + 2}-01-01T00:00:00Z`,
@@ -88,12 +87,6 @@ beforeAll(async () => {
     const { enterpriseId, titleCode, direction } = command
     const accepted = await post(command)
     await seedRetiredEvidenceState(drizzle(pool), accepted.versionId)
-    const archived = saveDecision102(db, command)
-    if (typeof archived.versionId !== 'number') throw new Error('Archived decision did not return a version ID')
-    const archiveToken = readEvidenceToken113(db, command)
-    expect(archiveToken.projectionReady).toBe(true)
-    saveDecision102(db, { ...command, action: 'maintain', expectedCurrentId: archived.versionId, idempotencyKey: command.idempotencyKey + '-review', decision: undefined,
-      basis: 'Synthetic historical evidence review', reviewedEvidence: { latestRevisionId: archiveToken.latestRevisionId, projectionReady: true } })
     const readback = await fetch(base + '/api/roster/decision-lifecycle/current?' + new URLSearchParams({ enterpriseId: String(enterpriseId), titleCode, direction }))
     expect(readback.status).toBe(200)
     const body: { current: { currentQualification: unknown } } = await readback.json()
@@ -190,15 +183,6 @@ it('keeps retained giant awards and failed publication independent of manual and
       expect(giant.sourceVersions.map((source: any) => source.sourceFile))
         .toEqual(['issue305/inbound-history.pdf', 'issue305/inbound-history.pdf'])
     }
-  }
-})
-it('preserves reviewed inbound historical outcomes through the explicit v1 compatibility reader', () => {
-  const read = createCurrentCandidateReader(db.$client)
-  for (const title of titles) for (const c of cases) {
-    const id = ids.get(`issue305-inbound-${title}-${c.id}`)!
-    const row = read(id, title, year, Date.now(), undefined, false, true, { assessmentVersion: 'enterprise-qualification-407-v1' })
-    expect(row.group, `${title}/${c.id}`).toBe(c.eligible ? 'eligible' : 'pending')
-    expect(row.firstYear).toBe(2020)
   }
 })
 it('incomplete typed fact and legacy termination cannot cancel a retained original giant award', async () => {

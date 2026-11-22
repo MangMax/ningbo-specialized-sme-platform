@@ -2,35 +2,38 @@ import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import pg from 'pg'
-import { initializeDb } from '../../../db/client'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema } from '../../../db'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import * as schema from '../fixtures/postgres-tables'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'annual250-mcp-http-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'roster.db') })
-const enterprise = db.insert(schema.enterprise).values({ name: '合成年度只读接口', nameNorm: '合成年度只读接口', usccNorm: '91330211255994457P' }).returning().get()
-const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning().get()
-const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-const relations = [1, 2].map(n => {
-  const seeded=submitNativePlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:`2026-10-0${n}T00:00:00Z`,status:'success',rawResponse:'PRIVATE-RESPONSE',relations:[{sequenceNo:1,relationKey:`SQ-${n}`,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:`SQ-${n}`,year:2024,sblx:'申请',sqsj:n===1?'2024-03-01 09:00:00':'2024-12-13 10:00:00',cszt:n===1?'终审不通过':'终审通过',cookie:'PRIVATE-COOKIE'}}]})
-  return {id:seeded.relationIds[0]!}
-})
+async function seed(pool: pg.Pool) {
+  const db = drizzle(pool)
+  const enterprise = singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name: '合成年度只读接口', nameNorm: '合成年度只读接口', usccNorm: '91330211255994457P' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', usccRaw: enterprise.usccNorm }).returning())
+  const event = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning())
+  for (const n of [1, 2]) {
+    await seedPostgresPlatformQuery(db,{interface:'business_list',queryKey:enterprise.usccNorm!,rdjb:'2',titleCode:'specialized_sme',queriedAt:`2026-10-0${n}T00:00:00Z`,status:'success',rawResponse:'PRIVATE-RESPONSE',relations:[{sequenceNo:1,relationKey:`SQ-${n}`,enterpriseId:enterprise.id,usccRaw:enterprise.usccNorm,verificationStatus:'confirmed',matchBasis:'uscc',rawFields:{id:`SQ-${n}`,year:2024,sblx:'申请',sqsj:n===1?'2024-03-01 09:00:00':'2024-12-13 10:00:00',cszt:n===1?'终审不通过':'终审通过',cookie:'PRIVATE-COOKIE'}}]})
+  }
+  return event
+}
+let event: Awaited<ReturnType<typeof seed>>
 let service: { baseUrl: string; stop: () => Promise<void> }
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let pool: pg.Pool
 let developmentSpec: any
 beforeAll(async () => {
   developmentSpec = await readDevelopmentDiscovery()
-  installLeadListSchema(db.$client)
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: db.$client.name })
-  pool = new pg.Pool({ connectionString: postgres.url })
+  postgres = await postgresRuntimeFixture({ dir })
+  pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+  event = await seed(pool)
   const cwd = resolve(import.meta.dirname, '../../..'), port = await reserveLoopbackPort()
   const child = spawnCompiledApp(port, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: { ...postgres.env, NUXT_DB_READONLY: '1', NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'), NUXT_MCP_TOKEN: 'isolated250' } })
   let output = ''
@@ -41,7 +44,7 @@ beforeAll(async () => {
 }, 90000)
 afterAll(async () => {
   try { await service?.stop() } finally {
-    try { await pool?.end(); postgres?.close() } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+    try { await pool?.end(); postgres?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
   }
 })
 async function rpc(method: string, params: unknown) {

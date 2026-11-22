@@ -4,7 +4,10 @@ import { afterAll, beforeEach, expect, it } from 'vitest'
 import { year as y } from './fixtures/specialized-export'
 import { qualificationReferenceCases } from "../current-qualification/fixtures/reference-cases"
 import { currentQualificationWorkbookAssertions, type EffectiveQualificationCase } from './assertions/qualification'
-import { readCurrentCandidate } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { and, eq } from 'drizzle-orm'
+import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
+import { readPostgresCurrentWorkbookBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
+import type { CurrentTitle } from '../../../layers/sme-roster/lib/roster/current-titles'
 
 const f = nativeWorkbookFixture()
 beforeEach(async () => { await f.resetBusiness() }, 90000)
@@ -22,13 +25,19 @@ function effectiveCases(): EffectiveQualificationCase[] {
     return {...c,lowerSheet: ['F-1-award-only-pass-no-restoring-award', 'F-1-review-only-only-pass-no-restoring-award'].includes(c.id) ? '有效企业' as const : undefined,sheet:membership[0]![0] as EffectiveQualificationCase['sheet']}
   })
 }
-const assertCases = currentQualificationWorkbookAssertions(f, (c,title,row) => {
-  const stored = f.db.$client.prepare('select e.id,e.revision,v.id as evidenceId from record_event e join record r on r.id=e.record_id left join record_evidence v on v.record_event_id=e.id where r.enterprise_id=? and r.title_code=?').all(c.enterprise.id,title) as {id:number;revision:number;evidenceId:number|null}[]
+const assertCases = currentQualificationWorkbookAssertions(f, async (c,title,row) => {
+  const readReferences = (titleCode: string) => f.db.select({
+    id: recordEvent.id, revision: recordEvent.revision, evidenceId: recordEvidence.id,
+  }).from(recordEvent).innerJoin(record, eq(record.id, recordEvent.recordId))
+    .leftJoin(recordEvidence, eq(recordEvidence.recordEventId, recordEvent.id))
+    .where(and(eq(record.enterpriseId, c.enterprise.id), eq(record.titleCode, titleCode)))
+  const stored = await readReferences(title)
   const ids = (value: string, pattern: RegExp) => [...String(value??'').matchAll(pattern)].map(m=>Number(m[1])).sort((a,b)=>a-b)
-  const audit = readCurrentCandidate(f.db.$client,c.enterprise.id,title as any,y)
+  const snapshots = await f.db.transaction(tx => readPostgresCurrentWorkbookBatch(tx, [c.enterprise.id], title as CurrentTitle, Date.now()), { isolationLevel: 'repeatable read' })
+  const audit = snapshots.get(c.enterprise.id)!.rows.find(item => item.assessment?.titleCode === title)!
   const [ownBasis,...inheritedBasis] = audit.basis.split('\n按有效小巨人资格计入；')
   const inheritedReferences = audit.references.filter(ref=>ref.startsWith('小巨人依据：'))
-  const giantStored = f.db.$client.prepare("select e.id,v.id as evidenceId from record_event e join record r on r.id=e.record_id left join record_evidence v on v.record_event_id=e.id where r.enterprise_id=? and r.title_code='little_giant'").all(c.enterprise.id) as {id:number;evidenceId:number|null}[]
+  const giantStored = await readReferences('little_giant')
   // Literal cases whose own period is terminated but whose giant cycle remains usable.
   const inherits = title !== 'little_giant' && ['G-expired-all-null', 'G-expired-reviews-all-null', 'F-1-review-only-failure--1', 'F-1-review-only-failure-0', 'F-1-award-failure--1', 'F-1-award-failure-0', 'F-null-review-only-failure--1', 'F-null-review-only-failure-0', 'F-null-award-failure--1', 'F-null-award-failure-0', 'F-all-null-1-tie', 'F-all-null-1-later-old-failure', 'F-all-null-null-tie', 'F-all-null-null-later-old-failure', 'G-consistent-failed-null-award', 'G-mixed-reviews-null-award', 'G-losing-batch-does-not-remove-current-failure', 'G-mixed-pass-fail-all-null'].includes(c.id)
   expect.soft(inheritedBasis.length,c.id+' inheritance source').toBe(inherits?1:0)

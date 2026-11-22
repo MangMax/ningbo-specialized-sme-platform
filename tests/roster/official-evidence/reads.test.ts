@@ -500,7 +500,7 @@ it.each(['legacy list', 'private snapshot', 'receipt not retained', 'event IDs']
   }
 })
 
-// #399 small lane: no fixture(), listener, SQLite instance or SDK transport.
+// #399 small lane: no fixture(), listener, database instance or SDK transport.
 // Literal partitions come from the approved five-key compatibility boundary.
 function rpc399(args: unknown) {
   return { jsonrpc: '2.0', id: 399, method: 'tools/call', params: { name: 'list_roster_import_items', arguments: args } }

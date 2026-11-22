@@ -1,7 +1,8 @@
+import type { OfficialEventRow, RosterRecordRow } from './roster-event-version-model'
 import type { PlatformProjectionSummary } from '../../lib/platform/business-record'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
-import type * as schema from '../../../../db/schema'
+import type { platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
 import { record, recordEvent } from '../../../../db/postgresql/ledger-tables'
 import { isPageCapable } from '../../lib/roster/evidence-page'
 import { normalizeUscc } from '../../lib/domain'
@@ -656,7 +657,7 @@ function candidateTargetPathsByRow(
 }
 
 export function ambiguousAnnouncementRepoints(records: readonly RosterImportAnnouncement['records'][number][],
-  recordIdByIndex: ReadonlyMap<number, number>, eventRows: typeof schema.recordEvent.$inferSelect[],
+  recordIdByIndex: ReadonlyMap<number, number>, eventRows: OfficialEventRow[],
   evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[], evidenceContentHashes: EvidenceContentHashIndex) {
   const eventsByRecord = new Map<number, typeof eventRows>()
   for (const row of eventRows) {
@@ -715,7 +716,7 @@ function groupEventEvidenceById(
 }
 
 export function projectAnnouncementRepoints(recordId: number, events: readonly RosterImportEvent[],
-  eventRows: readonly typeof schema.recordEvent.$inferSelect[], evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[],
+  eventRows: readonly OfficialEventRow[], evidenceRows: readonly (EvidenceCoordinateRow & { recordEventId: number })[],
   taken: Set<number>, ambiguous: ReadonlySet<number>, evidenceContentHashes: EvidenceContentHashIndex) {
   const byEvent = new Map<number, EvidenceCoordinateRow[]>()
   for (const row of evidenceRows) {
@@ -738,7 +739,7 @@ export function projectAnnouncementRepoints(recordId: number, events: readonly R
   return { targets, hashConflicts }
 }
 
-export function exportSnapshotRowConflict(rows: NonNullable<RosterImportExportSnapshot['rows']>, stored: ReadonlyMap<number, typeof schema.platformExportRow.$inferSelect>) {
+export function exportSnapshotRowConflict(rows: NonNullable<RosterImportExportSnapshot['rows']>, stored: ReadonlyMap<number, typeof PlatformExportRowTable.$inferSelect>) {
   for (const row of rows) {
     const original = stored.get(row.sourceRowNo)
     if (!original) return failure('export_row', `export:row:${row.sourceRowNo}`, 'export_row_set_conflict', 'Existing file cannot acquire new source rows', 'rows')
@@ -812,7 +813,7 @@ export interface MergeLineage {
   /** 直接改指规范行的记录 id（无同坐标冲突）。 */
   recordsMoved: number[]
   /** 折进规范行同坐标记录的记录 id → 规范行记录 id。 */
-  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number; fromRecordSnapshot?: typeof schema.record.$inferSelect; eventIds?: number[] }>
+  recordsFolded: Array<{ fromRecordId: number; intoRecordId: number; fromRecordSnapshot?: RosterRecordRow; eventIds?: number[] }>
   /** 被并企业名下（原）事件 id —— 事件一条都没删，只是记录变了。 */
   eventsMoved: number[]
   /** 随之归入规范行的出处 id（含页码，供回溯「第几页」）。 */

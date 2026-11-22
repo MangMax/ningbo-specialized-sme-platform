@@ -2,7 +2,7 @@ import { count, inArray } from 'drizzle-orm'
 import { QueryBuilder } from 'drizzle-orm/pg-core'
 import { storedFile as postgresStoredFile } from '../../../../db/postgresql/file-tables'
 import { postgresLeadListVersion } from '../../../../db/postgresql/lead-tables'
-import type { FileCategoryServer } from '../../../core/server/utils/file-store'
+import type { FileCategoryServer } from '../../../core/server/utils/file-store-contract'
 import manifest from '../../manifest'
 
 export const leadListFileServerCategory = {

@@ -6,7 +6,8 @@ import type { StoredFileContentIdentity } from '../file-identity'
 import { isPdfPath, normalizeDpi } from '../../../lib/pdf-page'
 import type { RenderOutcome } from '../pdf-pages'
 import { renderPdfPages } from '../pdf-pages'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
+import type { JobCompletion, JobParseResult, JobSpec } from '../job-contract'
+import type { PostgresJobContext } from '../job-runner-postgres'
 
 /**
  * `render-pages` —— **批量**把 PDF 逐页渲染成 PNG。
@@ -118,11 +119,8 @@ export function parseRenderPagesParams(raw: Record<string, unknown>): JobParseRe
  * 粒度是**一份文件** —— 一份 97 页的 PDF 实测 3.3 s(票 13),不做页级取消
  * (页级要在 `renderPdfPages` 内部插回调,那是票 13 的文件,本票不动它)。
  */
-export async function renderFiles(
-  ctx: Pick<JobContext, 'jobId' | 'filesDir' | 'logContext'> & {
-    cancelled(): boolean | Promise<boolean>
-    progress(done: number, total: number): void | Promise<void>
-  },
+async function renderFiles(
+  ctx: Pick<PostgresJobContext, 'jobId' | 'filesDir' | 'logContext' | 'cancelled' | 'progress'>,
   params: Record<string, unknown>,
   inputs: Array<StoredFileContentIdentity | null>,
   lookup: Parameters<typeof verifyFileReadAtLocator>[2],

@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import FileSegmentsEditor from '../../../layers/sme-roster/app/components/sme-roster/RosterFileSegmentsEditor.vue'
-import type { StoredFileRow } from '../../../layers/core/server/utils/stored-files'
+import type { FileRow } from '../../../layers/core/server/utils/file-store-contract'
 const passthrough = defineComponent({ template: '<div><slot /></div>' })
 const button = defineComponent({ template: '<button><slot /></button>' })
 const input = defineComponent({
@@ -69,7 +69,7 @@ function setup(
   const wrapper = mount(FileSegmentsEditor, {
     props: {
       open: true,
-      file: { id: 19 } as StoredFileRow,
+      file: { id: 19 } as FileRow,
       refreshList: async () => {},
     },
     global: {

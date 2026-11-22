@@ -22,11 +22,11 @@ export async function seedPostgresPlatformQuery(db: Pick<NodePgDatabase, 'transa
       queryText: JSON.stringify(query), evidenceText: query.collectionEvidence ? JSON.stringify(query.collectionEvidence) : null,
       createdAt, assignments, batchId: batch!.id,
     })
-    const relationIds: number[] = []
+    const observations: Awaited<ReturnType<typeof writePostgresObservation>>['projection'][] = []
     for (const [index, row] of (collection.query.relations ?? []).entries()) {
       const { projection } = await writePostgresObservation(tx, collection, row, assignments[index]!, batch!.id)
-      relationIds.push(projection.relationId)
+      observations.push(projection)
     }
-    return { queryId: collection.queryId, relationIds }
+    return { queryId: collection.queryId, relationIds: observations.map(row => row.relationId), observations }
   })
 }

@@ -1,5 +1,4 @@
 import { syntheticRecognizedQuery } from '../fixtures/recognized-source'
-import { createCurrentQualificationAssessmentReader } from '../../../layers/sme-roster/lib/roster/current-qualification'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import { readPostgresCurrentQualification, readPostgresCurrentDetailBatch, readPostgresCurrentStatusBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
@@ -20,7 +19,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { initializeDb, schema as legacySchema } from '../../../db/client'
 const dir = mkdtempSync(join(tmpdir(), 'qualification-preflight-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let db: ReturnType<typeof usePostgresDirectoryDb>
@@ -85,26 +83,6 @@ it('preflights without writes and commits a bound qualification with original re
  const saved = await post('commit', envelope)
  expect(saved.status).toBe(200)
  expect(saved.body.versionId).toBeGreaterThan(0)
- const reviewed = (await decisions())[0]!
- const legacy = initializeDb({ create: true, dbPath: join(dir, 'frozen-assessments.db') })
- try {
-  legacy.insert(legacySchema.enterprise).values(e).run()
-  const compatibilityReader = createCurrentQualificationAssessmentReader(legacy.$client)
-  const compatibilityVersions = ['enterprise-qualification-478-v3','enterprise-qualification-687-v4'] as const
-  const legacyBefore = compatibilityVersions.map(assessmentVersion => compatibilityReader.read(e.id,Date.parse('2026-11-16T00:00:00Z'),{assessmentVersion}).snapshot)
-  const { currentQualification, factReferences, actor, evidenceQueryId: _query, evidenceRelationId: _relation, ...original } = reviewed
-  // Frozen evaluators consume a source-side fixture representing the stored native decision.
-  legacy.insert(legacySchema.differenceReason).values({ ...original,
-   currentQualification: currentQualification === null ? null : JSON.parse(currentQualification),
-   factReferences: factReferences === null ? null : JSON.parse(factReferences),
-   actor: actor === null ? null : JSON.parse(actor),
-  }).run()
-  for (const [index,assessmentVersion] of compatibilityVersions.entries()) {
-   const after = compatibilityReader.read(e.id,Date.parse('2026-11-16T00:00:00Z'),{assessmentVersion}).snapshot
-   expect(after).toEqual(legacyBefore[index])
-   expect(after.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
-  }
- } finally { legacy.$client.close() }
  const readback = await fetch(base + '/current?' + new URLSearchParams({ enterpriseId: String(e.id), titleCode: 'specialized_sme', direction: 'extra_in_miit' }))
  expect(readback.status).toBe(200)
  expect((await readback.json()).current.currentQualification).toEqual(command.decision.currentQualification)

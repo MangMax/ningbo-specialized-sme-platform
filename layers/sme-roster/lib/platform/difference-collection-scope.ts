@@ -1,12 +1,12 @@
-import type * as s from '../../../../db/schema'
+import type * as s from '../../../../db/postgresql/platform-tables'
 
 export type DifferenceCollectionScopeRows = {
   collection: Pick<typeof s.platformCollection.$inferSelect, 'id' | 'interface' | 'status' | 'parseState' | 'source' |
     'evidenceStatus' | 'scopeMode' | 'completeness' | 'fullRange' | 'errorCode' | 'errorMessage' | 'maxRequests' |
     'maxRows' | 'maxDurationMs' | 'pageSize' | 'fetchedCount' | 'declaredTotal' | 'rdjb' | 'queriedAt' | 'titleCode'>
-  conditions: Pick<typeof s.platformCollectionCondition.$inferSelect, 'name' | 'valueKind' | 'textValue' | 'integerValue'>[]
+  conditions: { name: string; valueKind: string; textValue: string | null; integerValue: number | null }[]
   pages: (typeof s.platformCollectionPage.$inferSelect)[]
-  unfinished: (typeof s.platformCollectionUnfinished.$inferSelect)[]
+  unfinished: { collectionId: number; ordinal: number; source: string | null; rdjb: string | null; pageNo: number | null }[]
   titles: string[]
 }
 export function projectDifferenceCollectionScope({ collection, conditions: input, pages, unfinished, titles }: DifferenceCollectionScopeRows) {

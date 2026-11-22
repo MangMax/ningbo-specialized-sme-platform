@@ -3,24 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
+import pg from 'pg'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import { sql } from 'drizzle-orm'
 import { applicationLogs } from '../../../layers/core/lib/logging'
 import { LOG_DEFAULTS, type LogPolicyPatch } from '../../../layers/core/lib/logging/contract'
 import { createDrizzleLogger } from '../../../layers/core/lib/logging/drizzle'
 
 describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
-  let directory: string, runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>, client: Database.Database
+  let directory: string, runtime: Awaited<ReturnType<typeof prepareRuntimeLogs>>, client: pg.Pool
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'drizzle-pipeline-'))
     runtime = await prepareRuntimeLogs(directory)
-    client = new Database(':memory:')
+    client = new pg.Pool({ connectionString: runtime.url })
   })
   afterEach(async () => {
-    await runtime?.close()
     vi.restoreAllMocks()
-    client.close()
+    await client?.end()
+    await runtime?.close()
     rmSync(directory, { recursive: true, force: true })
   })
   const base = { retentionDays: 7, maxBytes: LOG_DEFAULTS.maxBytes }
@@ -41,11 +41,9 @@ describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
     const writes: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => { writes.push(String(chunk)); callback?.(); return true })
     const db = query()
-    expect(db.get(sql`SELECT ${'PRIVATE_PARAM_MARKER'} value /* PRIVATE_SQL_MARKER */`)).toEqual({ value: 'PRIVATE_PARAM_MARKER' })
-    const fault = new Error('PRIVATE_ERROR_MARKER')
-    client.function('fail_query', () => { throw fault })
-    expect(() => db.get(sql`SELECT fail_query()`)).toThrow(fault)
-    await settle(1)
+    expect((await db.execute(sql`SELECT ${'PRIVATE_PARAM_MARKER'}::text value /* PRIVATE_SQL_MARKER */`)).rows).toEqual([{ value: 'PRIVATE_PARAM_MARKER' }])
+    await expect(db.execute(sql`SELECT 1/0 /* PRIVATE_ERROR_MARKER */`)).rejects.toMatchObject({ cause: { code: '22012' } })
+    await settle(before.stored + before.filtered + 1)
     const listed = await rows()
     expect(listed).toHaveLength(1)
     for (const row of listed) expect(row).toMatchObject({
@@ -82,7 +80,7 @@ describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
     const writes: string[] = []
     vi.spyOn(process.stdout, 'write').mockImplementation((chunk: any, callback?: any) => { writes.push(String(chunk)); callback?.(); return true })
     const db = query()
-    expect(db.get(sql`SELECT ${'PRIVATE_DISABLED_MARKER'} value`)).toEqual({ value: 'PRIVATE_DISABLED_MARKER' })
+    expect((await db.execute(sql`SELECT ${'PRIVATE_DISABLED_MARKER'}::text value`)).rows).toEqual([{ value: 'PRIVATE_DISABLED_MARKER' }])
     await settle(before.stored + before.filtered + 1)
     expect(await rows()).toEqual([])
     expect(writes.join('')).not.toContain('db.query')
@@ -90,7 +88,7 @@ describe('Drizzle real evlog and independent PostgreSQL pipeline', () => {
     expect(service.status().dropped).toBe(0)
 
     await service.setPolicy({ ...base, collection: { sources: { system: { enabled: true, minLevel: 'debug' } }, integrations: { drizzle: { enabled: true, minLevel: 'debug' } } } } as LogPolicyPatch)
-    expect(db.get(sql`SELECT 7 value`)).toEqual({ value: 7 })
+    expect((await db.execute(sql`SELECT 7 value`)).rows).toEqual([{ value: 7 }])
     await vi.waitFor(async () => { await service.flush(); expect(await rows()).toHaveLength(1) })
     await vi.waitFor(() => expect(writes.join('')).toContain('db.query.select'))
     expect(writes.join('')).not.toContain('PRIVATE_')

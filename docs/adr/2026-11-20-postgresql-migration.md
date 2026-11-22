@@ -16,18 +16,6 @@
 3. **性能验收。** 用同一快照、固定资格判定日与同一请求集对比应用时延、并发、内存、返回数据及工作簿。将 SQL 耗时和端到端体验分别记录。
 4. **切换。** 排空任务、暂停写入、保存最终一致快照，重跑迁移及回读，随后切换应用连接。恢复演练包括写入恢复前的回切。目标开始接收新写入后，回切必须处理这些提交。
 
-## 离线数据工具
-
-[stage-sqlite.mjs](../../upgrade/pg/sqlite-import/stage-sqlite.mjs) 通过开发依赖 better-sqlite3 从只读事务读取源快照。用环境变量 `PGHOST`、`PGDATABASE` 和所需连接选项指定隔离目标，`PGSQL_BIN` 可指定 PostgreSQL 19 的客户端目录或 psql 可执行文件路径。
-
-```sh
-node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA
-node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --verify-only
-node upgrade/pg/sqlite-import/stage-sqlite.mjs OFFLINE_SQLITE_SNAPSHOT STAGING_SCHEMA --resume
-```
-
-首次运行创建新 schema。状态、SQLite 序列高水位、文本、NULL 和二进制证据随表导入；SQLite 的优化器统计由 PostgreSQL 重新生成。验收以完整的逐表哈希清单为准。`--resume` 会先核验已存在的表，再补导尚未出现的表。工具生成的是对账数据结构，生产运行结构按第二阶段交付。
-
 ## 初始化 PostgreSQL 结构
 
 新建开发或测试库时，先用 PostgreSQL 19 创建 UTF-8 数据库。下面的命令用当前连接角色在同一事务中创建 `business`、`runtime_logs` 与运行所需的字典和日志策略。该角色需要创建 schema 和安装 `pg_trgm` 的权限。已有同名运行 schema 时整笔事务回滚。
@@ -37,21 +25,7 @@ PGHOST=/path/to/isolated/socket PGDATABASE=roster PGUSER=fixture \
   PGSQL_BIN=/path/to/postgresql19/bin pnpm db:init
 ```
 
-旧 SQLite 库内升级链已退役。离线导入使用最终 SQLite 快照。从该快照恢复数据时，先生成业务与日志的已对账暂存 schema，再按以下顺序在隔离数据库运行。第一条命令创建 `business` schema，存在同名 schema 时中止。
-
-```sh
-psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-enterprise-directory.sql
-psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-enterprise-identity.sql
-psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-jobs.sql
-psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-file-and-lead-lists.sql
-psql -X -w -v staging=staged_business -f upgrade/pg/sqlite-import/materialize-roster.sql
-psql -X -w -v staging=staged_logs -f upgrade/pg/sqlite-import/materialize-runtime-logs.sql
-node upgrade/pg/2026-11-data-compaction/steps/16-refresh-platform-digests.mjs
-```
-
-早期隔离副本若已物化 `business.job` 但缺少任务运行字段，可单独执行 [install-job-runtime.sql](../../upgrade/pg/legacy/install-job-runtime.sql)。
-
-原生建库和离线物化均保留含 U+0000 的公布名称、信用代码和属地原值。此前用于早期物化库的独立补丁已退役。
+测试和部署只使用 PostgreSQL，历史原库由独立备份保存。
 
 ## 已有 PostgreSQL 库的数据精简
 

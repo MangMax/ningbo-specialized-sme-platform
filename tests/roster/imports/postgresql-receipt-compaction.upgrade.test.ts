@@ -3,8 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import pg from 'pg'
 import { expect, it } from 'vitest'
-import { initializeDb } from '../../../db/client'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const bin = process.env.ROSTER_TEST_POSTGRES_BIN
@@ -21,24 +19,6 @@ const batches = [[1, 'platform_archive'], [2, 'announcement']] as const
 const summary = '{ "written" : 0, "failed" : 1 }'
 const items = '[{"ok":false,"ref":"合成：🧾"}]'
 type Runtime = Awaited<ReturnType<typeof postgresRuntimeFixture>>
-
-function seedLegacySQLite(sourcePath: string) {
-  const db = initializeDb({ create: true, dbPath: sourcePath })
-  try {
-    installLeadListSchema(db.$client)
-    const batch = db.$client.prepare(`INSERT INTO import_batch
-      (id, idempotency_key, source_kind, source_identity, status, created_at) VALUES (?, ?, ?, 'fixture', 'failed', ?)`)
-    const receipt = db.$client.prepare(`INSERT INTO import_receipt
-      (id, batch_id, operation, request_hash, request_body, status, summary, item_results, created_at, completed_at, body_receipt_id)
-      VALUES (?, ?, 'commit', ?, ?, 'failed', ?, ?, ?, ?, ?)`)
-    for (const [id, kind] of batches) batch.run(id, 'fixture-key-' + id, kind, now)
-    for (const [id, batchId, body, owner] of bodies) {
-      receipt.run(id, batchId, 'frozen-' + (owner ?? id), body, summary, items, now, now, owner)
-    }
-  } finally {
-    db.$client.close()
-  }
-}
 
 async function seedLegacyPostgreSQL(runtime: Runtime) {
   const client = new pg.Client({ connectionString: runtime.url })
@@ -88,7 +68,7 @@ it.skipIf(!bin)('compacts legacy receipt bodies and resolves historical body own
   const dir = mkdtempSync(join(tmpdir(), 'pg-receipt-upgrade-'))
   let runtime: Runtime | undefined
   try {
-    runtime = await postgresRuntimeFixture({ dir, native: true })
+    runtime = await postgresRuntimeFixture({ dir })
     await seedLegacyPostgreSQL(runtime)
     runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/12-compact-import-receipts.sql'])
     assertCompactReceipts(runtime)
@@ -99,17 +79,3 @@ it.skipIf(!bin)('compacts legacy receipt bodies and resolves historical body own
     rmSync(dir, { recursive: true, force: true })
   }
 }, 15_000)
-
-it.skipIf(!bin)('materializes compact receipt state directly from a historical SQLite fixture', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pg-receipt-materialize-'))
-  const sourcePath = join(dir, 'source.db')
-  let runtime: Runtime | undefined
-  try {
-    seedLegacySQLite(sourcePath)
-    runtime = await postgresRuntimeFixture({ dir, sourcePath })
-    assertCompactReceipts(runtime)
-  } finally {
-    runtime?.close()
-    rmSync(dir, { recursive: true, force: true })
-  }
-}, 20_000)

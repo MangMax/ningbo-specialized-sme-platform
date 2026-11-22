@@ -3,10 +3,10 @@ import { resolve } from 'node:path'
 import { isJobId } from '../../../lib/job'
 import { appLog } from '../../../lib/logging'
 import { DEFAULT_DPI, isPdfPath } from '../../../lib/pdf-page'
-import type { JobCompletion, JobContext, JobParseResult, JobSpec } from '../job-runner'
-import { ocrProviderFingerprint, type OcrAttemptUpdate, type OcrCapture, type OcrPublication, type OcrPublicationFile, type PublicationReceipt, type SharedOcrAttempt } from '../ocr-publication-contract'
+import type { JobCompletion, JobParseResult, JobSpec } from '../job-contract'
+import type { PostgresJobContext } from '../job-runner-postgres'
+import { ocrProviderFingerprint, type OcrAttemptUpdate, type OcrCapture, type OcrPublication, type OcrPublicationFile } from '../ocr-publication-contract'
 import { postgresOcrStorage, preparePostgresOcrPublication } from '../ocr-publication-postgres'
-import type { OcrWriteInput } from '../ocr-result-contract'
 import {
   MAX_CONCURRENT_PADDLE_JOBS,
   OcrApiError,
@@ -169,30 +169,18 @@ async function currentPageImages(filesDir: string, relPath: string): Promise<Pag
   return state.pages
 }
 
-export type OcrStorage = {
-  cancelled(): boolean | Promise<boolean>
-  progress(done: number, total: number): void | Promise<void>
-  checkpoint(snapshot: () => unknown): void | Promise<void>
-  verifyInput(file: OcrPublicationFile): void | Promise<void>
-  sharedPublication(publication: OcrPublication, file: OcrPublicationFile): PublicationReceipt | null | Promise<PublicationReceipt | null>
-  acquire(publication: OcrPublication, file: OcrPublicationFile, page: number): SharedOcrAttempt | Promise<SharedOcrAttempt>
-  persistAttempt(publication: OcrPublication, file: OcrPublicationFile, page: number, shared: SharedOcrAttempt | null,
-    update: OcrAttemptUpdate, snapshot: () => unknown): OcrCapture | undefined | Promise<OcrCapture | undefined>
-  publish(publication: OcrPublication, file: OcrPublicationFile, input: OcrWriteInput, snapshot: () => unknown): boolean | Promise<boolean>
-}
-
 /** Two files at a time; failed/cancelled files keep individual page receipts. */
 async function finishConcurrentOcr(workers: Promise<void>[]): Promise<void> {
   const failed = (await Promise.allSettled(workers)).find(result => result.status === 'rejected')
   if (failed) throw failed.reason
 }
 
-export async function executeOcr(
-  ctx: Pick<JobContext, 'jobId' | 'filesDir' | 'logContext'>,
+async function executeOcr(
+  ctx: Pick<PostgresJobContext, 'jobId' | 'filesDir' | 'logContext'>,
   params: Record<string, unknown>,
   config: Awaited<ReturnType<typeof resolvePostgresOcrConfig>>,
   publication: OcrPublication,
-  storage: OcrStorage,
+  storage: ReturnType<typeof postgresOcrStorage>,
 ): Promise<JobCompletion> {
   const { files, model } = params as unknown as OcrParams
   const effectiveModel = model ?? config.model

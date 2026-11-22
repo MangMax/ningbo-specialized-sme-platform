@@ -1,5 +1,5 @@
 import { bigint, boolean, text } from 'drizzle-orm/pg-core'
-import type { differenceReason as sqliteDifferenceReason } from '../schema'
+import { differenceMeasures, differenceReasons, differenceStatuses } from '../difference-codes'
 import { businessSchema } from './business-schema'
 
 export const rosterLegacyMember = businessSchema.table('roster_legacy_member', {
@@ -22,17 +22,15 @@ export const rosterAnnouncementIntake = businessSchema.table('roster_announcemen
   receipt: text('receipt'),
 })
 
-type Difference = typeof sqliteDifferenceReason.$inferSelect
-
 export const differenceReason = businessSchema.table('difference_reason', {
   id: bigint('id', { mode: 'number' }).primaryKey().generatedByDefaultAsIdentity(),
   enterpriseId: bigint('enterprise_id', { mode: 'number' }).notNull(),
   titleCode: text('title_code').notNull(),
-  direction: text('direction').$type<Difference['direction']>().notNull(),
-  status: text('status').$type<Difference['status']>().notNull().default('not_queried'),
-  reasonCode: text('reason_code').$type<NonNullable<Difference['reasonCode']>>(),
+  direction: text('direction', { enum: ['missing_in_miit', 'extra_in_miit'] }).notNull(),
+  status: text('status', { enum: differenceStatuses }).notNull().default('not_queried'),
+  reasonCode: text('reason_code', { enum: differenceReasons }),
   reasonNote: text('reason_note'),
-  measureCode: text('measure_code').$type<NonNullable<Difference['measureCode']>>(),
+  measureCode: text('measure_code', { enum: differenceMeasures }),
   measureNote: text('measure_note'),
   evidenceQueryId: bigint('evidence_query_id', { mode: 'number' }),
   evidenceRelationId: bigint('evidence_relation_id', { mode: 'number' }),
@@ -40,10 +38,10 @@ export const differenceReason = businessSchema.table('difference_reason', {
   movedInTitleCode: text('moved_in_title_code'),
   movedInYear: bigint('moved_in_year', { mode: 'number' }),
   movedInBatch: bigint('moved_in_batch', { mode: 'number' }),
-  verificationStatus: text('verification_status').$type<Difference['verificationStatus']>().notNull().default('pending'),
+  verificationStatus: text('verification_status', { enum: ['confirmed', 'pending'] }).notNull().default('pending'),
   recordedAt: text('recorded_at').notNull(),
   createdAt: text('created_at').notNull(),
-  lifecycleAction: text('lifecycle_action').$type<NonNullable<Difference['lifecycleAction']>>(),
+  lifecycleAction: text('lifecycle_action', { enum: ['replace', 'withdraw'] }),
   previousId: bigint('previous_id', { mode: 'number' }),
   actor: text('actor'),
   basis: text('basis'),

@@ -1,4 +1,6 @@
-import type * as s from '../../../../db/schema'
+import type { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
+import type { platformCollection } from '../../../../db/postgresql/platform-tables'
+import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
 import type { DifferenceQualification } from './current-difference'
 import type { ComparisonRow } from '../comparison-model'
 import { normalizeName } from '../domain'
@@ -10,7 +12,7 @@ import type { QueryAssessment } from './query-assessment'
 const keyOf = (r: { enterpriseId: number; titleCode: string; direction: string }) => JSON.stringify([r.enterpriseId, r.titleCode, r.direction])
 const rank = (title: string) => { const i = TITLE_ORDER.indexOf(title); return i < 0 ? TITLE_ORDER.length : i }
 
-type Head = Pick<typeof s.differenceReason.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode'>
+type Head = Pick<typeof differenceReason.$inferSelect, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode'>
 type Enterprise = { id: number; name: string; uscc: string | null }
 export function selectRosterDifferencePage(filter: RosterDifferenceFilter, derived: ComparisonRow[], heads: Head[],
   enterprises: Map<number, Enterprise>, aliases: Map<number, string[]>,
@@ -38,9 +40,8 @@ export function selectRosterDifferencePage(filter: RosterDifferenceFilter, deriv
 }
 
 type Page = ReturnType<typeof selectRosterDifferencePage>
-type Explanation = Omit<typeof s.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'>
-  & { evidenceQueryId: number | null; evidenceRelationId: number | null }
-type Query = Pick<typeof s.platformCollection.$inferSelect, 'id' | 'queriedAt' | 'interface' | 'status' | 'failureReason'>
+type Explanation = Parameters<typeof publicVersion102>[0]
+type Query = Pick<typeof platformCollection.$inferSelect, 'id' | 'queriedAt' | 'interface' | 'status' | 'failureReason'>
 export function projectRosterDifferenceList(page: Page, selected: (Page['rows'][number] & DifferenceQualification)[],
   explanations: Map<number, Explanation>, districts: Map<number, string | null>, queries: Map<number, Query>, relations: Map<number, number[]>,
   assessments: QueryAssessment[],

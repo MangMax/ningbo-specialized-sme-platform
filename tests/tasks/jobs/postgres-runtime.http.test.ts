@@ -6,10 +6,8 @@ import { join } from 'node:path'
 import * as h3 from 'h3'
 import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { registerJob } from '../../../layers/core/server/utils/job-runner'
+import { registerJob } from '../../../layers/core/server/utils/job-spec-registry'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { initializeDb } from '../../../db/client'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const bin = process.env.TEST_POSTGRES_JOBS_BIN || process.env.ROSTER_TEST_POSTGRES_BIN
@@ -39,23 +37,17 @@ const submit = (kind: string, params = {}) => request('/api/jobs', {
 beforeAll(async () => {
   if (!bin) return
   dir = mkdtempSync(join(tmpdir(), 'pg-job-'))
-  const dbPath = join(dir, 'fixture.sqlite')
-  const source = initializeDb({ create: true, dbPath })
-  try {
-    installLeadListSchema(source.$client)
-    source.$client.prepare('INSERT INTO service_credential (key,value,updated_at) VALUES (?,?,?)')
-      .run('core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z')
-    const insertExport = source.$client.prepare(
-      "INSERT INTO job (id, kind, params, state, created_at) VALUES (?, ?, ?, 'cancelled', '2026-01-01T00:00:00Z')",
-    )
-    for (const { id, params } of historicalExports) insertExport.run(id, exportKind, params)
-  } finally {
-    source.$client.close()
-  }
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath, bin })
+  postgres = await postgresRuntimeFixture({ dir, bin })
   pool = new pg.Pool({ connectionString: postgres.url })
+  await pool.query('INSERT INTO business.service_credential (key,value,updated_at) VALUES ($1,$2,$3)',
+    ['core.ocrToken', 'fixture-saved-ocr-secret', '2026-11-20T00:00:00Z'])
+  for (const { id, params } of historicalExports) {
+    await pool.query(
+      "INSERT INTO business.job (id, kind, params, state, created_at) VALUES ($1, $2, $3, 'cancelled', '2026-01-01T00:00:00Z')",
+      [id, exportKind, params],
+    )
+  }
   for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
-  vi.stubEnv('NUXT_DB_PATH', join(dir, 'must-not-open.sqlite'))
   vi.stubEnv('NUXT_ROSTER_EXPORT_DIR', join(dir, 'roster-workbooks'))
   vi.stubEnv('NUXT_DB_READONLY', '0')
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: token, filesDir: dir }))
@@ -305,7 +297,7 @@ it.runIf(!!bin)('rejects invalid completion while keeping the last checkpoint an
 it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task data off public responses', async () => {
   registerJob({
     kind: 'fixture-private', status: 'ready', summary: 'Private output fixture',
-    parse: () => ({ ok: false, message: 'SQLite parser must not run' }),
+    parse: params => ({ ok: true, params }),
     postgres: {
       parse: params => ({ ok: true, params }),
       async run() {
@@ -318,18 +310,17 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
     },
   })
   registerJob({
-    kind: 'fixture-sqlite-only', status: 'ready', summary: 'SQLite handler fixture',
+    kind: 'fixture-unimplemented', status: 'todo', summary: 'Unimplemented handler fixture',
     parse: () => ({ ok: true, params: {} }),
-    async run() { return { result: null } },
   })
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
     expect.objectContaining({ kind: 'reconcile', status: 'ready' }),
-    expect.objectContaining({ kind: 'fixture-sqlite-only', status: 'todo' }),
+    expect.objectContaining({ kind: 'fixture-unimplemented', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
-  expect((await submit('fixture-sqlite-only')).status).toBe(501)
+  expect((await submit('fixture-unimplemented')).status).toBe(501)
   const response = await submit('fixture-private')
   expect(response.status).toBe(202)
   const { jobId } = await response.json()
@@ -350,7 +341,7 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   }
 })
 
-it.runIf(!!bin)('reads migrated settings and rolls back a failed mixed credential update', async () => {
+it.runIf(!!bin)('reads stored settings and rolls back a failed mixed credential update', async () => {
   const route = '/api/settings/credentials'
   const payload = (method: string, body: unknown) => ({
     method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -620,7 +611,7 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
   mkdirSync(artifactDir, { recursive: true })
   const workbook = join(artifactDir, id + '.xlsx')
   writeFileSync(workbook, 'expired fixture workbook')
-  const oldDerivedDir = join(dir, 'must-not-open.sqlite.exports')
+  const oldDerivedDir = join(dir, 'unconfigured-exports')
   mkdirSync(oldDerivedDir, { recursive: true })
   const unrelatedFile = join(oldDerivedDir, id + '.xlsx')
   writeFileSync(unrelatedFile, 'file outside configured storage')
@@ -644,10 +635,10 @@ it.runIf(!!bin)('cleans expired roster workbooks from PostgreSQL task records wi
   expect(await (await submit(kind, params)).json()).toMatchObject({ jobId })
 })
 
-it.runIf(!!bin)('preserves historical export request identifiers across migration and HTTP replay', async () => {
-  const migrated = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
+it.runIf(!!bin)('preserves historical export request identifiers during HTTP replay', async () => {
+  const stored = await pool.query('SELECT id, params FROM business.job WHERE id = ANY($1) ORDER BY id',
     [historicalExports.map(row => row.id)])
-  expect(migrated.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
+  expect(stored.rows).toEqual(historicalExports.map(({ id, params }) => ({ id, params })))
 
   for (const { id, key } of historicalExports) {
     const replay = await submit(exportKind, { clientRequestId: key, titleCode: 'little_giant' })
@@ -739,11 +730,9 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
   }
 })
 
-it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL and SQLite', async () => {
+it.runIf(!!bin)('keeps task-center list and detail summaries scoped, public and actionable', async () => {
   const { newJobId } = await import('../../../layers/core/lib/job')
-  const { handleTaskCenterRequest } = await import('../../../layers/sme-roster/server/utils/task-center-http')
   await (await import('../../../layers/core/server/utils/postgres-jobs')).stopPostgresJobs()
-  const sqlite = initializeDb({ create: true, readOnly: false, dbPath: join(dir, 'task-summary-parity.sqlite') })
   const createdAt = '2027-01-01T00:00:00Z'
   const rawError = 'PRIVATE_FAILURE /private/workbook.xlsx'
   const file = { id: 891, path: 'synthetic/ocr.pdf' }
@@ -788,23 +777,26 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
   const jobSql = 'INSERT INTO job (id, kind, state, params, progress, result, error, created_at) VALUES'
   try {
     await pool.query(`${fileSql.replace('stored_file', 'business.stored_file')} ($1,$2,$3,$4,$5,$6,$7)`, fileValues)
-    sqlite.$client.prepare(`${fileSql} (?,?,?,?,?,?,?)`).run(...fileValues)
     for (const { id, kind, state, params = {}, result = null, error = null } of scenarios) {
       const values = [id, kind, state, JSON.stringify(params), '{"done":1,"total":3}', JSON.stringify(result), error, createdAt]
       await pool.query(`${jobSql.replace('job', 'business.job')} ($1,$2,$3,$4,$5,$6,$7,$8)`, values)
-      sqlite.$client.prepare(`${jobSql} (?,?,?,?,?,?,?,?)`).run(...values)
     }
     const headers = { authorization: 'Bearer ' + token }
-    const context = { db: sqlite, apiToken: token, filesDir: dir }
-    for (const query of ['tab=sme-roster&group=platform', 'tab=sme-roster&group=export', 'tab=core&group=ocr', 'tab=all']) {
+    const scopes = [
+      { query: 'tab=sme-roster&group=platform', kinds: ['platform-query-batch', 'reconcile', 'difference-snapshot', 'event-archive-candidates', 'event-annual-correspondence'] },
+      { query: 'tab=sme-roster&group=export', kinds: ['current-roster-export'] },
+      { query: 'tab=core&group=ocr', kinds: ['ocr', 'render-pages'] },
+      { query: 'tab=all', kinds: scenarios.map(({ kind }) => kind) },
+    ]
+    for (const { query, kinds } of scopes) {
       const path = '/api/task-center?pageSize=200&' + query
-      const url = new URL(path, base)
       const pgResponse = await request(path, { headers })
       expect(pgResponse.status).toBe(200)
       const pgRows = (await pgResponse.json()).rows.filter((row: { createdAt: string }) => row.createdAt === createdAt)
-      const legacy = await handleTaskCenterRequest('list', { method: 'GET', path: url.pathname, query: Object.fromEntries(url.searchParams), headers }, context)
-      expect(pgRows.length).toBeGreaterThan(0)
-      expect(pgRows).toEqual((legacy.body as { rows: unknown[] }).rows)
+      expect(pgRows.map((row: { id: string }) => row.id).sort()).toEqual(
+        scenarios.filter(({ kind }) => kinds.includes(kind)).map(({ id }) => id).sort(),
+      )
+      expect(JSON.stringify(pgRows)).not.toMatch(/PRIVATE_FAILURE|\/private\//)
     }
     for (const { id, kind, state } of scenarios) {
       const path = '/api/task-center/' + id
@@ -812,8 +804,7 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
       expect(pgResponse.status, kind + '/' + state).toBe(200)
       const text = await pgResponse.text()
       expect(text).not.toMatch(/PRIVATE_FAILURE|\/private\//)
-      const legacy = await handleTaskCenterRequest('detail', { method: 'GET', path, headers }, context)
-      expect(JSON.parse(text), kind + '/' + state).toEqual(legacy.body)
+      expect(JSON.parse(text), kind + '/' + state).toMatchObject({ id, kind, state })
     }
     const failed = await (await request('/api/task-center/' + scenarios[0]!.id, { headers })).json()
     expect(failed.error).toBe('导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。')
@@ -826,7 +817,6 @@ it.runIf(!!bin)('keeps task-center list and detail semantics across PostgreSQL a
       capabilities: { retry: false, reason: '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' },
     })
   } finally {
-    sqlite.$client.close()
     await pool.query('DELETE FROM business.job WHERE id = ANY($1)', [scenarios.map(({ id }) => id)])
     await pool.query('DELETE FROM business.stored_file WHERE id = $1', [file.id])
   }

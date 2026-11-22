@@ -1,11 +1,9 @@
-import { initializeDb } from '../../../db/client'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { enterprise, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
 import { readPostgresCurrentDetailBatch } from '../../../layers/sme-roster/lib/roster/current-qualification-postgres'
-import { commitEnterpriseFact, getEnterpriseFacts, preflightEnterpriseFact } from '../../../layers/sme-roster/server/utils/enterprise-facts'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import pg from 'pg'
 import { createServer, type Server } from 'node:http'
@@ -14,7 +12,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
 import { createApp, createRouter, toNodeListener } from 'h3'
-import { schema } from '../../../db'
 const dir = mkdtempSync(join(tmpdir(), 'facts-306-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let db: ReturnType<typeof usePostgresDirectoryDb>
@@ -212,60 +209,23 @@ it('overlapping opposite migrations stay pending and confirmed cancellation surv
   expect((await read()).group).toBe('excluded')
 })
 
-it('shares native fact revisions across HTTP and MCP and rolls back a failed receipt', async () => {
-  const sourcePath = join(dir, 'legacy-facts.db')
-  const source = initializeDb({ create: true, dbPath: sourcePath })
-  let migrated: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
-  let pool: pg.Pool | undefined
-  try {
-    const { id: enterpriseId } = source.insert(schema.enterprise).values({ name: '合成源库', nameNorm: '合成源库' }).returning().get()
-    const metadata = { actor: { type: 'agent', id: 'test' }, basis: '正式通知核对' }
-    const assert = { ...metadata, action: 'assert', fact, idempotencyKey: 'legacy-assert',
-      expectedVersion: getEnterpriseFacts(source, enterpriseId).version }
-    const older = commitEnterpriseFact(source, enterpriseId, {
-      request: assert, planHash: preflightEnterpriseFact(source, enterpriseId, assert).planHash,
-    })
-    const original = getEnterpriseFacts(source, enterpriseId)
-    const confirm = { ...metadata, action: 'confirm', idempotencyKey: 'legacy-confirm', factId: older.factId, expectedVersion: original.version }
-    const sqlitePlan = preflightEnterpriseFact(source, enterpriseId, confirm).planHash
-    await closePostgresDirectoryDb()
-    migrated = await postgresRuntimeFixture({ dir, sourcePath })
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', migrated.url)
-    pool = new pg.Pool({ connectionString: migrated.url })
-    expect((await http(enterpriseId)).body).toEqual(original)
-    expect((await http(enterpriseId, '/preflight', confirm)).body.planHash).toBe(sqlitePlan)
-    const submitted = { request: confirm, planHash: sqlitePlan }
-    expect((await http(enterpriseId, '/commit', submitted, false)).status).toBe(401)
-    const results = await Promise.all([
-      mcp.commit_enterprise_fact.handler({ enterpriseId, request: submitted }),
-      http(enterpriseId, '/commit', submitted).then(result => {
-        expect(result.status).toBe(200)
-        return result.body
-      }),
-    ])
-    expect(results[0]).toEqual(results[1])
-    const confirmed = (await http(enterpriseId)).body
-    expect(confirmed.history.map((row: any) => [row.revision, row.status])).toEqual([[1, 'pending'], [2, 'confirmed']])
-    expect(await mcp.get_enterprise_facts.handler({ enterpriseId })).toEqual(confirmed)
-    expect(source.select().from(schema.enterpriseFactRevision).all().filter(row => row.enterpriseId === enterpriseId)).toEqual(original.history)
-
-    const current = usePostgresDirectoryDb()
-    const qualification = await current.transaction(tx => readPostgresCurrentDetailBatch(tx, [enterpriseId], 'specialized_sme', Date.parse('2026-11-20T00:00:00Z')),
-      { isolationLevel: 'repeatable read', accessMode: 'read only' })
-    expect(qualification.get(enterpriseId)?.snapshot.titles[0]?.region.status).toBe('outside_ningbo')
-
-    const replacement = await command(enterpriseId, { action: 'replace', factId: older.factId, fact: { ...fact, kind: 'cancelled' } })
-    const plan = (await http(enterpriseId, '/preflight', replacement)).body
-    await pool.query("ALTER TABLE business.enterprise_fact_receipt ADD CONSTRAINT reject_new_receipt CHECK (false) NOT VALID")
-    expect((await http(enterpriseId, '/commit', { request: replacement, planHash: plan.planHash })).status).toBe(500)
-    expect((await http(enterpriseId)).body).toEqual(confirmed)
-    await pool.query('ALTER TABLE business.enterprise_fact_receipt DROP CONSTRAINT reject_new_receipt')
-    expect((await http(enterpriseId, '/commit', { request: replacement, planHash: plan.planHash })).status).toBe(200)
-  } finally {
-    await closePostgresDirectoryDb()
-    await pool?.end()
-    migrated?.close()
-    source.$client.close()
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
-  }
-}, 90_000)
+it('concurrent HTTP and MCP confirmations replay one committed revision', async () => {
+  const enterpriseId = await seed()
+  const asserted = await commit(enterpriseId, await command(enterpriseId, { action: 'assert', fact }))
+  const original = (await http(enterpriseId)).body
+  const confirm = await command(enterpriseId, { action: 'confirm', factId: asserted.body.factId })
+  const { body: plan } = await http(enterpriseId, '/preflight', confirm)
+  const submitted = { request: confirm, planHash: plan.planHash }
+  expect((await http(enterpriseId, '/commit', submitted, false)).status).toBe(401)
+  const [mcpResult, httpResult] = await Promise.all([
+    mcp.commit_enterprise_fact.handler({ enterpriseId, request: submitted }),
+    http(enterpriseId, '/commit', submitted),
+  ])
+  expect(httpResult.status).toBe(200)
+  expect(mcpResult).toEqual(httpResult.body)
+  const confirmed = (await http(enterpriseId)).body
+  expect(confirmed.history[0]).toEqual(original.history[0])
+  expect(confirmed.history.map((row: any) => [row.revision, row.status])).toEqual([[1, 'pending'], [2, 'confirmed']])
+  expect(await mcp.get_enterprise_facts.handler({ enterpriseId })).toEqual(confirmed)
+  expect((await readAssessment(enterpriseId)).region.status).toBe('outside_ningbo')
+})

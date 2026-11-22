@@ -1,30 +1,38 @@
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { record as RecordTable, recordEvent as RecordEventTable } from '../../../../db/postgresql/ledger-tables'
+import type { platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
+import type { recordCorrespondence as RecordCorrespondenceTable } from '../../../../db/postgresql/qualification-tables'
 import { normalizeUscc } from '../../lib/domain'
 import type { PlatformBusinessGroup, ScopedPlatformObservation } from '../../lib/platform/business-record'
 import type { PlatformObservationFact } from '../../lib/platform/observation-facts'
 import { RDJB_TITLE_CODES, sourcePositionForSequence } from '../../lib/platform/recognized-evidence'
 import { platformRowTitle } from '../../lib/platform/row-title'
-import type { readCandidateTargetPositions, readCandidateTargetQueries, readCandidateTargetRelations } from './candidate-target-sources'
+import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
+
+type CandidateQuery = PlatformStoredQuery
+type CandidateRelation = Pick<PlatformStoredRelation, 'id' | 'queryId' | 'sequenceNo' | 'relationKey' | 'enterpriseId' | 'usccRaw' | 'nameRaw' | 'matchBasis' | 'verificationStatus'>
+  & { collectionId: number; rowTitleRaw: string | null }
+type CandidatePositions = ReadonlyMap<number, { sourceRdjb: string | null; sourcePage: number | null }>
 import { safeCollectionEvidence } from './evidence-redaction'
 
 export interface CandidateInput { eventId?: number; enterpriseId?: number; titleCode?: string; queryIds: number[]; exportBatchIds: number[]; ruleVersion: string; page: number; pageSize: number }
 
 type CandidateFact = Pick<PlatformObservationFact, 'usccRaw' | 'titleRaw' | 'declareKind' | 'normalizationConflicts' | 'year' | 'awardBatchLabel' | 'batch' | 'appliedAt' | 'status'>
 
-type ExportRow = Pick<typeof schema.platformExportRow.$inferSelect, 'id' | 'batchId' | 'sourceRowNo' | 'usccRaw'>
+type ExportRow = Pick<typeof PlatformExportRowTable.$inferSelect, 'id' | 'batchId' | 'sourceRowNo' | 'usccRaw'>
 
-type ExportPrior = Pick<typeof schema.recordCorrespondence.$inferSelect, 'id' | 'eventId' | 'type' | 'exportRowId' | 'revision'>
+type ExportPrior = Pick<typeof RecordCorrespondenceTable.$inferSelect, 'id' | 'eventId' | 'type' | 'exportRowId' | 'revision'>
 
 export function* projectCandidateRows(input: CandidateInput, { event, enterprise, queries, batches, relevantRelations, relevantExports,
   factsByRelation, positions, priors, targetPage, selection }: {
-  event: { event: typeof schema.recordEvent.$inferSelect; record: typeof schema.record.$inferSelect } | null | undefined
-  enterprise: typeof schema.enterprise.$inferSelect
-  queries: ReturnType<typeof readCandidateTargetQueries>
-  batches: Array<typeof schema.platformExportBatch.$inferSelect>
-  relevantRelations: ReturnType<typeof readCandidateTargetRelations>
+  event: { event: typeof RecordEventTable.$inferSelect; record: typeof RecordTable.$inferSelect } | null | undefined
+  enterprise: typeof EnterpriseTable.$inferSelect
+  queries: CandidateQuery[]
+  batches: Array<typeof PlatformExportBatchTable.$inferSelect>
+  relevantRelations: CandidateRelation[]
   relevantExports: ExportRow[]
   factsByRelation: ReadonlyMap<number, CandidateFact>
-  positions: ReturnType<typeof readCandidateTargetPositions>
+  positions: CandidatePositions
   priors: ExportPrior[]
   targetPage: { total: number } | null
   selection?: { total: number }

@@ -2,10 +2,9 @@ import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getMethod, getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { handlePostgresOfficialEvidenceRead } from './official-evidence-read-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
-import type { EvidenceCorrectionAction } from './roster-evidence-correction-api'
 import { handlePostgresEvidenceCorrectionWrite } from './roster-evidence-correction-write-postgres'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-export function evidenceCorrectionRoute(action: EvidenceCorrectionAction) {
+export function evidenceCorrectionRoute(action: 'get' | 'audit' | 'batch' | 'preflight' | 'commit') {
   return semanticRouteHandler(`maintenance.evidence.${action}`, async event => {
     setHeader(event, 'cache-control', 'no-store')
     let body: unknown

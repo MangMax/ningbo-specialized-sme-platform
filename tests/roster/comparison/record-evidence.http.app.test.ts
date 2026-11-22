@@ -4,34 +4,43 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { schema } from '../../../db/client.ts'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import * as schema from '../fixtures/postgres-tables'
 import { nativeAppAdapter } from '../../support/native-app'
+import { sourceDocument } from '../../../db/postgresql/official-evidence-tables'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-record-comparison-http-'))
 const app = nativeAppAdapter({ dir, token: 'synthetic-record-comparison' })
-const db = app.db
-const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic/official.pdf' }).returning().get()
-const enterprise = db.insert(schema.enterprise).values({ name: 'HTTP', nameNorm: 'HTTP', usccNorm: '91330211255994475A' }).returning().get()
-const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning().get()
-const event = db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning().get()
-db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3 }).run()
-const native = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_RAW_RESPONSE', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '待审核', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { secret: 'PRIVATE_RAW_FIELDS' } }] })
-const query = { id: native.queryId }
-const reason = db.insert(schema.differenceReason).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2026-10-18T01:00:00Z' }).returning().get()
-const grouped = submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_GROUP_RAW', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, relationKey: sequenceNo === 3 ? 'OTHER' : 'SAME', rawFields: { id: sequenceNo === 3 ? 'OTHER' : 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } })) })
-const groupQuery = { id: grouped.queryId }
-const groupedRelations = grouped.relationIds.map(id => ({ id }))
+
+async function seed() {
+  await app.prepare()
+  const db = app.db
+  const doc = singlePostgresFixtureRow(await db.insert(sourceDocument).values({ source: 'jxj', title: 'Synthetic', path: 'synthetic/official.pdf' }).returning())
+  const enterprise = singlePostgresFixtureRow(await db.insert(schema.enterprise).values({ name: 'HTTP', nameNorm: 'HTTP', usccNorm: '91330211255994475A' }).returning())
+  const record = singlePostgresFixtureRow(await db.insert(schema.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'specialized_sme' }).returning())
+  const event = singlePostgresFixtureRow(await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2024 }).returning())
+  await db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3 })
+  const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_RAW_RESPONSE', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '待审核', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { secret: 'PRIVATE_RAW_FIELDS' } }] })
+  const query = { id: native.queryId }
+  const reason = singlePostgresFixtureRow(await db.insert(schema.differenceReason).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', createdAt: '2026-10-18T01:00:00Z', recordedAt: '2026-10-18T01:00:00Z' }).returning())
+  const grouped = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_GROUP_RAW', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, relationKey: sequenceNo === 3 ? 'OTHER' : 'SAME', rawFields: { id: sequenceNo === 3 ? 'OTHER' : 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } })) })
+  const groupQuery = { id: grouped.queryId }
+  const groupedRelations = grouped.relationIds.map(id => ({ id }))
+  return { doc, enterprise, event, query, reason, groupQuery, groupedRelations, sourceQuery: `queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}` }
+}
+let seeded: Awaited<ReturnType<typeof seed>>
 let developmentSpec: any
 beforeAll(async () => {
+  seeded = await seed()
   developmentSpec = await readDevelopmentDiscovery()
   await app.start()
 }, 90000)
 afterAll(async () => { try { await app.close() } finally { rmSync(dir, { recursive: true, force: true }) } })
-const sourceQuery = `queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
 
 describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
   it('returns source-scoped event rows and global counts with no-store and no raw response', async () => {
+    const { event, sourceQuery } = seeded
     const response = await fetch(`${app.url('')}/api/roster/record-comparison?${sourceQuery}&page=1&pageSize=1`)
     expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toContain('no-store')
@@ -44,6 +53,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(body.businessCounts).toMatchObject({ records: 0, versions: 0, observations: 1, unknownObservations: 1 })
   })
   it('returns readonly legacy originals and rejects missing explicit source IDs', async () => {
+    const { doc, event, reason, sourceQuery } = seeded
     const preview = await fetch(`${app.url('')}/api/roster/record-comparison/legacy-impact?${sourceQuery}`)
     expect(preview.status).toBe(200)
     expect(preview.headers.get('cache-control')).toContain('no-store')
@@ -53,6 +63,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(invalid.status).toBe(400)
   })
   it('discovers both read-only MCP tools and returns the same comparison data through MCP', async () => {
+    const { doc, event, query, groupQuery, sourceQuery } = seeded
     const rpc = async (method: string, params?: Record<string, unknown>) => {
       const response = await fetch(`${app.url('')}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) })
       expect(response.status).toBe(200)
@@ -87,6 +98,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(JSON.parse(impact.result.content[0].text)).toEqual(await preview.json())
   })
   it('lists business-labeled source IDs for explicit UI selection without a latest default', async () => {
+    const { doc, enterprise, query } = seeded
     const url = `${app.url('')}/api/roster/record-comparison/sources`
     const response = await fetch(`${url}?page=1&pageSize=2`)
     expect(response.status).toBe(200)
@@ -111,6 +123,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect((await fetch(`${url}?kind=query&ids=1x`)).status).toBe(400)
   })
   it('pages canonical business groups independently while retaining every original observation and validates bounds', async () => {
+    const { doc, groupQuery, groupedRelations } = seeded
     const url = `${app.url('')}/api/roster/record-comparison?queryIds=${groupQuery.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
     const body = await (await fetch(`${url}&businessPageSize=1`)).json()
     expect(body.businessCounts).toMatchObject({ records: 2, versions: 2, observations: 3, unknownObservations: 0 })
@@ -124,7 +137,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(Object.keys(openapi.paths).filter(path => path.startsWith('/api/roster/comparison-scope-proofs'))).toEqual([])
     expect(openapi.paths['/api/roster/record-comparison'].get.parameters).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'proofIds' })]))
     const retired = await fetch(`${app.url('')}/api/roster/comparison-scope-proofs`)
-    expect(retired.headers.get('content-type')).toContain('text/html')
+    expect(retired.status).toBe(404)
     expect(openapi.paths['/api/roster/record-comparison'].get.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'businessPage' }), expect.objectContaining({ name: 'businessPageSize' })]))
   })
 

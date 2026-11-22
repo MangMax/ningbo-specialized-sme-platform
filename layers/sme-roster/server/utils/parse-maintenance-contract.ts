@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync, type BigIntStats } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { z } from 'zod'
-import type { fileDeclaration669, storedFile } from '../../../../db/schema'
+import type { storedFile } from '../../../../db/postgresql/file-tables'
+import type { RegisteredDeclaration } from './registered-declaration-summary'
 import { EVENT_ORDER, TITLE_ORDER } from '../../lib/labels'
 import { partKey, type StoredFilePart } from '../../lib/file-parts'
 import type { FilePart } from '../../../../db/file-part'
@@ -165,7 +166,7 @@ export function validateParseRevision(before: ReturnType<typeof projectParseStat
 
 export function planDeclarations669(
   fileId: number, sha256: string, raw: z.infer<typeof parsePart105>[],
-  previous: (typeof fileDeclaration669.$inferSelect)[], sequence: number, inputRef?: InputRef310,
+  previous: RegisteredDeclaration[], sequence: number, inputRef?: InputRef310,
 ) {
   const used = new Set<string>()
   const next = raw.map(item => {

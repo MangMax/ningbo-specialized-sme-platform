@@ -57,7 +57,8 @@ function reviewedClient() {
 
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   db = usePostgresDirectoryDb()
   installApplicationServer()

@@ -10,7 +10,7 @@
 
 复用 `platform_business_record`、`platform_business_record_version`、`platform_business_observation` 与三张来源投影。把采集传输、页位置和观察归属从混合业务字段中分出。完成后删除 `platform_query`、`platform_relation` 及其运行依赖，不保留兼容 view、运行选择器或旧读写后门。旧 ID 只作持久引用别名。
 
-现有 typed 路径仍从 relation 获得企业归属，从 query 获得完整性和页范围。`platformBusinessObservation.relationId` 仍是旧 relation 外键。仅把 JSON 改为投影查询无法删表。见 [schema](../../db/schema.ts)、[业务读接缝](../../server/utils/platform-business-read.ts)、迁移前的候选实现 和 [资格见证](../../lib/roster/recognized-filter-source.ts)。
+现有 typed 路径仍从 relation 获得企业归属，从 query 获得完整性和页范围。`platformBusinessObservation.relationId` 仍是旧 relation 外键。仅把 JSON 改为投影查询无法删表。见 [schema](../../db/postgresql/)、[业务读接缝](../../server/utils/platform-business-read.ts)、迁移前的候选实现 和 [资格见证](../../lib/roster/recognized-filter-source.ts)。
 
 选择**同一业务 SQLite 中的不可变 BLOB 归档记录**，见存储契约。本应用已有 SQLite 事务、SQL 原字节切片及 64 KiB base64 证据接口。文件库保存可删除、可恢复、路径绑定的正式文件，`stored-files.ts` 的 `contentIdentity` 明确不能证明历史不可变内容，见[文件库实现](../../server/utils/stored-files.ts)。选择文件方案会增加跨磁盘与 DB 提交、孤儿文件和恢复协议，当前没有可复用的不可变 blob 设施。BLOB 增加数据库体积和备份成本，但允许原文、业务事实与回执在一个事务提交。本期不承诺压缩、去重或文件体积下降。
 

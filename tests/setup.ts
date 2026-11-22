@@ -5,11 +5,7 @@ import { installApplicationUi } from '../lib/install-application-ui'
 installApplicationUi()
 beforeAll(async () => {
   const { installApplicationServer } = await import('../server/install-application')
-  const { configureFileStore } = await import('../server/file-store')
-  const { libraryFileServerCategory } = await import('../layers/core/server/utils/library-file-category-sqlite')
-  const { rosterFileSqliteCategory } = await import('../layers/sme-roster/server/modules/sme-roster/files-sqlite')
   installApplicationServer()
-  configureFileStore([libraryFileServerCategory, rosterFileSqliteCategory])
 })
 
 initLogger({ enabled: true, silent: true, pretty: false, drain: () => {} })

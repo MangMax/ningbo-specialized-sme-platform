@@ -1,11 +1,11 @@
 import { platformNormalizationConflict } from '../../lib/platform/normalization'
 import type { PlatformNormalizationConflict } from '../../lib/platform/normalization'
 import { legacyRowTitle, withArchiveProcessFacts, type PlatformObservationFact } from '../../lib/platform/observation-facts'
-import type { storedRecognizedProjection as p } from '../../lib/platform/recognized-stored-schema'
+import type { platformRecognizedProjection } from '../../../../db/postgresql/platform-tables'
 
 export function projectRecognizedObservationFact(row: {
-    relationId: number; source: typeof p.$inferSelect;
-    version: typeof p.$inferSelect | null;
+    relationId: number; source: typeof platformRecognizedProjection.$inferSelect;
+    version: typeof platformRecognizedProjection.$inferSelect | null;
     originalName: string | null; originalUscc: string | null;
 }): PlatformObservationFact {
     const source = row.source, version = row.version, typed = version?.versionId != null;

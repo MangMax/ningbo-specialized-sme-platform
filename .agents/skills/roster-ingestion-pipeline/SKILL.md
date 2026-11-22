@@ -24,7 +24,7 @@ description: '用于本应用的宁波专精特新名录清洗与入库：分类
 
 补码、身份归并、新增查询或更新快照后，执行[代理判断与覆盖写回](references/difference-investigation.md#默认待核代理判断与覆盖写回)，核对企业、称号和证据变化，判不出记录已查范围与缺口交人工通过代理处理。
 
-写入前查看当前 OpenAPI 或 MCP `tools/list`。差异结论使用既有差异原因公开协议，读回核对；入库按统一应用 API/MCP 预检、提交和读回，禁止直接写 SQLite；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
+写入前查看当前 OpenAPI 或 MCP `tools/list`。差异结论使用既有差异原因公开协议，读回核对；入库按统一应用 API/MCP 预检、提交和读回，禁止直接写数据库；重试保持其幂等键。`queryBusList` 明确按 `recognized_list` 入库，按[平台查询说明](references/platform-query.md)保留分段、时间和页码并核对 ID。不支持的写入留待处理，不伪造来源类型绕过校验。
 
 [业务规则](references/decisions.md)定义事件和来源语义；载荷以仓库 `layers/sme-roster/lib/roster-import-client.ts` 为准。正式公布确立称号历史，导出表代表平台快照。未匹配平台的正式行仍须保留，未知字段留空。issue #35 中的企业名称只是查证线索，不是已确认的身份依据。
 

@@ -1,5 +1,4 @@
 import { join } from 'node:path'
-
 import { prepareRuntimeLogs } from '../fixtures/runtime'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { createServer } from 'node:http'
@@ -86,52 +85,4 @@ it('legacy retry records transport retry separately from one semantic slot outco
     expect.objectContaining({ operation: 'platform.query_list.slot', outcome: 'no_record', page: 1 }),
   ]))
   expect(JSON.stringify(logged)).not.toContain('PRIVATE185')
-})
-it('batch retry preserves accepted pages and correlates only unfinished item collection', async () => {
-  const { initializeDb } = await import('../../../db/client')
-  const { updateCredential } = await import('../../../layers/core/server/utils/credential-state')
-  const { handleSqlitePlatformBatchRequest } = await import('../../../layers/sme-roster/server/utils/platform-batch-http-sqlite')
-  const { whenIdle } = await import('../../../layers/core/server/utils/job-runner')
-  const db = initializeDb({ dbPath: join(root, 'batch.db'), create: true })
-  updateCredential('sme-roster.miitCookie', 'session=PRIVATE185_COOKIE', { db })
-  const nativeFetch = globalThis.fetch
-  let failSecond = true
-  const visited: number[] = []
-  // External transport boundary, not an internal logger/job mock.
-  globalThis.fetch = async (url, init) => {
-    const number = Number(new URLSearchParams(String(init?.body)).get('pageNum'))
-    visited.push(number)
-    return new Response(number === 2 && failSecond ? 'PRIVATE185_ERROR' : JSON.stringify({ zrarData: { grid: { applyGrid: { page: number, pageSize: 1, pageSet: [{ qymc: 'PRIVATE185_RECORD', relation: String(number) }], maxCount: 2 } } } }), { status: number === 2 && failSecond ? 503 : 200 })
-  }
-  const invoke = (action: 'submit' | 'retry' | 'status', body?: unknown, batchId?: string) => handleSqlitePlatformBatchRequest(action, {
-    body, batchId, headers: { authorization: 'Bearer fixture185' },
-  }, { db, apiToken: 'fixture185', filesDir: root, logContext: { requestId: action === 'retry' ? 'req185-batch-retry' : 'req185-batch', traceId: action === 'retry' ? 'trace185-batch-retry' : 'trace185-batch' } })
-  try {
-    const submitted = await invoke('submit', { items: [{ query: { source: 'queryList', name: 'PRIVATE185_INPUT', pageSize: 1 } }] })
-    expect(submitted.status).toBe(202)
-    const receipt = submitted.body as any
-    await whenIdle()
-    const prior = (await invoke('status', undefined, receipt.batchId)).body as any
-    expect(prior).toMatchObject({ state: 'failed', items: [{ status: 'partial', unfinished: [{ page: 2 }] }] })
-    failSecond = false; visited.length = 0
-    expect((await invoke('retry', { itemIds: receipt.itemIds }, receipt.batchId)).status).toBe(202)
-    await whenIdle()
-    const after = (await invoke('status', undefined, receipt.batchId)).body as any
-    expect(after).toMatchObject({ state: 'done', attempt: 2, items: [{ status: 'success' }] })
-    expect(after.items[0].segments[0]).toEqual(prior.items[0].segments[0])
-    expect(visited).toEqual([2])
-    await applicationLogs().flush()
-    const summaries = await applicationLogs().list({ batchId: receipt.batchId })
-    const logged = await Promise.all(summaries.rows.map(row => applicationLogs().detail(row.id)))
-    expect(logged.filter(row => row?.operation === 'platform.query_list.page' && row.outcome === 'success').map(row => row!.page).sort()).toEqual([1, 2])
-    expect(logged.filter(row => row?.operation === 'platform.query_list.query')).toEqual(expect.arrayContaining([
-      expect.objectContaining({ requestId: 'req185-batch', traceId: 'trace185-batch', batchId: receipt.batchId, taskId: receipt.batchId, resourceId: receipt.itemIds[0], outcome: 'partial' }),
-      expect.objectContaining({ requestId: 'req185-batch-retry', traceId: 'trace185-batch-retry', resourceId: receipt.itemIds[0], outcome: 'success' }),
-    ]))
-    expect(logged.filter(row => row?.operation === 'platform.batch.collect').map(row => row!.outcome).sort()).toEqual(['partial', 'success'])
-    expect(logged.filter(row => row?.operation === 'platform.batch.retry')).toEqual([
-      expect.objectContaining({ outcome: 'started', requestId: 'req185-batch-retry', traceId: 'trace185-batch-retry', batchId: receipt.batchId, counts: { total: 1 } }),
-    ])
-    expect(JSON.stringify(logged)).not.toContain('PRIVATE185')
-  } finally { globalThis.fetch = nativeFetch; await whenIdle(); db.$client.close() }
 })

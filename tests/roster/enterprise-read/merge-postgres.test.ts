@@ -1,21 +1,35 @@
 import { sql } from 'drizzle-orm'
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
-import pg from 'pg'
-import { afterAll, expect, it } from 'vitest'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { postgresCanonicalEnterpriseId } from '../../../layers/core/server/public'
 import { applyPostgresRosterMerge, planPostgresRosterMerge } from '../../../layers/sme-roster/server/utils/roster-merge-postgres'
 
-const url = process.env.TEST_ROSTER_MERGE_POSTGRES_URL
-const pool = url ? new pg.Pool({ connectionString: url, options: '-c search_path=business,public' }) : undefined
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
+const dir = mkdtempSync(join(tmpdir(), 'roster-merge-pg-'))
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+beforeAll(async () => {
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+}, 60_000)
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 const code = '91330200MA00000001'
 const input = { fromEnterpriseId: 7001, intoUscc: code }
 const rolledBack = new Error('Roll back the isolated fixture')
 
-afterAll(async () => { await pool?.end() })
+afterAll(async () => {
+  await closePostgresDirectoryDb()
+  postgres?.close()
+  vi.unstubAllEnvs()
+  rmSync(dir, { recursive: true, force: true })
+})
 
 async function fixture(run: (tx: Tx) => Promise<void>) {
-  await drizzle(pool!).transaction(async tx => {
+  await usePostgresDirectoryDb().transaction(async tx => {
     await tx.execute(sql`
       INSERT INTO enterprise (id,name,name_norm,uscc_norm) VALUES
         (7001,'旧企业','旧企业',null), (7002,'规范企业','规范企业',${code});
@@ -34,7 +48,7 @@ async function fixture(run: (tx: Tx) => Promise<void>) {
   }).catch(error => { if (error !== rolledBack) throw error })
 }
 
-it.skipIf(!url)('folds records without collapsing events or evidence and follows the old enterprise ID and membership', async () => {
+it('folds records without collapsing events or evidence and follows the old enterprise ID and membership', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
       INSERT INTO roster_announcement_intake (id,idempotency_key,digest,request) VALUES (7020,'noticed','fixture','{}');
@@ -77,7 +91,7 @@ it.skipIf(!url)('folds records without collapsing events or evidence and follows
   })
 })
 
-it.skipIf(!url)('resolves chained merges from either an old ID or an old unified credit code', async () => {
+it('resolves chained merges from either an old ID or an old unified credit code', async () => {
   await fixture(async tx => {
     const newestCode = '91330200MA00000002'
     await tx.execute(sql`INSERT INTO enterprise (id,uscc_norm,name,name_norm) VALUES (7003,${newestCode},'最新规范企业','最新规范企业')`)
@@ -93,7 +107,7 @@ it.skipIf(!url)('resolves chained merges from either an old ID or an old unified
   })
 })
 
-it.skipIf(!url)('binds staged platform evidence by its public IDs and appends a new assignment revision', async () => {
+it('binds staged platform evidence by its public IDs and appends a new assignment revision', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
       INSERT INTO platform_collection (id,public_id,interface,query_key,rdjb,queried_at,created_at,status,
@@ -134,7 +148,7 @@ it.skipIf(!url)('binds staged platform evidence by its public IDs and appends a 
   })
 })
 
-it.skipIf(!url)('deduplicates equal aliases and differences while retaining original audit bytes and correspondence provenance', async () => {
+it('deduplicates equal aliases and differences while retaining original audit bytes and correspondence provenance', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
       INSERT INTO enterprise_alias (id,enterprise_id,name,name_norm,source_kind,verification_status,created_at)
@@ -173,7 +187,7 @@ it.skipIf(!url)('deduplicates equal aliases and differences while retaining orig
   })
 })
 
-it.skipIf(!url)('rejects different legacy versions and rechecks adopted difference scope at apply time', async () => {
+it('rejects different legacy versions and rechecks adopted difference scope at apply time', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
       INSERT INTO difference_reason (id,enterprise_id,title_code,direction,reason_note,recorded_at,created_at)
@@ -201,7 +215,7 @@ it.skipIf(!url)('rejects different legacy versions and rechecks adopted differen
   })
 })
 
-it.skipIf(!url)('rejects alias conflicts that would lose a decision or share an audit key', async () => {
+it('rejects alias conflicts that would lose a decision or share an audit key', async () => {
   await fixture(async tx => {
     await tx.execute(sql`
       INSERT INTO enterprise_alias (id,enterprise_id,name,name_norm,source_kind,verification_status,created_at)
@@ -222,7 +236,7 @@ it.skipIf(!url)('rejects alias conflicts that would lose a decision or share an 
   })
 })
 
-it.skipIf(!url)('rolls back merge lineage, membership and ownership with the caller transaction', async () => {
+it('rolls back merge lineage, membership and ownership with the caller transaction', async () => {
   await fixture(async tx => {
     const laterItemFailure = new Error('Later mixed import item failed')
     await expect(tx.transaction(async nested => {

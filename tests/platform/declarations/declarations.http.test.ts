@@ -202,6 +202,39 @@ it('serializes exact real, text, BLOB and NULL declaration cells', async () => {
     }
   }
 })
+it('declaration readiness, count and page use one snapshot during a concurrent collection update', async () => {
+  const path = 'declarations?platformKey=A'
+  const before = await get(path)
+  expect(before.response.status).toBe(200)
+  expect(before.body.rows[0].latestObservationAt).toBe('2026-11-11T00:00:00Z')
+
+  const client = await usePostgresDirectoryDb().$client.connect()
+  let inFlight: ReturnType<typeof get> | undefined
+  try {
+    await client.query('BEGIN')
+    await client.query('LOCK TABLE business.platform_business_record_version IN ACCESS EXCLUSIVE MODE')
+    inFlight = get(path)
+    await expect.poll(async () => {
+      const { rows } = await client.query(`
+        SELECT 1 FROM pg_locks
+        WHERE relation = 'business.platform_business_record_version'::regclass AND NOT granted
+      `)
+      return rows.length
+    }).toBe(1)
+    await client.query(`
+      UPDATE business.platform_collection SET last_collected_at = '2026-12-01'
+      WHERE query_key = 'q0'
+    `)
+    await client.query('COMMIT')
+    expect((await inFlight).body).toEqual(before.body)
+    expect((await get(path)).body.rows[0].latestObservationAt).toBe('2026-12-01')
+  } finally {
+    await client.query('ROLLBACK')
+    client.release()
+    await inFlight
+  }
+})
+
 it('public target SQL never reads legacy entities or business JSON and rejects uncaptured before empty filtering', async () => {
   expect((await get('declarations')).response.status).toBe(200)
   expect(statements.length).toBeGreaterThan(0)

@@ -7,7 +7,7 @@ import { record, recordEvidence, recordEvent } from '../../../../db/postgresql/l
 import { platformExportBatch, platformExportRow, platformBusinessObservation } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { title } from '../../../../db/postgresql/title-table'
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { readPostgresRelationDisplays } from '../../lib/platform/postgres-query-display'
 import { readPostgresPublishedNames } from '../../lib/roster/official-published-presentation-postgres'
@@ -61,7 +61,7 @@ export async function observePostgresCorrespondences(db: Db, references: SourceR
   const owner = alias(enterprise, 'p')
   const ownerIds = present([...scoped.map(row => row.enterpriseId), ...relations.map(row => row.relation.enterpriseId)])
   const enterprises = await db.select({
-    row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(enterprise, 'p')}`,
+    row: sql<typeof EnterpriseTable.$inferSelect>`${postgresRosterRow(enterprise, 'p')}`,
   }).from(owner).where(eq(owner.id, sql`ANY(${ids(ownerIds)})`))
   const titles = await db.select({ code: title.code }).from(title)
     .where(eq(title.code, sql`ANY(${sql.param([...new Set(scoped.map(row => row.titleCode))])}::text[])`))

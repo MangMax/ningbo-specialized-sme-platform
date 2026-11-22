@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type pg from 'pg'
+import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { enterpriseSource } from '../../../db/postgresql/enterprise-source-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { postgresLeadListRow, postgresLeadListVersion } from '../../../db/postgresql/lead-tables'
 import { postgresLeadFixture } from './fixtures/postgres-leads'
 
 const versions = '/api/lead-lists/versions'
@@ -16,24 +19,38 @@ describe('PostgreSQL lead versions', () => {
   let db: pg.Pool
 
   beforeAll(async () => {
-    db = await fixture.start(({ db, filesDir }) => {
-      writeFileSync(join(filesDir, 'fixture.csv'), sourceBytes)
-      db.$client.exec(`
-      INSERT INTO stored_file (id,rel_path,filename,ext,sha256,bytes,created_at)
-        VALUES (91,'fixture.csv','fixture.csv','csv','${sourceSha}',${sourceBytes.length},'2026-11-18');
-      INSERT INTO lead_list_version (id,series,channel_code,list_type_code,acquired_on,file_id,file_sha256,request_hash,created_at)
-        VALUES (11,'走访名单','research','lead','2026-11-18',91,'${sourceSha}','request-one','2026-11-18'),
-               (12,'另一个名单','research','lead','2026-11-18',91,'${sourceSha}','request-two','2026-11-18');
-      INSERT INTO lead_list_row (id,version_id,row_number,name,uscc)
-        VALUES (101,11,2,'原始企业','待核对'), (102,11,3,'另一行',NULL),
-               (201,12,2,'其他名单行',NULL), (202,12,3,'同一名单另一行',NULL);
-      INSERT INTO enterprise_source (id,module,business_table,version_key,channel_code,list_type_code,acquired_on,series,file_id,sha256)
-        VALUES (71,'lead-lists','lead_list_version','11','research','lead','2026-11-18','走访名单',91,'${sourceSha}');
-      `)
+    await fixture.start(async ({ db: seed, filesDir }) => {
+      const filename = 'fixture.csv'
+      const acquiredOn = '2026-11-18'
+      writeFileSync(join(filesDir, filename), sourceBytes)
+      await seed.insert(storedFile).values({
+        id: 91, relPath: filename, filename, ext: 'csv', sha256: sourceSha, bytes: BigInt(sourceBytes.length), createdAt: acquiredOn,
+      })
+      const version = { channel: 'research', listType: 'lead', acquiredOn, fileId: 91, fileSha256: sourceSha, createdAt: acquiredOn }
+      await seed.insert(postgresLeadListVersion).values([
+        { ...version, id: 11, series: '走访名单', requestHash: 'request-one' },
+        { ...version, id: 12, series: '另一个名单', requestHash: 'request-two' },
+      ])
+      await seed.insert(postgresLeadListRow).values([
+        { id: 101, versionId: 11, rowNumber: 2, name: '原始企业', uscc: '待核对' },
+        { id: 102, versionId: 11, rowNumber: 3, name: '另一行' },
+        { id: 201, versionId: 12, rowNumber: 2, name: '其他名单行' },
+        { id: 202, versionId: 12, rowNumber: 3, name: '同一名单另一行' },
+      ])
+      await seed.insert(enterpriseSource).values({
+        id: 71, module: 'lead-lists', businessTable: 'lead_list_version', versionKey: '11',
+        channelCode: 'research', listTypeCode: 'lead', acquiredOn, series: '走访名单', fileId: 91, sha256: sourceSha,
+      })
     })
+    const connectionString = app.postgresUrl
+    if (!connectionString) throw new Error('Lead list fixture did not create a PostgreSQL connection')
+    db = new pg.Pool({ connectionString, options: '-c search_path=business,public' })
   }, 60_000)
 
-  afterAll(fixture.close)
+  afterAll(async () => {
+    try { await db?.end() }
+    finally { await fixture.close() }
+  })
 
   const submit = (id: number, body: object, headers: HeadersInit = app.headers) =>
     app.request(`${versions}/${id}/supplement`, { method: 'POST', headers, body: JSON.stringify(body) })

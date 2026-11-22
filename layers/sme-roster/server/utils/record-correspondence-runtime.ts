@@ -4,15 +4,13 @@ import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from 
 import { importBatch } from '../../../../db/postgresql/import-tables'
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { z } from 'zod'
-import type * as schema from '../../../../db/schema'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
 import { importPostgresReceiptRedactor } from './import-receipt-redaction'
 import { usePostgresRosterDb } from './postgres-roster-db'
 import { type CorrespondenceFilter, type CorrespondenceRead } from './record-correspondence'
 import { CorrespondenceError } from './record-correspondence-model'
-import type { detail, details, sourceReader } from './record-correspondence-read'
 import { sanitizeEvidence } from './evidence-redaction'
-import type { SourceKind } from './record-correspondence-projection'
+import type { SourceKind, projectCorrespondenceSources } from './record-correspondence-projection'
 import { summaries } from './record-correspondence-summary-projection'
 import { discoverPostgresEventArchives, generatePostgresCandidates } from './record-correspondence-candidates-postgres'
 
@@ -59,7 +57,9 @@ export function success(body: object): CorrespondenceApiOutput { return { status
 
 export function ok(body: object, redactors: ReadonlyArray<(text: string) => string>): CorrespondenceApiOutput { return success(sanitizeEvidence({ ...body }, redactors)) }
 
-type PublishedEvent = NonNullable<ReturnType<typeof detail>['event']>
+type CorrespondenceSourceReader = ReturnType<typeof projectCorrespondenceSources>
+type CorrespondenceDetail = ReturnType<CorrespondenceSourceReader['detail']>
+type PublishedEvent = NonNullable<CorrespondenceDetail['event']>
 
 /** Visit this already-hydrated object's own fields in their original order.
  * Only a trusted event/evidence seam may identify its additive finalized slot. */
@@ -93,7 +93,7 @@ export function sanitizePublishedEvent(event: PublishedEvent | null, redactors: 
   }, 'publishedPresentation')
 }
 
-export function sanitizePublishedDetail(row: ReturnType<typeof detail>, redactors: ReadonlyArray<(text: string) => string>) {
+export function sanitizePublishedDetail(row: CorrespondenceDetail, redactors: ReadonlyArray<(text: string) => string>) {
   return sanitizePublishedObject(row, redactors, (key, value) => {
     if (key === 'event') return sanitizePublishedEvent(row.event, redactors)
     if (key === 'predecessorEvent') return sanitizePublishedEvent(row.predecessorEvent, redactors)
@@ -125,7 +125,7 @@ export function batchResponse(receipt: object | null | undefined, redactors: Rea
   return receipt ? ok(receipt, redactors) : fail(404, 'not_found', 'Committed receipt not found')
 }
 
-export function detailPageResponse(page: object, rows: ReturnType<typeof details>, redactors: ReadonlyArray<(text: string) => string>) {
+export function detailPageResponse(page: object, rows: CorrespondenceDetail[], redactors: ReadonlyArray<(text: string) => string>) {
   const body = { ...page, rows }
   return success(sanitizePublishedObject(body, redactors, (key, value) => key === 'rows'
     ? rows.map(row => sanitizePublishedDetail(row, redactors)) : sanitizeEvidence(value, redactors)))
@@ -135,7 +135,7 @@ export function sourceFilter(kind: SourceKind, id: number): CorrespondenceFilter
   return kind === 'event' ? { anyEventId: id } : kind === 'relation' ? { relationId: id } : { exportRowId: id }
 }
 
-export function sourceResponse(reader: ReturnType<typeof sourceReader>, kind: SourceKind, id: number, rows: CorrespondenceRead[], redactors: ReadonlyArray<(text: string) => string>) {
+export function sourceResponse(reader: CorrespondenceSourceReader, kind: SourceKind, id: number, rows: CorrespondenceRead[], redactors: ReadonlyArray<(text: string) => string>) {
   const source = reader.read(kind, id)
   if (!source) return fail(404, 'not_found', 'Source row not found')
   const body = { source, correspondences: rows.map(reader.detail) }
@@ -240,10 +240,9 @@ export async function handlePostgresCorrespondenceRequest(input: CorrespondenceA
     const fields = getTableColumns(a)
     const where = eq(a.correspondenceId, id)
     const [total] = await tx.select({ n: count() }).from(a).where(where)
-    const rows = await tx.select({
-      ...fields, evidence: sql<typeof schema.recordCorrespondenceAudit.$inferSelect.evidence>`${a.evidence}::json`,
-    }).from(a).where(where).orderBy(a.id).limit(paging.pageSize)
+    const stored = await tx.select(fields).from(a).where(where).orderBy(a.id).limit(paging.pageSize)
       .offset(Math.min(Number.MAX_SAFE_INTEGER, (paging.page - 1) * paging.pageSize))
+    const rows = stored.map(row => ({ ...row, evidence: JSON.parse(row.evidence) as Record<string, unknown> }))
     return auditResponse({ rows, total: total!.n, ...paging }, knownRedactors)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

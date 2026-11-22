@@ -8,7 +8,7 @@ import {
   platformBusinessObservation, platformCollection, platformExportBatch,
   platformObservationAssignment,
 } from '../../../../db/postgresql/platform-tables'
-import type * as schema from '../../../../db/schema'
+import type { platformCollection as PlatformCollectionTable, platformExportBatch as PlatformExportBatchTable } from '../../../../db/postgresql/platform-tables'
 import { normalizeName } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { comparisonSourceCatalogInput, type ComparisonSourceCatalogInput } from '../../lib/roster/record-comparison'
@@ -75,11 +75,11 @@ export function readPostgresRecordComparisonSources(db: NodePgDatabase, input: C
         row as OfficialSourceDocument, registered ? { ...registered, bytes: Number(registered.bytes) } : null,
       )) : []
     const batches = bw.limit ? (await tx.select({
-      row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch,'b')}`,
+      row: sql<typeof PlatformExportBatchTable.$inferSelect>`${postgresRosterRow(platformExportBatch,'b')}`,
     }).from(b).where(batchFilter).orderBy(b.id).limit(bw.limit).offset(bw.offset)).map(({ row }) => projectCatalogExport(row)) : []
     const queryPage = qw.limit ? await tx.select({
       id: c.publicId,
-      collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection,'c')}`,
+      collection: sql<typeof PlatformCollectionTable.$inferSelect>`${postgresRosterRow(platformCollection,'c')}`,
       conditions: postgresCollectionConditionValues(c.conditionFacts),
     }).from(c).where(queryFilter).orderBy(c.publicId).limit(qw.limit).offset(qw.offset) : []
     signal?.throwIfAborted()

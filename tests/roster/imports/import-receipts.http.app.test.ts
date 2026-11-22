@@ -98,7 +98,7 @@ async function startService(configured = true) {
   catch (error) { await service.stop(); throw new Error(`${String(error)}\n${output.slice(-8000)}`) }
 }
 beforeAll(async () => {
-  postgres = await postgresRuntimeFixture({ dir, native: true })
+  postgres = await postgresRuntimeFixture({ dir })
   pool = new pg.Pool({ connectionString: postgres.url })
   db = drizzle({ client: pool })
   await seedReceiptFixture()
@@ -213,7 +213,8 @@ describe('import receipts through real HTTP and MCP on isolated PostgreSQL', () 
     expect(summary).toMatchObject({ status: 'committed', summary: committed.summary })
     expect(summary).not.toHaveProperty('originalRequest')
     const retiredRoute = await get(`/request?receiptId=${summary.receiptId}`)
-    expect(retiredRoute.headers.get('content-type')).toMatch(/^text\/html\b/)
+    expect(retiredRoute.status).toBe(404)
+    expect(await retiredRoute.text()).not.toContain('合成留存来源公告')
   })
   it('distinguishes processing, preflight, failure and not found without consuming missing keys', async () => {
     expect(await (await get(`?batchId=${processing.id}`)).json()).toMatchObject({ status: 'processing', committedAt: null, completedAt: null })

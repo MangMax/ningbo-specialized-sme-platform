@@ -1,13 +1,12 @@
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createError, createRouter, defineEventHandler, getQuery, readBody, toWebHandler } from 'h3'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { reserveLoopbackPort } from '../../support/owned-process.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
-const bin = process.env.ROSTER_TEST_POSTGRES_BIN
 const oldName = '宁波金叶机械有限公司'
 const code = '91330211255994457P'
 const batch = 'discovery'
@@ -17,44 +16,51 @@ const candidateItems = [twin, twin, unidentified].map(candidate => ({
   ok: true, ref: 'synthetic-twin', kind: 'duplicate_candidate', detail: { candidate },
 }))
 
-describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
-  let dir: string
-  let data: string
-  let started = false
-  let url: string
+describe('PostgreSQL roster identity discovery over HTTP', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'roster-discovery-pg-'))
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   let dispatch: ReturnType<typeof toWebHandler>
-
-  function command(name: string, args: string[], input?: string) {
-    return execFileSync(join(bin!, name), args, { input, stdio: ['pipe', 'pipe', 'pipe'] }).toString()
-  }
-  const psql = (input: string) => command('psql', ['-X', '-w', '-v', 'ON_ERROR_STOP=1', '-At', url], input)
+  const psql = (sql: string) => postgres!.psql(['-qAt', '-c', sql])
 
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'roster-discovery-pg-'))
-    data = join(dir, 'pg')
-    const port = await reserveLoopbackPort()
-    url = `postgresql://discovery_fixture@127.0.0.1:${port}/postgres`
-    command('initdb', ['-D', data, '-U', 'discovery_fixture', '-A', 'trust', '--no-locale', '-E', 'UTF8'])
-    command('pg_ctl', ['-D', data, '-l', join(dir, 'postgres.log'), '-o', `-h 127.0.0.1 -p ${port} -k ${dir}`, '-w', 'start'])
-    started = true
+    postgres = await postgresRuntimeFixture({ dir })
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+    const db = usePostgresDirectoryDb()
     psql(`
-      CREATE SCHEMA business;
-      SET search_path TO business;
-      CREATE TABLE enterprise (id bigint PRIMARY KEY, name text, name_norm text, uscc_norm text, district text, city text);
-      CREATE TABLE enterprise_merge (from_enterprise_id bigint PRIMARY KEY, into_enterprise_id bigint);
-      CREATE TABLE enterprise_alias (id bigint PRIMARY KEY, enterprise_id bigint, name text, name_norm text, verification_status text);
-      ${['roster-schema', 'roster-platform-schema', 'roster-review-schema']
-        .map(file => readFileSync(new URL(`../../../db/postgresql/${file}.sql`, import.meta.url), 'utf8')).join('\n')}
-      INSERT INTO enterprise VALUES
+      ALTER TABLE business.platform_collection ALTER COLUMN public_id RESTART WITH 110;
+      ALTER TABLE business.platform_business_observation ALTER COLUMN public_id RESTART WITH 210;
+    `)
+    await seedPostgresPlatformQuery(db, {
+      interface: 'business_list', queryKey: '\u200b' + code.toLowerCase() + '\u3000', rdjb: '3',
+      queriedAt: '2024-01-01', status: 'success', rawResponse: 'synthetic stored platform evidence',
+      relations: [
+        { sequenceNo: 1, relationKey: 'wrong-code', nameRaw: oldName, usccRaw: '91330110MA2GMDFH58' },
+        { sequenceNo: 2, relationKey: 'original-authority', nameRaw: oldName, usccRaw: code },
+      ],
+    })
+    await seedPostgresPlatformQuery(db, {
+      interface: 'apply_list', queryKey: code, queriedAt: '2025-01-01', status: 'success',
+      rawResponse: 'synthetic later evidence',
+      relations: [{ sequenceNo: 1, relationKey: 'later-query', nameRaw: oldName, usccRaw: code }],
+    })
+    await seedPostgresPlatformQuery(db, {
+      interface: 'apply_list', queryKey: 'name:' + oldName, queriedAt: '2025-02-01', status: 'partial',
+      rawResponse: 'synthetic partial name query',
+      relations: [{ sequenceNo: 1, relationKey: 'name-trace', nameRaw: oldName }],
+    })
+    psql(`
+      SET search_path TO business, public;
+      INSERT INTO enterprise (id,name,name_norm,uscc_norm,district,city) VALUES
         (1,'宁波金叶机械股份有限公司','宁波金叶机械股份有限公司','${code}',NULL,'宁波市'),
         (2,'${oldName}','${oldName}',NULL,NULL,'宁波市'),
         (3,'宁波未确认文创有限公司','宁波未确认文创有限公司',U&'\\200B\\3000',NULL,'宁波市'),
         (4,'宁波历史移除有限公司','宁波历史移除有限公司',NULL,NULL,'宁波市'),
         (6,'宁波独立主体有限公司','宁波独立主体有限公司','91330110MA2GMDFH58',NULL,'宁波市'),
         (9,'旧行','旧行',NULL,NULL,NULL),(10,'中间行','中间行',NULL,NULL,NULL);
-      INSERT INTO enterprise_merge VALUES (9,10),(10,2);
-      INSERT INTO enterprise_alias VALUES
-        (1,2,'查证别名','查证别名','confirmed'),(2,2,'无效别名','无效别名','pending');
+      INSERT INTO enterprise_merge (from_enterprise_id,into_enterprise_id,basis,recorded_at)
+      VALUES (9,10,'合成归并','2024-01-01'),(10,2,'合成归并','2024-01-01');
+      INSERT INTO enterprise_alias (id,enterprise_id,name,name_norm,verification_status,source_kind,created_at) VALUES
+        (1,2,'查证别名','查证别名','confirmed','manual','2024-01-01'),(2,2,'无效别名','无效别名','pending','manual','2024-01-01');
       INSERT INTO record (id,enterprise_id,title_code,source,district) VALUES
         (21,2,'little_giant','jxj','海曙区'),(31,3,'specialized_sme','jxj',NULL),
         (41,4,'specialized_sme','miit',NULL);
@@ -69,34 +75,18 @@ describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
       INSERT INTO platform_export_row (batch_id,source_row_no,uscc_raw,name_raw,created_at) VALUES
         (1,1,NULL,'宁波历史移除有限公司','2024-01-01'),
         (2,2,'${code}','宁波金叶机械集团有限公司','2025-01-01');
-      INSERT INTO platform_collection (id,public_id,interface,query_key,rdjb,queried_at,created_at,status,completeness,provenance_state,parse_state,rule_version) VALUES
-        (10,110,'business_list',U&'\\200B${code.toLowerCase()}\\3000','3','2024-01-01','2024-01-01','success','complete','captured','valid','fixture'),
-        (11,111,'apply_list','${code}','','2025-01-01','2025-01-01','success','complete','captured','valid','fixture'),
-        (12,112,'apply_list','name:${oldName}','','2025-02-01','2025-02-01','partial','partial','captured','valid','fixture');
-      INSERT INTO platform_business_observation
-        (id,public_id,collection_id,sequence_no,source_relation_key,position_state,identity_state,content_state)
-        VALUES (100,210,10,1,'wrong-code','unknown','not_indexed','not_indexed'),
-          (101,211,10,2,'original-authority','unknown','not_indexed','not_indexed'),
-          (102,212,11,1,'later-query','unknown','not_indexed','not_indexed'),
-          (103,213,12,1,'name-trace','unknown','not_indexed','not_indexed');
-      INSERT INTO platform_observation_assignment (observation_id,revision,match_basis,verification_status,uscc_raw,name_raw,origin) VALUES
-        (100,1,'none','pending','91330110MA2GMDFH58','${oldName}','migrated_current'),
-        (101,1,'none','pending','${code}','${oldName}','migrated_current'),
-        (101,2,'manual','confirmed','${code}','改派现名','command'),
-        (102,1,'none','pending','${code}','${oldName}','migrated_current'),
-        (103,1,'none','pending',NULL,'${oldName}','migrated_current');
+      INSERT INTO platform_observation_assignment (observation_id,revision,match_basis,verification_status,uscc_raw,name_raw,origin)
+      SELECT id,2,'manual','confirmed','${code}','改派现名','command' FROM platform_business_observation WHERE public_id=211;
       INSERT INTO import_batch (id,idempotency_key,source_kind,source_identity,status,item_results,preflight_result,created_at) VALUES
         (31,'${batch}','announcement','fixture','committed','${JSON.stringify(candidateItems)}',NULL,'2025-01-01'),
         (32,'prior-merge','alias_evidence','roster/duplicate-merge/${batch}','committed',NULL,NULL,'2025-01-02'),
         (33,'preflight-only','announcement','fixture','preflight',NULL,'${JSON.stringify({ duplicateCandidates: [twin] })}','2025-01-02');
     `)
     vi.stubEnv('NUXT_DB_READONLY', '1')
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', url)
     vi.stubGlobal('defineEventHandler', defineEventHandler)
     vi.stubGlobal('getQuery', getQuery)
     vi.stubGlobal('readBody', readBody)
     vi.stubGlobal('createError', createError)
-    vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
     const get = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
     const post = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
     const duplicate = (await import('../../../layers/sme-roster/server/api/roster/import/duplicate-candidates.get')).default
@@ -110,11 +100,10 @@ describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
     try {
       await closePostgresDirectoryDb()
     } finally {
-      vi.doUnmock('@db')
       vi.unstubAllEnvs()
       vi.unstubAllGlobals()
-      if (started) command('pg_ctl', ['-D', data, '-w', '-m', 'fast', 'stop'])
-      if (dir) rmSync(dir, { recursive: true, force: true })
+      postgres?.close()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 
@@ -154,7 +143,7 @@ describe.skipIf(!bin)('PostgreSQL roster identity discovery over HTTP', () => {
     expect(result.plan.ready).toMatchObject([{ targetId: 2, route: 'platform_claim', evidence: { relationId: 211 } }])
     expect(result.plan.pending).toMatchObject([{ targetId: 3, code: 'query_source_required' }])
     expect(result.plan.request.payload.platformQueries).toBeUndefined()
-    expect(psql('SELECT count(*) FROM business.import_batch; SELECT count(*) FROM business.platform_collection;')).toBe('3\n3\n')
+    expect(psql('SELECT count(*) FROM business.import_batch; SELECT count(*) FROM business.platform_collection;')).toBe('6\n3\n')
   })
 
   it('returns a scoped public-source backfill for an accepted verdict file and keeps the checklist intact', async () => {

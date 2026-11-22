@@ -11,8 +11,8 @@ beforeAll(async()=>{
   writeFileSync(clock,`const RealDate=Date; globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:['2026-06-01T00:00:00Z']))} static now(){return 1780272000000}}`)
   process.env.NODE_OPTIONS=`${process.env.NODE_OPTIONS ?? ''} --import=${clock}`
   for(const [name,titles] of [['none',[]],['specialized',['specialized_sme']],['innovative',['innovative_sme']],['both',['specialized_sme','innovative_sme']],['platform',['specialized_sme','innovative_sme']]] as const){
-    const c=f.candidate(name,[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
-    for(const title of titles) f.addRecord(c.enterprise.id,name,[{eventType:name==='platform'?'maintain':'award',year:2018,batchSeq:1}],title)
+    const c=await f.candidate(name,[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+    for(const title of titles) await f.addRecord(c.enterprise.id,name,[{eventType:name==='platform'?'maintain':'award',year:2018,batchSeq:1}],title)
   }
   await f.start()
   digest = await f.runtimeBusinessRows(businessTables)

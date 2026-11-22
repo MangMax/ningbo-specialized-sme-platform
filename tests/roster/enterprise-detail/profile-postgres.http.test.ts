@@ -3,14 +3,21 @@ import pg from 'pg'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 
-const url = process.env.TEST_PROFILE_POSTGRES_URL
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+
+const dir = mkdtempSync(join(tmpdir(), 'enterprise-profile-pg-'))
+let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let request: ReturnType<typeof toWebHandler>
 let client: pg.Client
 let id: number
 const previous = '验收企业旧名'
 
 beforeAll(async () => {
-  if (!url) return
+  postgres = await postgresRuntimeFixture({ dir })
+  const url = postgres.url
   client = new pg.Client({ connectionString: url })
   await client.connect()
   const seeded = await client.query("INSERT INTO business.enterprise (name,name_norm,city,district) VALUES ($1,$1,'宁波市','海曙区') RETURNING id", [previous])
@@ -19,7 +26,6 @@ beforeAll(async () => {
   vi.stubEnv('NUXT_DB_READONLY', '0')
   for (const [key, builtin] of Object.entries({ defineEventHandler, getQuery, getRouterParam, readBody, setHeader })) vi.stubGlobal(key, builtin)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'pg-profile-fixture' }))
-  vi.doMock('@db', () => ({ useDb: () => { throw new Error('Unexpected SQLite access in PostgreSQL mode') } }))
   const router = createRouter()
     .get('/api/roster/enterprises/:id/profile', (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/profile.get')).default)
     .get('/api/roster/enterprises/:id/profile-history', (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id]/profile-history.get')).default)
@@ -33,7 +39,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await closePostgresDirectoryDb()
   await client?.end()
-  vi.doUnmock('@db')
+  postgres?.close()
+  rmSync(dir, { recursive: true, force: true })
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -47,7 +54,7 @@ async function call(path: string, body?: object) {
   return { status: response.status, value: await response.json() }
 }
 
-it.skipIf(!url)('serializes version checks and preserves profile receipts and confirmed names in PostgreSQL', async () => {
+it('serializes version checks and preserves profile receipts and confirmed names in PostgreSQL', async () => {
   const before = await call('/profile')
   expect(before).toMatchObject({ status: 200, value: { profile: { enterpriseId: id, name: previous, city: '宁波市', district: '海曙区' } } })
   const input = { expectedVersion: before.value.version, changes: { name: '验收企业新名', city: null },
@@ -74,7 +81,7 @@ it.skipIf(!url)('serializes version checks and preserves profile receipts and co
   expect(history.value.rows[0]).not.toHaveProperty('requestHash')
 })
 
-it.skipIf(!url)('reads and revises a stable alias with replayable history in PostgreSQL', async () => {
+it('reads and revises a stable alias with replayable history in PostgreSQL', async () => {
   const original = '验收录入的别名'
   const { rows } = await client.query(`
     INSERT INTO business.enterprise_alias (enterprise_id,name,name_norm,source_kind,created_at)

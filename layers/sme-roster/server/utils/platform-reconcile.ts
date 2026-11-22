@@ -5,7 +5,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import type * as schema from '../../../../db/schema'
+import type { platformCollection as PlatformCollectionTable } from '../../../../db/postgresql/platform-tables'
 import type { ComparisonRow, ComparisonDirection } from '../../lib/comparison'
 import { normalizeName } from '../../lib/domain'
 import type { PlatformInterface } from '../../lib/labels'
@@ -219,7 +219,7 @@ async function mapWithConcurrency<T, R>(
 /** Comparison/mapping projections are independent of the selected immutable originals. */
 export type StoredSlot = {
   /** Reused queries own their saved value (including NULL); fetched slots use the rdjb mapping. */
-  titleCode: typeof schema.platformCollection.$inferSelect.titleCode
+  titleCode: typeof PlatformCollectionTable.$inferSelect.titleCode
   collection?: LegacySlotCollection
   evidence: ReconcileQueryEvidence
   /** Legacy string projection, used only for old page/row validation. */

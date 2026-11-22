@@ -8,7 +8,8 @@ import { differenceReason } from '../../../../../db/postgresql/roster-selection-
 import {
   platformBusinessObservation, platformBusinessRecordVersion, platformCollection, platformObservationAssignment,
 } from '../../../../../db/postgresql/platform-tables'
-import type * as schema from '../../../../../db/schema'
+import type { platformBusinessObservation as PlatformBusinessObservationTable, platformCollection as PlatformCollectionTable, platformObservationAssignment as PlatformObservationAssignmentTable } from '../../../../../db/postgresql/platform-tables'
+import type { EnterpriseFactRevision } from '../enterprise-fact-model'
 import { decodePostgresExactCell } from '../../../../../db/postgresql/exact-cell'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
@@ -17,8 +18,11 @@ import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, 
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type Observation = typeof schema.platformBusinessObservation.$inferSelect
-type Fact = typeof schema.enterpriseFactRevision.$inferSelect
+type Observation = Omit<typeof PlatformBusinessObservationTable.$inferSelect, 'witnessRdjbValue' | 'witnessPageValue'> & {
+  witnessRdjbValue: ReturnType<typeof decodePostgresExactCell>
+  witnessPageValue: ReturnType<typeof decodePostgresExactCell>
+}
+type Fact = EnterpriseFactRevision
 
 export function lockPostgresDecisionOwnership102(tx: Tx) {
   return tx.execute(sql`SELECT pg_advisory_xact_lock(42458,114)`)
@@ -59,7 +63,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
   const queryId = d.evidenceQueryId ?? relation?.queryId
   const c = alias(platformCollection, 'c')
   const targetQuery = queryId ? (await tx.select({
-    id: c.publicId, collection: sql<typeof schema.platformCollection.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
+    id: c.publicId, collection: sql<typeof PlatformCollectionTable.$inferSelect>`${postgresRosterRow(platformCollection, 'c')}`,
   }).from(c).where(eq(c.publicId, queryId)))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
@@ -73,7 +77,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
     id: v.id, recordId: v.recordId, hashAlgorithm: v.hashAlgorithm, contentHash: v.contentHash, createdAt: v.createdAt,
   }).from(v).where(eq(v.id, observation.versionId)))[0] : null
   const assignment = observation ? (await tx.select({
-    row: sql<typeof schema.platformObservationAssignment.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
+    row: sql<typeof PlatformObservationAssignmentTable.$inferSelect>`${postgresRosterRow(platformObservationAssignment, 'p')}`,
   }).from(assignmentTable).where(eq(assignmentTable.observationId, observation.id)).orderBy(desc(assignmentTable.revision)).limit(1))[0]?.row : null
   const sourceVersions = observation?.recordId ? await tx.select({ id: v.id, contentHash: v.contentHash })
     .from(v).where(eq(v.recordId, observation.recordId)).orderBy(desc(v.id)).limit(1) : []

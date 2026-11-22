@@ -29,7 +29,7 @@ it.each([
 })
 
 it('keeps shared qualification consumers and unknown or deleted paths in full coverage', () => {
-  for (const path of ['layers/sme-roster/lib/roster/qualification-cycles.ts', 'db/schema.ts', 'tests/support/new-helper.ts', 'layers/sme-roster/server/api/roster/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
+  for (const path of ['layers/sme-roster/lib/roster/qualification-cycles.ts', 'db/postgresql/ledger-tables.ts', 'tests/support/new-helper.ts', 'layers/sme-roster/server/api/roster/deleted.get.ts', 'new-module.ts', 'pnpm-lock.yaml']) {
     const result = selectBusinessTests([path])
     expect(result.full, path).toBe(true)
     expect(result.native).toEqual(matrices(true).native)

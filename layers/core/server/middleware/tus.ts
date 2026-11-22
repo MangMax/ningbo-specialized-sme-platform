@@ -5,7 +5,7 @@ import { httpLogModule } from '../../lib/logging/module'
 import { postgresFileCategoryRules } from '../utils/file-category-runtime'
 import { TUS_PATH, getTus, withTusObservation, type TusObservation } from '../utils/tus'
 
-const postgresUploadPlacement: ResolveUploadPlacement = metadata => postgresFileCategoryRules.resolveUploadPlacement(metadata, { postgres: true })
+const postgresUploadPlacement: ResolveUploadPlacement = metadata => postgresFileCategoryRules.resolveUploadPlacement(metadata)
 
 /**
  * 把 `/api/uploads` 交给 tus `Server` 处理(web 标准入口)。

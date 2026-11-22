@@ -1,52 +1,51 @@
+import { listPostgresRosterEnterprises } from '../../../layers/sme-roster/lib/roster/enterprise-list-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
+import { enterprise as enterpriseTable, enterpriseAlias } from '../../../db/postgresql/enterprise-tables'
 import { record as recordTable, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { rosterLegacyMember } from '../../../db/postgresql/roster-selection-tables'
 import { title } from '../../../db/postgresql/title-table'
 import { eq, inArray } from 'drizzle-orm'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { initializeDb } from '../../../db/client'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, toNodeListener, getQuery, getRouterParam, defineEventHandler, createError, setHeader } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { schema } from '../../../db'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
-import { listEnterprises } from '../../../layers/sme-roster/server/utils/mcp-roster'
 
 const dir = mkdtempSync(join(tmpdir(), 'enterprise-read-http-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.sqlite') })
-const owner = db.insert(schema.enterprise).values({ name: '合成双称号企业', nameNorm: '合成双称号企业', usccNorm: '91330211255994457P', district: '海曙区' }).returning().get().id
-const unrelated = db.insert(schema.enterprise).values({ name: '无关企业', nameNorm: '无关企业' }).returning().get().id
-db.insert(schema.rosterLegacyMember).values([{ enterpriseId: owner }, { enterpriseId: unrelated }]).run()
-for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
-  const recordId = db.insert(schema.record).values({ enterpriseId: owner, titleCode, source: 'jxj' }).returning().get().id
-  const eventId = db.insert(schema.recordEvent).values({ recordId, eventType: 'award', year, decidedYear: year, batchSeq: 1 }).returning().get().id
-  db.insert(schema.recordEvidence).values({ recordEventId: eventId, sourceFile: 'synthetic.pdf', page: 3 }).run()
-  // Each synthetic source explicitly confirms batch 1 of its own originating
-  // award; the 2025 publication is the conclusion year, not a new origin.
-  const reviewId = db.insert(schema.recordEvent).values({ recordId, eventType: 'review', year, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'passed' }).returning().get().id
-  db.insert(schema.recordEvidence).values({ recordEventId: reviewId, sourceFile: `synthetic-review-${titleCode}.pdf`, page: 1 }).run()
-}
-for (const [name, verificationStatus] of [['已确认旧名', 'confirmed'], ['待核旧名', 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: owner, name, nameNorm: name, sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
+let owner: number, unrelated: number, recognized: number, failed: number
 const originalRows: Record<string, string>[] = [{ original: '原行1', qymc: '原名1', tyshxydm: '91330211255994457P' }, { original: '原行2', qymc: '原名2' }]
-const recognized = submitNativePlatformQuery(db, { interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00Z', status: 'partial', rawResponse: 'Explicit synthetic original directory page',
-  collectionEvidence: { source: 'queryBusList', status: 'partial', effectiveConditions: { uscc: '91330211255994457P', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T00:00:01Z', rows: originalRows, pages: [{ source: 'queryBusList', rdjb: '2', page: 4, status: 'success', fetchedCount: 2, declaredTotal: null, error: null }], fetchedCount: 2, declaredTotal: null, completeness: 'partial', fullRange: false, unfinished: [{ source: 'queryBusList', rdjb: '2', page: 5 }], error: null, limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 } },
-  relations: originalRows.map((rawFields, index) => ({ sequenceNo: index + 1, enterpriseId: index === 0 ? owner : null, nameRaw: rawFields.qymc, usccRaw: 'tyshxydm' in rawFields ? rawFields.tyshxydm : null, rawFields })) }).queryId
-const failed = submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'name:合成双称号企业', queriedAt: '2026-10-18', status: 'failed', failureReason: 'synthetic failure', rawResponse: 'Explicit synthetic failed capture' }).queryId
-submitNativePlatformQuery(db, { interface: 'business_list', queryKey: 'unrelated', queriedAt: '2026-10-19', status: 'success', rawResponse: '原文'.repeat(1_000_000), relations: [{ sequenceNo: 1, enterpriseId: unrelated, rawFields: { original: 'unrelated source row' } }] })
+async function seed() {
+  owner = (await pgDb.insert(enterpriseTable).values({ name: '合成双称号企业', nameNorm: '合成双称号企业', usccNorm: '91330211255994457P', district: '海曙区' }).returning())[0]!.id
+  unrelated = (await pgDb.insert(enterpriseTable).values({ name: '无关企业', nameNorm: '无关企业' }).returning())[0]!.id
+  await pgDb.insert(rosterLegacyMember).values([{ enterpriseId: owner }, { enterpriseId: unrelated }])
+  for (const [titleCode, year] of [['specialized_sme', 2022], ['little_giant', 2024]] as const) {
+    const recordId = (await pgDb.insert(recordTable).values({ enterpriseId: owner, titleCode, source: 'jxj' }).returning())[0]!.id
+    const eventId = (await pgDb.insert(recordEvent).values({ recordId, eventType: 'award', year, decidedYear: year, batchSeq: 1 }).returning())[0]!.id
+    await pgDb.insert(recordEvidence).values({ recordEventId: eventId, sourceFile: 'synthetic.pdf', page: 3 })
+    // Each synthetic source explicitly confirms batch 1 of its own originating
+    // award; the 2025 publication is the conclusion year, not a new origin.
+    const reviewId = (await pgDb.insert(recordEvent).values({ recordId, eventType: 'review', year, decidedYear: 2025, batchSeq: 1, reviewOutcome: 'passed' }).returning())[0]!.id
+    await pgDb.insert(recordEvidence).values({ recordEventId: reviewId, sourceFile: `synthetic-review-${titleCode}.pdf`, page: 1 })
+  }
+  for (const [name, verificationStatus] of [['已确认旧名', 'confirmed'], ['待核旧名', 'pending']] as const) await pgDb.insert(enterpriseAlias).values({ enterpriseId: owner, name, nameNorm: name, sourceKind: 'manual', sourceRefId: 0, verificationStatus, createdAt: '2026-10-19' })
+  recognized = (await seedPostgresPlatformQuery(pgDb, { interface: 'recognized_list', queryKey: '91330211255994457P', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00Z', status: 'partial', rawResponse: 'Explicit synthetic original directory page',
+    collectionEvidence: { source: 'queryBusList', status: 'partial', effectiveConditions: { uscc: '91330211255994457P', combination: 'and' }, titleScope: { mode: 'selected', rdjb: ['2'] }, queriedAt: '2026-10-19T00:00:00Z', completedAt: '2026-10-19T00:00:01Z', rows: originalRows, pages: [{ source: 'queryBusList', rdjb: '2', page: 4, status: 'success', fetchedCount: 2, declaredTotal: null, error: null }], fetchedCount: 2, declaredTotal: null, completeness: 'partial', fullRange: false, unfinished: [{ source: 'queryBusList', rdjb: '2', page: 5 }], error: null, limits: { pageSize: 50, maxRequests: 100, maxRows: 5000, maxDurationMs: 60000 } },
+    relations: originalRows.map((rawFields, index) => ({ sequenceNo: index + 1, enterpriseId: index === 0 ? owner : null, nameRaw: rawFields.qymc, usccRaw: 'tyshxydm' in rawFields ? rawFields.tyshxydm : null, rawFields })) })).queryId
+  failed = (await seedPostgresPlatformQuery(pgDb, { interface: 'apply_list', queryKey: 'name:合成双称号企业', queriedAt: '2026-10-18', status: 'failed', failureReason: 'synthetic failure', rawResponse: 'Explicit synthetic failed capture' })).queryId
+  await seedPostgresPlatformQuery(pgDb, { interface: 'business_list', queryKey: 'unrelated', queriedAt: '2026-10-19', status: 'success', rawResponse: '原文'.repeat(1_000_000), relations: [{ sequenceNo: 1, enterpriseId: unrelated, rawFields: { original: 'unrelated source row' } }] })
+}
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let pgDb: ReturnType<typeof usePostgresDirectoryDb>
 let server: ReturnType<typeof createServer>, base: string
 beforeAll(async () => {
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: join(dir, 'test.sqlite') })
+  postgres = await postgresRuntimeFixture({ dir })
   vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   pgDb = usePostgresDirectoryDb()
+  await seed()
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, getRouterParam, createError, setHeader })) vi.stubGlobal(name, value)
   const list = (await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default
   const detail = (await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default
@@ -54,7 +53,7 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`
 }, 60_000)
-afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); db.$client.close(); rmSync(dir, { recursive: true, force: true }) })
+afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); rmSync(dir, { recursive: true, force: true }) })
 it('HTTP list keeps filters, same-title recognition, counts, stable deep pages and confirmed alias search without decoding unrelated archives', async () => {
   const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
   expect(response.status).toBe(200)
@@ -106,17 +105,7 @@ it('HTTP filtered list scopes title counts to matched enterprises despite unrela
     const response = await fetch(`${base}/api/roster/enterprises?q=已确认旧名&pageSize=1`)
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2, differences: 2 }, rows: [{ enterpriseId: owner, nextReviewYear: 2028 }] })
-    expect(listEnterprises(db, { q: '已确认旧名', pageSize: 1 })).toMatchObject({ counts: { total: 1, titlePairs: 2, recognitionPairs: 2 } })
   } finally { await pgDb.delete(recordTable).where(eq(recordTable.id, record.id)) }
-})
-it('legacy SQLite detail retains embedded-null Unicode identity normalization', () => {
-  const identity = db.insert(schema.enterprise).values({ name: '控制符测试企业', nameNorm: '控制符测试企业', usccNorm: 'X\u0000SS' }).returning().get()
-  const query = { id: submitNativePlatformQuery(db, { interface: 'apply_list', queryKey: 'x\u0000ß', queriedAt: '2026-10-19', status: 'failed', rawResponse: 'Explicit synthetic identity lookup' }).queryId }
-  try {
-    expect(getRosterEnterpriseDetail(db, identity.id)?.platform.queries.map(q => q.id)).toEqual([query.id])
-  } finally {
-    db.$client.prepare('DELETE FROM enterprise WHERE id = ?').run(identity.id)
-  }
 })
 it('HTTP detail keeps Unicode identity normalization', async () => {
   const [identity] = await pgDb.insert(enterpriseTable).values({ name: '控制符测试企业', nameNorm: '控制符测试企业', usccNorm: 'XSS' }).returning()
@@ -129,41 +118,37 @@ it('HTTP detail keeps Unicode identity normalization', async () => {
     await pgDb.delete(enterpriseTable).where(eq(enterpriseTable.id, identity!.id))
   }
 })
-it('MCP search keeps malformed UTF-16 distinct from stored replacement characters', () => {
-  const identity = db.insert(schema.enterprise).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).returning().get()
-  db.insert(schema.rosterLegacyMember).values({ enterpriseId: identity.id }).run()
+it('Enterprise search keeps malformed UTF-16 distinct from stored replacement characters', async () => {
+  const identity = (await pgDb.insert(enterpriseTable).values({ name: '替换\uFFFD企业', nameNorm: '替换\uFFFD企业', district: '替换\uFFFD属地' }).returning())[0]!
+  await pgDb.insert(rosterLegacyMember).values({ enterpriseId: identity.id })
   try {
-    // SQLite UTF-8 binding substitutes U+FFFD for an isolated surrogate. The
-    // original JS predicates did not equate these distinct inputs.
-    expect(listEnterprises(db, { q: '\uD800' }).rows).toEqual([])
-    expect(listEnterprises(db, { district: '替换\uD800属地' }).rows).toEqual([])
-    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identity.id])
-  } finally { db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(identity.id) }
+    expect((await listPostgresRosterEnterprises(pgDb, { q: '\uD800' })).rows).toEqual([])
+    expect((await listPostgresRosterEnterprises(pgDb, { district: '替换\uD800属地' })).rows).toEqual([])
+    expect((await listPostgresRosterEnterprises(pgDb, { q: '\uFFFD' })).rows.map(row => row.enterpriseId)).toEqual([identity.id])
+  } finally { await pgDb.delete(enterpriseTable).where(eq(enterpriseTable.id, identity.id)) }
 })
-it('MCP search matches either UTF-16 half in supplementary names, confirmed aliases and USCC without replacement false positives', () => {
-  const identities = [
+it('Enterprise search matches either UTF-16 half in supplementary names, confirmed aliases and USCC without replacement false positives', async () => {
+  const inputs = [
     { name: '正名𠀀企业', nameNorm: '正名𠀀企业' },
     { name: '别名匹配企业', nameNorm: '别名匹配企业' },
     { name: '统代匹配企业', nameNorm: '统代匹配企业', usccNorm: 'SYN𠀀84' },
     { name: '待核别名企业', nameNorm: '待核别名企业' },
     { name: '替换\uFFFD对照', nameNorm: '替换\uFFFD对照' },
-  ].map(value => db.insert(schema.enterprise).values(value).returning().get().id)
-  db.insert(schema.rosterLegacyMember).values(identities.map(enterpriseId => ({ enterpriseId }))).run()
-  for (const [index, verificationStatus] of [[1, 'confirmed'], [3, 'pending']] as const) db.insert(schema.enterpriseAlias).values({ enterpriseId: identities[index]!, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus }).run()
+  ]
+  const identities = (await pgDb.insert(enterpriseTable).values(inputs).returning({ id: enterpriseTable.id })).map(row => row.id)
+  await pgDb.insert(rosterLegacyMember).values(identities.map(enterpriseId => ({ enterpriseId })))
+  for (const [index, verificationStatus] of [[1, 'confirmed'], [3, 'pending']] as const) await pgDb.insert(enterpriseAlias).values({ enterpriseId: identities[index]!, name: '旧名𠀀', nameNorm: '旧名𠀀', sourceKind: 'manual', sourceRefId: 0, verificationStatus, createdAt: '2026-10-19' })
   try {
     for (const q of ['𠀀', '\uD840', '\uDC00']) {
-      const result = listEnterprises(db, JSON.parse(JSON.stringify({ q })))
+      const result = await listPostgresRosterEnterprises(pgDb, { q })
       expect(result.counts.total).toBe(3)
       expect(result.rows.map(row => row.enterpriseId).sort((a, b) => a - b)).toEqual(identities.slice(0, 3))
     }
-    expect(listEnterprises(db, { q: '\uD841' }).rows).toEqual([])
-    expect(listEnterprises(db, { q: '\uDC01' }).rows).toEqual([])
-    expect(listEnterprises(db, { q: '\uFFFD' }).rows.map(row => row.enterpriseId)).toEqual([identities[4]])
+    expect((await listPostgresRosterEnterprises(pgDb, { q: '\uD841' })).rows).toEqual([])
+    expect((await listPostgresRosterEnterprises(pgDb, { q: '\uDC01' })).rows).toEqual([])
+    expect((await listPostgresRosterEnterprises(pgDb, { q: '\uFFFD' })).rows.map(row => row.enterpriseId)).toEqual([identities[4]])
   } finally {
-    for (const id of identities) {
-      db.$client.prepare('DELETE FROM enterprise_alias WHERE enterprise_id=?').run(id)
-      db.$client.prepare('DELETE FROM enterprise WHERE id=?').run(id)
-    }
+    await pgDb.delete(enterpriseTable).where(inArray(enterpriseTable.id, identities))
   }
 })
 it('HTTP SQL selection preserves first-award ties, pending years, same-event filters and terminated lifecycle', async () => {

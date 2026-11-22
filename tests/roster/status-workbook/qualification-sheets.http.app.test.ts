@@ -1,5 +1,6 @@
+import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 const f = qualificationExportFixture()
 const states = ['effective','expired','terminated','moved_out','unrecognized'] as const
@@ -14,25 +15,25 @@ const expectedNames: Record<string, Record<string, string[]>> = {
 }
 beforeAll(async () => {
  for (const title of Object.keys(titles)) for (const state of states) {
-  const c=f.candidate(`${title}-${state}`, [{eventType:state==='unrecognized'?'nurture':'award',year:state==='expired'?2021:2026,batchSeq:1}],title)
+  const c=await f.candidate(`${title}-${state}`, [{eventType:state==='unrecognized'?'nurture':'award',year:state==='expired'?2021:2026,batchSeq:1}],title)
   if(state==='effective' && title==='little_giant') {
-   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
-   const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
-   f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2026-01-01',validThrough:'2028-12-31'}}),event.id)
+   const event = (await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).where(eq(schema.recordEvent.recordId, c.record.id)))[0]!
+   const evidence = (await f.db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, event.id)))[0]!
+   await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2026-01-01',validThrough:'2028-12-31'}}) }).where(eq(schema.recordEvent.id, event.id))
   }
   // An old giant award alone stays retained. This distinct expired partition
   // has a sourced inclusive interval; lower titles still exercise year + 3.
   if(state==='expired' && title==='little_giant') {
-   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
-   const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
-   f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2021-01-01',validThrough:'2023-12-31'}}),event.id)
+   const event = (await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).where(eq(schema.recordEvent.recordId, c.record.id)))[0]!
+   const evidence = (await f.db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, event.id)))[0]!
+   await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],interval:{validFrom:'2021-01-01',validThrough:'2023-12-31'}}) }).where(eq(schema.recordEvent.id, event.id))
   }
   if(state==='effective' && title==='innovative_sme') {
-   const event = f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
-   const evidence = f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
-   f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],continuation:'until_next_review_results'}),event.id)
+   const event = (await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).where(eq(schema.recordEvent.recordId, c.record.id)))[0]!
+   const evidence = (await f.db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, event.id)))[0]!
+   await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],continuation:'until_next_review_results'}) }).where(eq(schema.recordEvent.id, event.id))
   }
-  if(state==='terminated'||state==='moved_out') f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:{kind:state==='terminated'?'cancelled':'moved_out',source:{reference:'official',statement:'verified'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null},action:'assert',actor:{type:'agent',id:'479'},basis:'verified',createdAt:'2025-01-01T00:00:00Z'}).run()
+  if(state==='terminated'||state==='moved_out') await f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:JSON.stringify({kind:state==='terminated'?'cancelled':'moved_out',source:{reference:'official',statement:'verified'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null}),action:'assert',actor:JSON.stringify({type:'agent',id:'479'}),basis:'verified',createdAt:'2025-01-01T00:00:00Z'})
  }
  await f.start()
 },60000)
@@ -94,8 +95,11 @@ it('downloaded three-title workbooks have literal five-state rowsets columns and
   expect(job.result.total).toBe(title==='little_giant'?5:title==='specialized_sme'?10:15)
   expect(job.result.counts).toMatchObject({eligible:expectedNames[title]!.effective!.length,pending:0,excluded:title==='little_giant'?4:title==='specialized_sme'?8:12})
  }
- const innovative = f.db.$client.prepare("select e.formal_validity from record_event e join record r on r.id=e.record_id join enterprise n on n.id=r.enterprise_id where n.name='innovative_sme-effective'").get() as {formal_validity:string}
- expect(JSON.parse(innovative.formal_validity).continuation).toBe('until_next_review_results')
+ const [innovative] = await f.db.select({ formalValidity: schema.recordEvent.formalValidity }).from(schema.recordEvent)
+   .innerJoin(schema.record, eq(schema.record.id, schema.recordEvent.recordId))
+   .innerJoin(schema.enterprise, eq(schema.enterprise.id, schema.record.enterpriseId))
+   .where(eq(schema.enterprise.name, 'innovative_sme-effective'))
+ expect(JSON.parse(innovative!.formalValidity!).continuation).toBe('until_next_review_results')
 },60000)
 
 it('public empty invalid and unauthorized outcomes remain distinct',async()=>{

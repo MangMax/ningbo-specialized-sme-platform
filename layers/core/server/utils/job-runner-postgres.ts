@@ -6,18 +6,23 @@ import { appLog, type LogContext } from '../../lib/logging'
 import { jobLogModule } from '../../lib/logging/module'
 import { makeProgress, newJobId } from '../../lib/job'
 import { getJobSpec, jobSpecs } from './job-spec-registry'
-import type { JobCompletion, JobSpec, SubmitInput } from './job-runner'
 import {
   claimNextPostgresJob, completePostgresJob, createPostgresJob, postgresJobCancellationRequested, recoverPostgresJobs,
   countActivePostgresJobs, findPostgresJobRequest, lockPostgresJobAdmission, queuedPostgresJobIds,
   setPostgresJobProgress, setPostgresJobResult, type PostgresJobSnapshot,
 } from './job-store-postgres'
-import type { JobDto } from './job-contract'
+import type { JobCompletion, JobDto, JobParseResult } from './job-contract'
 import type { TaskSummary, TaskSummaryProjection } from '../../lib/task-center'
 
 export type PostgresJobDb = NodePgDatabase & { $client: Pool }
 export type PostgresJobTransaction = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-type SubmitPostgresJobInput = Omit<SubmitInput, 'filesDir'>
+interface SubmitPostgresJobInput {
+  kind: string
+  params: Record<string, unknown>
+  id?: string
+  /** Captured IDs only. They are never persisted in params or receipts. */
+  logContext?: LogContext
+}
 type QueuedJob = { id: string; kind: string }
 type TrackSubmissions<T> = (remember: (jobs: readonly QueuedJob[]) => void) => Promise<T>
 
@@ -40,7 +45,7 @@ export interface TaskSummaryAccess {
 
 export interface PostgresJobSpec {
   allowBrowserCancel?: boolean
-  parse?: JobSpec['parse']
+  parse?: (raw: Record<string, unknown>) => JobParseResult
   validateSubmission?(tx: PostgresJobTransaction, params: Record<string, unknown>): Promise<void>
   projectResult?(db: NodePgDatabase, job: JobDto): Promise<unknown>
   taskCenter?: {

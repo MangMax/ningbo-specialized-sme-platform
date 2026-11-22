@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path'
-import { initializeDb } from '../../db/client'
-import { installLeadListSchema } from '../../layers/lead-lists/install-schema'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
 import { postgresRuntimeFixture } from './postgres-fixture.mjs'
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from './owned-process.mjs'
 
@@ -9,12 +9,11 @@ type Launch = (context: { cwd: string; port: number }) => {
   env?: NodeJS.ProcessEnv
 }
 
-// The SQLite fixture is an offline seed for an isolated PostgreSQL runtime.
-// Each reset stops both owned services before opening the next source database.
 export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: string; launch?: Launch }) {
   let generation = 0
-  let dbPath = join(dir, 'synthetic.db')
-  let db = initializeDb({ dbPath, create: true })
+  const exportsDir = () => join(dir, `exports-${generation}`)
+  let pool: pg.Pool | undefined
+  let db: NodePgDatabase | undefined
   let baseUrl = ''
   let postgresUrl: string | undefined
   let processId: number | undefined
@@ -25,9 +24,22 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
   const url = (path: string) => baseUrl + path
   const request = (path: string, init?: RequestInit) => fetch(url(path), { headers, ...init })
 
+  async function prepare() {
+    if (postgres) return
+    postgres = await postgresRuntimeFixture({ dir })
+    postgresUrl = postgres.url
+    pool = new pg.Pool({ connectionString: postgres.url, options: '-c search_path=business,public' })
+    db = drizzle(pool)
+  }
+
   async function stopRuntime() {
-    try { await stop?.(); stop = undefined }
-    finally {
+    try {
+      await stop?.()
+    } finally {
+      stop = undefined
+      await pool?.end()
+      pool = undefined
+      db = undefined
       postgres?.close()
       postgres = undefined
       postgresUrl = undefined
@@ -43,19 +55,16 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
     const externalUrl = command.env?.NUXT_POSTGRES_DIRECTORY_URL
     output = ''
     try {
-      if (!externalUrl) {
-        installLeadListSchema(db.$client)
-        postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
-      }
+      if (!externalUrl) await prepare()
       const child = spawnOwnedChild(process.execPath, command.args, {
         cwd, stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...process.env,
           NUXT_BUILD_DIR: join(dir, 'build'), NUXT_DB_READONLY: '0',
-          NUXT_ROSTER_EXPORT_DIR: dbPath + '.exports',
+          NUXT_ROSTER_EXPORT_DIR: exportsDir(),
           NUXT_API_TOKEN: token, NUXT_FILES_DIR: join(dir, 'files'), NUXT_INCOMING_DIR: join(dir, 'incoming'),
           ...command.env,
-          ...(postgres?.env ?? {
+          ...(!externalUrl && postgres ? postgres.env : {
             NUXT_POSTGRES_DIRECTORY_URL: externalUrl,
             NUXT_POSTGRES_LOG_URL: command.env?.NUXT_POSTGRES_LOG_URL || externalUrl,
             NUXT_POSTGRES_LOG_SCHEMA: command.env?.NUXT_POSTGRES_LOG_SCHEMA || 'runtime_logs',
@@ -67,7 +76,7 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
       baseUrl = `http://127.0.0.1:${port}`
       stop = () => stopOwnedChild(child)
       await waitForHttp(url(externalUrl ? '/api/jobs/kinds' : '/api/health'), { timeoutMs: 60000, child })
-      postgresUrl = postgres?.url ?? externalUrl
+      postgresUrl = externalUrl ?? postgres?.url
     } catch (error) {
       await stopRuntime()
       throw new Error(String(error) + '\n' + output, { cause: error })
@@ -92,17 +101,24 @@ export function nativeAppAdapter({ dir, token, launch }: { dir: string; token: s
     return { response, bytes: Buffer.from(await response.arrayBuffer()) }
   }
 
-  async function resetBusiness() {
-    await stopRuntime()
-    db.$client.close()
-    dbPath = join(dir, `synthetic-${++generation}.db`)
-    db = initializeDb({ dbPath, create: true })
-  }
-
   return {
-    get processId() { return processId }, get output() { return output }, get db() { return db }, get dbPath() { return dbPath },
+    get processId() { return processId },
+    get output() { return output },
+    get db() {
+      if (!db) throw new Error('Prepare the native app fixture before accessing its database')
+      return db
+    },
     get postgresUrl() { return postgresUrl },
-    headers, url, request, start, terminal, download, resetBusiness,
-    async close() { try { await stopRuntime() } finally { db.$client.close() } },
+    psql(args: string[]) {
+      if (!postgres) throw new Error('Prepare the native app fixture before running psql')
+      return postgres.psql(args)
+    },
+    get exportsDir() { return exportsDir() },
+    headers, url, request, prepare, start, terminal, download,
+    async resetBusiness() {
+      await stopRuntime()
+      generation++
+    },
+    close: stopRuntime,
   }
 }

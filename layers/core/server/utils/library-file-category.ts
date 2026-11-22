@@ -1,8 +1,7 @@
 import { isLibraryUploadPath, libraryUploadCategory, libraryUploadDirectory } from '../../lib/core/library-uploads'
 import { isFilenameSafe } from '../../lib/upload-transport'
 import { compareFileContentIdentity } from './file-identity'
-import { fileRegistrationFacts, splitRegistrationPath, UploadRegistrationError } from './file-store-contract'
-import type { FileCategoryServer } from './file-store'
+import { fileRegistrationFacts, splitRegistrationPath, UploadRegistrationError, type FileCategoryServer } from './file-store-contract'
 import { activePostgresPhysicalIntent, lockOrRegisterPostgresFile, postgresFileIdentity } from './file-store-postgres'
 
 export const libraryFileServerCategory = {
@@ -34,7 +33,7 @@ export const libraryFileServerCategory = {
   },
 } satisfies FileCategoryServer
 
-export function validateLibraryRegistration(input: Record<string, unknown>) {
+function validateLibraryRegistration(input: Record<string, unknown>) {
   const relPath = String(input.relPath ?? '')
   const segments = splitRegistrationPath(relPath)
   if (!isLibraryUploadPath(relPath) || segments.length !== 2 || Object.keys(input).length !== 1) {

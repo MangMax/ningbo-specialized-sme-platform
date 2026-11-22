@@ -1,6 +1,7 @@
 import { closeApplicationLogging } from '../../../layers/core/lib/logging'
 import {afterEach,afterAll,beforeEach,describe,expect,it,vi} from 'vitest'
-import {clearJobSpecs,getJobSpec,jobSpecs,type JobSpec} from '../../../layers/core/server/utils/job-runner'
+import { clearJobSpecs, getJobSpec, jobSpecs } from '../../../layers/core/server/utils/job-spec-registry'
+import type { JobSpec } from '../../../layers/core/server/utils/job-contract'
 import {registerJobSpecs} from '../../../server/utils/job-specs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -84,7 +85,8 @@ it('executes the current job with native read-only collection and reports actual
   let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   try {
     postgres = await postgresRuntimeFixture({ dir })
-    for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+    vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
     vi.stubEnv('NUXT_DB_READONLY', '0')
     const db = usePostgresDirectoryDb()
     const [target] = await db.insert(enterprise).values({ name: 'Native job', nameNorm: 'native job', usccNorm: '91330211255994457P' }).returning()

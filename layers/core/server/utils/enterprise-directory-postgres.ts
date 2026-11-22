@@ -83,7 +83,7 @@ export async function listPostgresDirectoryEnterprises(db: NodePgDatabase, query
   }
   if (!query.includeRemoved) predicates.push(isNull(enterpriseDirectory.removedReason))
   if (query.page !== undefined || query.sorts?.length) {
-    // Drizzle ordering has no COLLATE/NULLS LAST/TRANSLATE builders. Fold only ASCII to match SQLite NOCASE.
+    // Fold ASCII case only and keep missing names last in either sort direction.
     const order = (query.sorts ?? []).map(({ field, direction }) => sql`
       translate(${sortable[field]}, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
         COLLATE "C" ${direction === 'desc' ? sql`DESC` : sql`ASC`} NULLS LAST`)

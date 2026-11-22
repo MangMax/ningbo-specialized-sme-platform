@@ -7,14 +7,11 @@ import { join, resolve } from 'node:path'
 import pg from 'pg'
 import { newJobId } from '../../../layers/core/lib/job'
 import ExcelJS from 'exceljs'
-import { initializeDb, schema as s } from '../../../db/client'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { readDevelopmentDiscovery } from '../../roster/current-export/fixtures/specialized-export'
 
 const dir = mkdtempSync(join(tmpdir(), 'task-export-121-'))
-const dbPath = join(dir, 'synthetic.db'), db = initializeDb({ create: true,  dbPath })
 const headers = { 'content-type': 'application/json', authorization: 'Bearer synthetic-121' }
 const exportDir = join(dir, 'exports')
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
@@ -68,14 +65,21 @@ async function startService(apiToken: string | null = 'synthetic-121') {
   try { await waitForHttp(baseUrl + '/api/health', { child, timeoutMs: 60000 }) } catch (e) { throw new Error(String(e) + output) }
 }
 beforeAll(async () => {
-  const enterprise = db.insert(s.enterprise).values({ name: '合成现名', nameNorm: '合成现名', usccNorm: '001234567890123456', city: '宁波市' }).returning().get()
-  db.insert(s.enterpriseAlias).values({ enterpriseId: enterprise.id, name: '合成旧名', nameNorm: '合成旧名', sourceKind: 'manual', verificationStatus: 'confirmed' }).run()
-  const record = db.insert(s.record).values({ enterpriseId: enterprise.id, source: 'jxj', titleCode: 'little_giant', nameRaw: '合成旧名' }).returning().get()
-  const event = db.insert(s.recordEvent).values({ recordId: record.id, eventType: 'award', year: new Date().getFullYear() }).returning().get()
-  db.insert(s.recordEvidence).values({ recordEventId: event.id, sourceFile: 'synthetic.xlsx', attachment: '合成公布名单' }).run()
-  installLeadListSchema(db.$client)
-  postgres = await postgresRuntimeFixture({ dir, sourcePath: dbPath })
+  postgres = await postgresRuntimeFixture({ dir })
   pool = new pg.Pool({ connectionString: postgres.url })
+  const { rows: [enterprise] } = await pool.query(
+    "INSERT INTO business.enterprise (name, name_norm, uscc_norm, city) VALUES ('合成现名', '合成现名', '001234567890123456', '宁波市') RETURNING id",
+  )
+  await pool.query(`INSERT INTO business.enterprise_alias (enterprise_id, name, name_norm, source_kind, verification_status, created_at)
+    VALUES ($1, '合成旧名', '合成旧名', 'manual', 'confirmed', '2026-01-01T00:00:00Z')`, [enterprise.id])
+  const { rows: [record] } = await pool.query(
+    "INSERT INTO business.record (enterprise_id, source, title_code, name_raw) VALUES ($1, 'jxj', 'little_giant', '合成旧名') RETURNING id", [enterprise.id],
+  )
+  const { rows: [event] } = await pool.query(
+    "INSERT INTO business.record_event (record_id, event_type, year) VALUES ($1, 'award', $2) RETURNING id", [record.id, new Date().getFullYear()],
+  )
+  await pool.query(`INSERT INTO business.record_evidence (record_event_id, source_file, attachment)
+    VALUES ($1, 'synthetic.xlsx', '合成公布名单')`, [event.id])
   await startService()
 }, 90000)
 
@@ -84,7 +88,6 @@ afterAll(async () => {
   finally {
     await pool?.end()
     postgres?.close()
-    db.$client.close()
     rmSync(dir, { recursive: true, force: true })
   }
 }, 45_000)
@@ -100,7 +103,7 @@ it('discovers module and subgroup filters in development OpenAPI and lists all s
   const { kinds } = await read('/api/jobs/kinds', false)
   expect(kinds.map((entry: { kind: string }) => entry.kind)).toEqual([
     'current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates',
-    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup',
+    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup', 'roster_task_history_cleanup',
   ])
   const snapshot = await request('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ kind: 'difference-snapshot' }) })
   expect(snapshot.status).toBe(400)
@@ -241,7 +244,7 @@ it('cross-site and missing-marker requests retain the external REST token path',
 
 it('default same-origin browser flow submits views cancels regenerates and downloads without API token', async () => {
   await stop()
-  db.update(s.enterprise).set({ name: '合成现名' }).run()
+  await pool.query('UPDATE business.enterprise SET name = $1 WHERE uscc_norm = $2', ['合成现名', '001234567890123456'])
   await startService(null)
   const browserHeaders = {
     'x-task-center-browser': '1', 'sec-fetch-site': 'same-origin',

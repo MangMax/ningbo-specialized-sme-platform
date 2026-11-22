@@ -5,47 +5,56 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { nativeAppAdapter } from '../../support/native-app'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import * as s from '../../../db/schema'
-import { currentDispositions, preflightDisposition } from '../../../layers/sme-roster/server/utils/title-cycle-disposition'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
+import { record as recordTable, recordEvent } from '../../../db/postgresql/ledger-tables'
+import { storedFile } from '../../../db/postgresql/file-tables'
+import { dispositionRequestSchema } from '../../../layers/sme-roster/server/utils/title-cycle-disposition-model'
+import { preflightPostgresDisposition, readPostgresDispositions } from '../../../layers/sme-roster/server/utils/title-cycle-disposition-postgres'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 
 let dir: string, app: ReturnType<typeof nativeAppAdapter>
 const token = 'synthetic-disposition-token'
 const client = new Client({name:'synthetic-disposition',version:'1'})
 let tools: Awaited<ReturnType<Client['listTools']>>, discovery:any
 let pool: pg.Pool
-let enterprise: typeof s.enterprise.$inferSelect
+let enterprise: typeof enterpriseTable.$inferSelect
 let fact: {
  kind: 'not_applied'; source: { fileId: number; sha256: string; reference: string; statement: string }
  cycle: { eventId: number; revision: number }; observed: { precision: 'day'; value: string }
  effective: { precision: 'unknown'; value: null }; effectiveBasis: null
 }
 let currentVersion: string
-let expectedPlan: (request: unknown) => string
+let expectedPlan: (request: unknown) => Promise<string>
 beforeAll(async () => {
  dir = mkdtempSync('/tmp/cycle-pg-')
  vi.stubEnv('NUXT_MCP_TOKEN', token)
  app = nativeAppAdapter({dir, token})
- enterprise = app.db.insert(s.enterprise).values({ name:'合成进程处置', nameNorm:'合成进程处置' }).returning().get()
- const record = app.db.insert(s.record).values({ enterpriseId:enterprise.id, titleCode:'little_giant', source:'jxj' }).returning().get()
- const event = app.db.insert(s.recordEvent).values({ recordId:record.id, eventType:'award', year:2021 }).returning().get()
- const file = app.db.insert(s.storedFile).values({ relPath:'synthetic.pdf', filename:'synthetic.pdf', ext:'pdf', bytes:1,
-  sha256:'a'.repeat(64), createdAt:'2026-01-01' }).returning().get()
+ await app.prepare()
+ pool = new pg.Pool({ connectionString: app.postgresUrl, options: '-c search_path=business,public' })
+ const db = drizzle(pool)
+ enterprise = singlePostgresFixtureRow(await db.insert(enterpriseTable).values({ name:'合成进程处置', nameNorm:'合成进程处置' }).returning())
+ const record = singlePostgresFixtureRow(await db.insert(recordTable).values({ enterpriseId:enterprise.id, titleCode:'little_giant', source:'jxj' }).returning())
+ const event = singlePostgresFixtureRow(await db.insert(recordEvent).values({ recordId:record.id, eventType:'award', year:2021 }).returning())
+ const file = singlePostgresFixtureRow(await db.insert(storedFile).values({ relPath:'synthetic.pdf', filename:'synthetic.pdf', ext:'pdf', bytes: 1n,
+  sha256:'a'.repeat(64), createdAt:'2026-01-01' }).returning())
  fact = { kind:'not_applied', source:{ fileId:file.id, sha256:file.sha256, reference:'page 1', statement:'未申请' },
   cycle:{ eventId:event.id, revision:1 }, observed:{ precision:'day', value:'2024-01-01' },
   effective:{ precision:'unknown', value:null }, effectiveBasis:null }
- currentVersion = currentDispositions(app.db, [enterprise.id]).version
- expectedPlan = request => preflightDisposition(app.db, request).planHash
+ const current = await readPostgresDispositions(db, [enterprise.id], true)
+ if (!('version' in current)) throw new Error('Expected current disposition version')
+ currentVersion = current.version
+ expectedPlan = async request => (await preflightPostgresDisposition(db, dispositionRequestSchema.parse(request))).planHash
  discovery = await readDevelopmentDiscovery()
  await app.start()
- pool = new pg.Pool({ connectionString: app.postgresUrl })
  await client.connect(new StreamableHTTPClientTransport(new URL(app.url('/mcp')), { requestInit:{headers:{authorization:'Bearer ' + token}} }))
  tools = await client.listTools()
 }, 90000)
 afterAll(async () => {
  try {
   if (app) await client.close()
-  await app?.close()
   await pool?.end()
+  await app?.close()
  } finally {
   vi.unstubAllEnvs()
   if (dir) rmSync(dir, {recursive:true,force:true})
@@ -74,7 +83,7 @@ it('discovers strict actual toolkit schemas and runs assert confirm replace with
   return {receipt:decode(result),envelope}
  }
  expect(r.expectedVersion).toBe(currentVersion)
- expect((await http('preflight', r)).body.planHash).toBe(expectedPlan(r))
+ expect((await http('preflight', r)).body.planHash).toBe(await expectedPlan(r))
  const a=await run(r)
  await run(await request([{action:'confirm',id:a.receipt.ids[0],revision:1}],'confirm'))
  expect((await read()).rows).toMatchObject([{revision:2,status:'confirmed',fact,effectReady:false}])
@@ -90,7 +99,5 @@ it('discovers strict actual toolkit schemas and runs assert confirm replace with
  const pin=await request([{action:'assert',enterpriseId:enterprise.id,fact}],'pin'),p=await http('preflight',pin)
  await pool.query('UPDATE business.stored_file SET sha256=$1', ['b'.repeat(64)])
  const frozen=await read();expect((await http('commit',{request:pin,planHash:p.body.planHash})).status).toBe(409);expect(await read()).toEqual(frozen)
- expect(app.db.select().from(s.recordEvent).all()).toHaveLength(1)
   expect((await pool.query('SELECT id FROM business.record_event')).rowCount).toBe(1)
-  expect(app.db.select().from(s.titleCycleDispositionRevision).all()).toEqual([])
 })

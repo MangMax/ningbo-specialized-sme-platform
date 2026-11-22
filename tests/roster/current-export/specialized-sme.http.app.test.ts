@@ -1,7 +1,5 @@
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
-import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
-import { businessIdentity, expectedBusinessIdentity, matchesBusinessIdentity } from './fixtures/specialized-export'
+import { CURRENT_RULE_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
+import { businessIdentity, expectedBusinessIdentity } from './fixtures/specialized-export'
 import { execFileSync } from 'node:child_process'
 
 import { existsSync, rmSync } from 'node:fs'
@@ -10,7 +8,7 @@ import { join } from 'node:path'
 import ExcelJS from 'exceljs'
 
 import { eq } from 'drizzle-orm'
-import { schema as s } from '../../../db/client'
+import * as s from '../fixtures/postgres-tables'
 
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest'
 import { readDevelopmentDiscovery, specializedExportFixture, expectCounts, rows, route, year as y, type Event } from './fixtures/specialized-export'
@@ -23,9 +21,9 @@ beforeEach(f.resetBusiness, 90_000)
 afterAll(f.close)
 
 it('专精特新入口提交202并下载六表新认定文件', async () => {
-  const {enterprise} = f.candidate('专精特新新认定')
+  const {enterprise} = await f.candidate('专精特新新认定')
   const {wb,job} = await f.workbook('118-fresh')
-  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(f.db,enterprise.id)])
+  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual([await expectedBusinessIdentity(f.db,enterprise.id)])
   expect(rows(wb,'有效企业')[0]![12]).toContain('synthetic-118.xlsx')
   expect(job.result.artifact.filename).toBe('current-specialized_sme.xlsx')
   expect(job.result.artifact.availability).toBe('available')
@@ -35,25 +33,25 @@ it('专精特新入口提交202并下载六表新认定文件', async () => {
 })
 
 it('称号隔离同名不同主体及多称号独立重复纳入', async () => {
-  const multi = f.candidate('多称号同一企业')
-  f.addRecord(multi.enterprise.id,multi.enterprise.name,undefined,'little_giant')
-  f.addRecord(multi.enterprise.id,multi.enterprise.name,undefined,'innovative_sme')
-  const peerA = f.candidate('同名主体甲'), peerB = f.candidate('同名主体乙')
+  const multi = await f.candidate('多称号同一企业')
+  await f.addRecord(multi.enterprise.id,multi.enterprise.name,undefined,'little_giant')
+  await f.addRecord(multi.enterprise.id,multi.enterprise.name,undefined,'innovative_sme')
+  const peerA = await f.candidate('同名主体甲'), peerB = await f.candidate('同名主体乙')
   for (const item of [peerA,peerB]) {
-    f.db.update(s.enterprise).set({name:'同名企业',nameNorm:'同名企业'}).where(eq(s.enterprise.id,item.enterprise.id)).run()
-    f.db.update(s.record).set({nameRaw:'同名企业'}).where(eq(s.record.id,item.record.id)).run()
+    await f.db.update(s.enterprise).set({name:'同名企业',nameNorm:'同名企业'}).where(eq(s.enterprise.id,item.enterprise.id))
+    await f.db.update(s.record).set({nameRaw:'同名企业'}).where(eq(s.record.id,item.record.id))
   }
-  const onlyLittle = f.candidate('仅小巨人',undefined,'little_giant')
-  const onlyInnovative = f.candidate('仅创新型',undefined,'innovative_sme')
-  const crossFailure = f.candidate('他称号失败不影响本称号')
-  f.addRecord(crossFailure.enterprise.id,crossFailure.enterprise.name,[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}],'little_giant')
+  const onlyLittle = await f.candidate('仅小巨人',undefined,'little_giant')
+  const onlyInnovative = await f.candidate('仅创新型',undefined,'innovative_sme')
+  const crossFailure = await f.candidate('他称号失败不影响本称号')
+  await f.addRecord(crossFailure.enterprise.id,crossFailure.enterprise.name,[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}],'little_giant')
   // Qualification failure is title-scoped; cross-title subject termination is
   // covered separately by current-export-review-fixes-http.
-  const reverse = f.candidate('本称号失败不借他称号恢复',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}])
-  f.addRecord(reverse.enterprise.id,reverse.enterprise.name,undefined,'innovative_sme')
+  const reverse = await f.candidate('本称号失败不借他称号恢复',[{eventType:'award',year:y-4,batchSeq:1},{eventType:'review',year:y-4,batchSeq:1,decidedYear:y-1,reviewOutcome:'failed'}])
+  await f.addRecord(reverse.enterprise.id,reverse.enterprise.name,undefined,'innovative_sme')
   const {wb,job} = await f.workbook('118-isolation')
-  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual([multi,peerA,peerB,onlyLittle,crossFailure].map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
-  expect(rows(wb,'已到期').map(row => businessIdentity(row))).toEqual([expectedBusinessIdentity(f.db,reverse.enterprise.id)])
+  expect(rows(wb,'有效企业').map(row => businessIdentity(row))).toEqual(await Promise.all([multi,peerA,peerB,onlyLittle,crossFailure].map(item => expectedBusinessIdentity(f.db,item.enterprise.id))))
+  expect(rows(wb,'已到期').map(row => businessIdentity(row))).toEqual([await expectedBusinessIdentity(f.db,reverse.enterprise.id)])
   expect(rows(wb,'有效企业').filter(row => row[2] === '同名企业').map(row => [row[2],row[3]])).toEqual([
     ['同名企业','SYNTHETIC-118-同名主体甲'],['同名企业','SYNTHETIC-118-同名主体乙'],
   ])
@@ -67,15 +65,15 @@ it('称号隔离同名不同主体及多称号独立重复纳入', async () => {
     expect(response.status).toBe(202)
     const other = await f.terminal((await f.json(response)).jobId); expect(other.state).toBe('done')
     const {wb:otherWb} = await f.download(other)
-    expect(rows(otherWb,'有效企业').map(row => businessIdentity(row))).toEqual(eligible.map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
-    expect(rows(otherWb,'已到期').map(row => businessIdentity(row))).toEqual(excluded.map(item => expectedBusinessIdentity(f.db,item.enterprise.id)))
+    expect(rows(otherWb,'有效企业').map(row => businessIdentity(row))).toEqual(await Promise.all(eligible.map(item => expectedBusinessIdentity(f.db,item.enterprise.id))))
+    expect(rows(otherWb,'已到期').map(row => businessIdentity(row))).toEqual(await Promise.all(excluded.map(item => expectedBusinessIdentity(f.db,item.enterprise.id))))
     expect(rows(otherWb,'有效企业').every(row => row[5] === label)).toBe(true)
     expect(other.kind).toBe(job.kind)
   }
 })
 
 it('专用入口鉴权去重重生成参数拒绝及OpenAPI共用kind', async () => {
-  f.candidate('任务契约企业')
+  await f.candidate('任务契约企业')
   const first = await f.workbook('118-dedup')
   const duplicate = await f.submit('118-dedup'); expect(duplicate.status).toBe(202)
   expect((await f.json(duplicate)).jobId).toBe(first.job.id)
@@ -127,9 +125,9 @@ it('空集六表计数及产物过期缺失与成功历史分别可查', async (
   const expired = await f.json(await fetch(f.url('/api/jobs/' + empty.job.id)))
   expect(expired.state).toBe('done'); expect(expired.result.artifact.availability).toBe('expired')
   expect((await fetch(f.url(empty.job.result.artifact.downloadUrl),{headers:f.headers})).status).toBe(410)
-  expect(existsSync(join(f.dbPath + '.exports',empty.job.id + '.xlsx'))).toBe(false)
+  expect(existsSync(join(f.exportsDir,empty.job.id + '.xlsx'))).toBe(false)
   const missing = await f.workbook('118-missing')
-  rmSync(join(f.dbPath + '.exports',missing.job.id + '.xlsx'))
+  rmSync(join(f.exportsDir,missing.job.id + '.xlsx'))
   const read = await f.json(await fetch(f.url('/api/jobs/' + missing.job.id)))
   expect(read.state).toBe('done'); expect(read.result.artifact.availability).toBe('missing')
   expect((await fetch(f.url(missing.job.result.artifact.downloadUrl),{headers:f.headers})).status).toBe(404)
@@ -140,7 +138,7 @@ it('空集六表计数及产物过期缺失与成功历史分别可查', async (
 })
 
 it('本称号生成失败无半成品且可显式重新生成', async () => {
-  const invalid=f.candidate('超'.repeat(33000))
+  const invalid=await f.candidate('超'.repeat(33000))
   const response = await f.submit('118-failed'); expect(response.status).toBe(202)
   const accepted = await f.json(response), failed = await f.terminal(accepted.jobId)
   expect(failed.state).toBe('failed'); expect(failed.error).toContain('Excel')
@@ -149,7 +147,7 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
   expect(failed.result.artifact).toBeUndefined()
   expect(JSON.stringify(failed)).not.toContain(f.dir)
   expect((await fetch(f.url('/api/job-artifacts/' + failed.id),{headers:f.headers})).status).toBe(404)
-  for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.dbPath + '.exports',failed.id + suffix))).toBe(false)
+  for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.exportsDir,failed.id + suffix))).toBe(false)
   expect((await f.json(await f.submit('118-failed'))).jobId).toBe(failed.id)
   const repairedName = '修正合成超限后重新导出'
   const repairedUscc = 'SYNTHETIC-118-' + repairedName
@@ -163,7 +161,7 @@ it('本称号生成失败无半成品且可显式重新生成', async () => {
 })
 
 it('阻塞真实执行进程仍先返回202并共用队列取消', async () => {
-  for (let index=0; index<210; index++) f.candidate('受控阻塞企业' + index)
+  for (let index=0; index<210; index++) await f.candidate('受控阻塞企业' + index)
   const response = await f.submit('118-blocked'); expect(response.status).toBe(202)
   const activeId = (await f.json(response)).jobId, ids = [activeId]
   let pid: number|undefined
@@ -201,7 +199,7 @@ it('阻塞真实执行进程仍先返回202并共用队列取消', async () => {
     for (const id of ids) {
       const job = await f.terminal(id); expect(job.state).toBe('cancelled')
       expect((await fetch(f.url('/api/job-artifacts/' + id),{headers:f.headers})).status).toBe(404)
-      for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.dbPath + '.exports',id + suffix))).toBe(false)
+      for (const suffix of ['.part','.xlsx']) expect(existsSync(join(f.exportsDir,id + suffix))).toBe(false)
     }
   }
 },60_000)

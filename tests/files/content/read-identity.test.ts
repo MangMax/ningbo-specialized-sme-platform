@@ -1,12 +1,7 @@
-import { createRuntimeSchema } from '../../../db/create-runtime'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest'
-import * as schema from '../../../db/schema'
-import { registerStoredFile, parseUploadDeclaration } from '../../../layers/sme-roster/server/modules/sme-roster/file-upload-sqlite'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { usePostgresDirectoryDb, closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { storedFile } from '../../../db/postgresql/file-tables'
@@ -108,22 +103,4 @@ it('range requests cannot return replaced registered bytes', async () => {
   vi.stubGlobal('sendStream', async (_: unknown, stream: import('node:fs').ReadStream) => { for await (const _chunk of stream) { /* Drain denied baseline reads before fixture teardown. */ } return 'unexpected range' })
   const route = (await import('../../../layers/core/server/api/files/[id].get')).default
   await expect(route({} as never)).rejects.toMatchObject({ statusCode: 409, data: { code: 'file_content_conflict' } })
-})
-
-
-it('official source reads expose registered identity while keeping historical binding unknown', async () => {
-  const sqlite = new Database(':memory:')
-  sqlite.pragma('foreign_keys=ON'); createRuntimeSchema(sqlite)
-  const db = drizzle(sqlite, { schema })
-  try {
-    writeFileSync(join(root, locator), 'abc')
-    const { row } = await registerStoredFile(db, root, parseUploadDeclaration({ relPath: locator }))
-    const doc = db.insert(schema.sourceDocument).values({ source: 'jxj', path: locator, title: 'official fixture' }).returning().get()
-    const { readOfficialSourceDocuments } = await import('../../../layers/sme-roster/server/utils/official-source-directory')
-    const before = db.select().from(schema.sourceDocument).all()
-    expect(readOfficialSourceDocuments(db, [doc.id])[0]).toMatchObject({ id: doc.id, path: locator, contentIdentity: { status: 'unknown', historical: 'unknown', registered: { fileId: row.id, sha256: ABC, bytes: 3 } } })
-    writeFileSync(join(root, locator), 'xyz')
-    expect(readOfficialSourceDocuments(db, [doc.id])[0]!.contentIdentity.historical).toBe('unknown')
-    expect(db.select().from(schema.sourceDocument).all()).toEqual(before)
-  } finally { sqlite.close() }
 })

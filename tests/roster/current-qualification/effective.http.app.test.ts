@@ -1,27 +1,28 @@
+import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { schema } from '../../../db/client'
+import * as schema from '../fixtures/postgres-tables'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 const f = qualificationExportFixture()
 beforeAll(async () => {
-  const { enterprise, record } = f.candidate('official478')
-  f.db.$client.prepare('update record set name_raw=? where id=?').run('未确认曾用名', record.id)
-  f.decision(enterprise.id, 'moved_out')
-  for (const kind of ['cancelled','moved_out']) for (const complete of [true,false]) {
-    const c=f.candidate(`boundary478-${kind}-${complete}`)
-    f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:{kind,source:{reference:complete ? 'official' : '',statement:'statement'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null},action:'assert',actor:{type:'agent',id:'478'},basis:'verified',createdAt:'2025-01-01T00:00:00Z'}).run()
+  const { enterprise, record } = await f.candidate('official478')
+  await f.db.update(schema.record).set({ nameRaw: '未确认曾用名' }).where(eq(schema.record.id, record.id))
+  await f.decision(enterprise.id, 'moved_out')
+  for (const kind of ['cancelled','moved_out'] as const) for (const complete of [true,false]) {
+    const c=await f.candidate(`boundary478-${kind}-${complete}`)
+    await f.db.insert(schema.enterpriseFactRevision).values({enterpriseId:c.enterprise.id,factId:1,revision:1,status:'confirmed',fact:JSON.stringify({kind,source:{reference:complete ? 'official' : '',statement:'statement'},effective:{precision:'day',value:'2025-01-01'},observed:{precision:'day',value:'2025-01-01'},city:null}),action:'assert',actor:JSON.stringify({type:'agent',id:'478'}),basis:'verified',createdAt:'2025-01-01T00:00:00Z'})
   }
   for (const [name, year, end] of [['short478',2025,'2025-12-31'],['long478',2021,'2027-12-31'],['null-year478',null,'2028-12-31'],['short-drift478',2025,'2025-12-31'],['long-drift478',2021,'2027-12-31'],['short-link478',2025,'2025-12-31'],['long-link478',2021,'2027-12-31']] as const) {
-    const c=f.candidate(name,[{eventType:'award',year,batchSeq:1}])
-    const event=f.db.$client.prepare('select id from record_event where record_id=?').get(c.record.id) as {id:number}
-    const evidence=f.db.$client.prepare('select id from record_evidence where record_event_id=?').get(event.id) as {id:number}
+    const c=await f.candidate(name,[{eventType:'award',year,batchSeq:1}])
+    const event=(await f.db.select({ id: schema.recordEvent.id }).from(schema.recordEvent).where(eq(schema.recordEvent.recordId, c.record.id)))[0]!
+    const evidence=(await f.db.select({ id: schema.recordEvidence.id }).from(schema.recordEvidence).where(eq(schema.recordEvidence.recordEventId, event.id)))[0]!
     if(name.includes('drift')) {
-      f.db.$client.prepare('update record_evidence set source_file=? where id=?').run(name+'.xlsx',evidence.id)
-      f.db.insert(schema.storedFile).values({relPath:name+'.xlsx',filename:name+'.xlsx',ext:'xlsx',bytes:1,sha256:'b'.repeat(64)}).run()
+      await f.db.update(schema.recordEvidence).set({ sourceFile: name + '.xlsx' }).where(eq(schema.recordEvidence.id, evidence.id))
+      await f.db.insert(schema.storedFile).values({createdAt:'2026-01-01T00:00:00Z',relPath:name+'.xlsx',filename:name+'.xlsx',ext:'xlsx',bytes: 1n,sha256:'b'.repeat(64)})
     }
-    f.db.$client.prepare('update record_event set formal_validity=? where id=?').run(JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],...(name.includes('link') ? {originAwardEventId:999999} : {}),interval:{validFrom:`${year ?? 2025}-01-01`,validThrough:end}}),event.id)
+    await f.db.update(schema.recordEvent).set({ formalValidity: JSON.stringify({evidenceId:evidence.id,sourceSha256:'a'.repeat(64),statementPages:[1],...(name.includes('link') ? {originAwardEventId:999999} : {}),interval:{validFrom:`${year ?? 2025}-01-01`,validThrough:end}}) }).where(eq(schema.recordEvent.id, event.id))
   }
-  f.candidate('ambiguous478',[{eventType:'award',year:2025,batchSeq:1},{eventType:'review',year:2025,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
-  f.candidate('review-only478',[{eventType:'review',year:null,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
+  await f.candidate('ambiguous478',[{eventType:'award',year:2025,batchSeq:1},{eventType:'review',year:2025,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
+  await f.candidate('review-only478',[{eventType:'review',year:null,decidedYear:2026,batchSeq:null,reviewOutcome:'passed'}])
   await f.start()
 }, 60000)
 afterAll(() => f.close())

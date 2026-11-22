@@ -1,6 +1,6 @@
 import { normalizeUscc } from '../domain'
 import type { RecognizedWitnessReader, RecognizedWitnessResult } from './recognized-witness-reader'
-import type { RecognizedWitnessRow } from './recognized-witness-target'
+import type { RecognizedWitnessRow } from './recognized-witness-postgres'
 
 const SUPPORTED_RULE='recognized-witness-input-v1'
 

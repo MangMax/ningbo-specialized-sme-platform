@@ -249,13 +249,13 @@ it('records a real tus create and final PATCH with the server upload id and per-
   expect(JSON.stringify({ createdRows, finishedRows })).not.toContain('tus-log-180.txt')
 })
 
-it('keeps method but reports no template for an unmatched route', async () => {
-  // Unknown /api paths fall through to the SPA renderer (200), but no /api route template exists.
+it('logs the registered catch-all without exposing the unmatched request path', async () => {
   const response = await call(`/api/does-not-exist/${PRIVATE}`)
-  expect([200, 404]).toContain(response.status)
+  expect(response.status).toBe(404)
   const rows = await waitLog(response.requestId)
-  expect(rows[0]).toMatchObject({ source: 'http', module: null, httpMethod: 'GET', statusCode: response.status })
-  expect(rows[0]).not.toHaveProperty('httpRoute')
+  expect(rows[0]).toMatchObject({
+    source: 'http', module: null, httpMethod: 'GET', statusCode: 404, httpRoute: '/api/**:unmatched',
+  })
   expect(JSON.stringify(rows[0])).not.toContain(PRIVATE)
 })
 

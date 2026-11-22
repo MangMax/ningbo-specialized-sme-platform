@@ -7,7 +7,7 @@ import { Label } from '#core/app/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
 import { KIND_ORDER, KINDS, SOURCES, SOURCE_ORDER, TITLE_ORDER, TITLES } from '#sme-roster/lib/labels'
 import type { RosterFileFields } from '#sme-roster/server/modules/sme-roster/files'
-import type { FileRow } from '#core/server/utils/file-store'
+import type { FileRow } from '#core/server/utils/file-store-contract'
 import type { FileDetailDraft } from '#core/lib/core/file-categories'
 
 const props = defineProps<{ open: boolean; file: (FileRow & RosterFileFields) | null; pending: boolean }>()

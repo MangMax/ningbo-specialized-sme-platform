@@ -5,11 +5,9 @@ import { alias, QueryBuilder } from 'drizzle-orm/pg-core'
 import { enterprise } from '../../../../../db/postgresql/enterprise-tables'
 import { platformCollection, platformBusinessObservation } from '../../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
-import { type currentDecision102 } from '../decision-lifecycle-102'
-import { DecisionError102, publicVersion102, type decisionHistory102 } from '../decision-lifecycle-102/contract'
+import { DecisionError102, publicVersion102, type decisionHistory102, type Scope } from '../decision-lifecycle-102/contract'
 
 type Reader = Pick<NodePgDatabase,'select'>
-type Scope = Parameters<typeof currentDecision102>[1]
 type PublicRow = Parameters<typeof publicVersion102>[0]
 const p = alias(differenceReason, 'p')
 const decisionColumns = getTableColumns(p)

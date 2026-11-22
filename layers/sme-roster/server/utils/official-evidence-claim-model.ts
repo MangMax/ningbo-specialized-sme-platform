@@ -1,11 +1,15 @@
+import type { OfficialEventRow } from './roster-event-version-model'
 import { createHash } from 'node:crypto'
 import { openSync, closeSync, readSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, relative, resolve } from 'node:path'
 import { z } from 'zod'
 import { isPageCapable } from '../../lib/roster/evidence-page'
-import type * as schema from '../../../../db/schema'
+import type { storedFile as StoredFileTable } from '../../../../db/postgresql/file-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { sourceDocument as SourceDocumentTable } from '../../../../db/postgresql/official-evidence-tables'
+import type { rosterFileClassification as RosterFileClassificationTable } from '../../../../db/postgresql/roster-file-tables'
 import type { OfficialDeclaration, OfficialPublishedRow } from '../../lib/roster-import-client'
-import type { readOfficialEvidenceCandidates, OfficialEvidenceRow, OfficialEvidenceSourceKey } from './official-evidence'
+import type { OfficialEvidenceCandidate, OfficialEvidenceRow, OfficialEvidenceSourceKey } from './official-evidence'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -93,7 +97,7 @@ export function readOfficialFile(filesDir: string | undefined, path: string) {
   }
 }
 
-export function projectOfficialDeclaration(declaration: OfficialDeclaration, document?: typeof schema.sourceDocument.$inferSelect) {
+export function projectOfficialDeclaration(declaration: OfficialDeclaration, document?: typeof SourceDocumentTable.$inferSelect) {
   if (declaration.kind === 'independent') return { id: `independent:${officialPlanJson(declaration)}`, document: declaration.sourceDocument }
   if (!document || document.source !== 'jxj') return officialFactFailure('source_binding_conflict', 'Explicit existing official declaration not found', 409)
   return { id: document.id, document }
@@ -117,11 +121,11 @@ export function sameOfficialRow(before: OfficialEvidenceRow | null, row: Officia
   return !!before && before.sourceDocumentId === sourceId && factFields.every(field => before[field] === row[field])
 }
 
-type SourceFile = Pick<typeof schema.storedFile.$inferSelect, 'id' | 'relPath' | 'bytes' | 'sha256' | 'removedAt'>
-  & Pick<typeof schema.rosterFileClassification.$inferSelect, 'source' | 'kind' | 'titleCode'>
+type SourceFile = Pick<typeof StoredFileTable.$inferSelect, 'id' | 'relPath' | 'sha256' | 'removedAt'>
+  & { bytes: number } & Pick<typeof RosterFileClassificationTable.$inferSelect, 'source' | 'kind' | 'titleCode'>
 
 type RepointReference = {
-  evidence: typeof schema.recordEvidence.$inferSelect; event: typeof schema.recordEvent.$inferSelect
+  evidence: typeof RecordEvidenceTable.$inferSelect; event: OfficialEventRow
   recordId: number; enterpriseId: number | null
 }
 
@@ -136,8 +140,8 @@ type PlanResponses = {
   file: SourceFile | undefined
   latest: OfficialEvidenceRow | null
   repoint: RepointReference | undefined
-  candidates: ReturnType<typeof readOfficialEvidenceCandidates>['candidates']
-  overlaps: (typeof schema.recordEvidence.$inferSelect)[]
+  candidates: OfficialEvidenceCandidate[]
+  overlaps: (typeof RecordEvidenceTable.$inferSelect)[]
 }
 
 function* planInput<T extends PlanInput['type']>(input: Extract<PlanInput, { type: T }>): Generator<PlanInput, PlanResponses[T], unknown> {

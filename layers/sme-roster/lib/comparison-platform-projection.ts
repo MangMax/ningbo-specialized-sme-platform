@@ -2,7 +2,7 @@ import type { PlatformCollectionCoverage, PlatformStoredQuery, PlatformStoredRel
 import type { PlatformObservationFact } from './platform/observation-facts'
 import { sourcePositionForSequence } from './platform/recognized-evidence'
 import type { PlatformNormalizationConflict } from './platform/normalization'
-import type * as schema from '../../../db/schema'
+import type { publicVersion102 } from '../server/utils/decision-lifecycle-102/contract'
 import type { ComparisonDirection } from './comparison-model'
 import { normalizeUscc } from './domain'
 
@@ -102,8 +102,7 @@ export interface RowKey {
  * 默认态 `not_queried` + `explanationId: null`。页面因此不会再有「整列 —」的观感。
  */
 export type ComparisonObservation = Pick<PlatformObservationFact, 'archiveProcessFacts' | 'normalizationConflicts'>
-type StoredDisposition = Omit<typeof schema.differenceReason.$inferSelect, 'evidenceCollectionId' | 'evidenceObservationId'> &
-    { evidenceQueryId: number | null; evidenceRelationId: number | null }
+type StoredDisposition = Parameters<typeof publicVersion102>[0]
 
 export function projectPlatformComparisonEvidence<T extends RowKey>(rows: T[],
   aliases: readonly (ComparisonAlias & { enterpriseId: number })[],

@@ -1,10 +1,8 @@
 /** Collection/observation evidence read model; public IDs use retained aliases. */
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
-import type * as schema from '../../../../db/schema'
+import type * as schema from '../../../../db/postgresql/platform-tables'
 import type { PlatformInterface } from '../labels'
 import type { PlatformNormalizationConflict } from './normalization'
 import type { LegacyProvenanceDisplay } from './legacy-provenance'
-import { listTargetPlatformQueries } from './target-query-read'
 export { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
 
 export interface PlatformQueryFilter {
@@ -26,7 +24,8 @@ export interface PlatformQueryFilter {
 
 /** Stable public source snapshot. IDs are external aliases, never runtime table keys. */
 export type PlatformStoredQuery = Pick<typeof schema.platformCollection.$inferSelect,
-  'id'|'interface'|'queryKey'|'rdjb'|'titleCode'|'queriedAt'|'lastCollectedAt'|'status'|'failureReason'|'createdAt'> & {
+  'id'|'queryKey'|'rdjb'|'titleCode'|'queriedAt'|'lastCollectedAt'|'status'|'failureReason'|'createdAt'> & {
+  interface: PlatformInterface
   rawResponse: string | null
   collectionEvidence: PlatformCollectionCoverage | null
 }
@@ -36,8 +35,8 @@ export interface PlatformStoredRelation {
   usccRaw: string | null; nameRaw: string | null; aliasNameRaw: string | null; province: string | null
   status: string | Buffer | null; batch: string | null; declareKind: string | null; appliedAt: string | null
   awardBatchLabel: string | null; year: number | null
-  matchBasis: typeof schema.platformObservationAssignment.$inferSelect.matchBasis
-  verificationStatus: typeof schema.platformObservationAssignment.$inferSelect.verificationStatus
+  matchBasis: 'uscc' | 'alias' | 'manual' | 'none'
+  verificationStatus: 'confirmed' | 'pending'
   createdAt: string
 }
 
@@ -98,8 +97,4 @@ export interface PlatformQueriesResult {
   page: number
   pageSize: number
   counts: Record<string, number>
-}
-
-export function listPlatformQueries(db: BetterSQLite3Database<typeof schema>, filter: PlatformQueryFilter = {}): PlatformQueriesResult {
-  return listTargetPlatformQueries(db, filter)
 }

@@ -5,7 +5,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { qualificationExportFixture } from '../current-export/fixtures/qualification-export'
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
-import * as s from '../../../db/schema'
+import * as s from '../fixtures/postgres-tables'
+import { eq } from 'drizzle-orm'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 import pg from 'pg'
 
 // Exact candidate build and process execution are owned by the parent merger.
@@ -13,15 +15,15 @@ const f = qualificationExportFixture()
 const priorNodeOptions = process.env.NODE_OPTIONS
 const priorMcpToken = process.env.NUXT_MCP_TOKEN
 const client = new Client({name:'synthetic-disposition-consumers',version:'1'})
-function seed() {
- const c=f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
- const event=f.db.select().from(s.recordEvent).all().find(e=>e.recordId===c.record.id)!
- const file=f.db.insert(s.storedFile).values({relPath:'synthetic-cycle.pdf',filename:'synthetic-cycle.pdf',ext:'pdf',sha256:'a'.repeat(64),bytes:1,createdAt:'2026-01-01'}).returning().get()
+async function seed() {
+ const c=await f.candidate('合成周期处置',[{eventType:'award',year:2025,batchSeq:1}],'little_giant')
+ const event=singlePostgresFixtureRow(await f.db.select().from(s.recordEvent).where(eq(s.recordEvent.recordId, c.record.id)))
+ const file=singlePostgresFixtureRow(await f.db.insert(s.storedFile).values({relPath:'synthetic-cycle.pdf',filename:'synthetic-cycle.pdf',ext:'pdf',sha256:'a'.repeat(64),bytes: 1n,createdAt:'2026-01-01'}).returning())
  return { c, event, file }
 }
-let seeded: ReturnType<typeof seed>
+let seeded: Awaited<ReturnType<typeof seed>>
 beforeAll(async () => {
- seeded = seed()
+ seeded = await seed()
  const discovery = await readDevelopmentDiscovery()
  expect(JSON.stringify(discovery)).toContain('/api/roster/title-cycle-dispositions/preflight')
  const clock = join(f.dir,'clock.mjs')

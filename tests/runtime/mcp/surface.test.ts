@@ -1,31 +1,16 @@
-import { createClassifiedFile } from '../../../layers/sme-roster/server/utils/roster-file-classification'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { basename, join } from 'node:path'
+import { sql } from 'drizzle-orm'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { MCP_WRITE_TOOLS, writeToolCallIn } from '../../../server/mcp-access-policy'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { readMcpToken, resolveMcpAuth, tokenMatches, unauthorizedMessage } from '../../../layers/core/server/utils/mcp-auth'
-import { findFileIdByRelPath, pageImagesForAgent, resolveFileRef } from '../../../layers/core/server/utils/file-agent-reference-sqlite'
-import { __resetFileStoreReady, ensureFileStoreReady, setFileCategoryForAgent } from '../../../layers/sme-roster/server/utils/mcp-files'
-import { applyParseResult, normalizeParseParts } from '../../../layers/sme-roster/server/utils/parse-result'
-import type { RosterFileFields } from '../../../layers/sme-roster/server/modules/sme-roster/files'
-import { getStoredFile, listStoredFiles } from '../../../layers/core/server/utils/stored-files'
-
-/**
- * 票 18 —— 把 app 的能力暴露成 **MCP**。
- *
- * 这里测的是**能被测的那一层**:鉴权判据、文件引用解析、解析结果写回、懒回填。
- * tool 文件本身只是「声明 + 转发」(每个能力一个文件,模块的要求),一行业务判断都没有;
- * 它们的端到端验收(`tools/list` 的实际输出、401 的状态码、`/files` 页读回)走**真实服务**,
- * 证据写在票里。
- *
- * 真实形状的种子(192号 = 认定 2024/2 附件1 + 复核 2021/2 附件2,389/67 行)沿用
- * `tests/file-parts.test.ts` 的口径 —— 断言里的数字就是台账里的数字。
- */
-
-// ---------------------------------------------------------------------------
-// 1. 鉴权判据(纯函数)
-// ---------------------------------------------------------------------------
+import { fileLocator, postgresPageImagesForAgent, requirePostgresFileRef } from '../../../layers/core/server/utils/file-agent-reference'
+import { normalizeParseParts } from '../../../layers/sme-roster/server/utils/parse-result-model'
+import { minimalPdf } from '../../support/minimal-pdf'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 describe('mcp-auth 鉴权判据', () => {
   it('写入 tool 名单就是这几个 —— 新增写入口必须同时改这里', () => {
@@ -186,138 +171,7 @@ describe('mcp-auth 鉴权判据', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 2. 文件引用解析(纯函数 + Db)
-// ---------------------------------------------------------------------------
-
-const REL_PDF = 'jxj/announcement/2024/2/甬经信中小〔2024〕192号关于公布2024年第二批认定及2021年第二批到期复核通过宁波市“专精特新”中小企业名单的通知.pdf'
-const REL_XLSX = 'miit/export/创新型中小企业导出Excel.xlsx'
-const REL_REMOVED = 'jxj/announcement/2023/1/已移出的文件.pdf'
-
-let dir: string
-let db: ReturnType<(typeof import('../../../db'))['useDb']>
-let schema: typeof import('../../../db')['schema']
-
-function seedFile(
-  relPath: string,
-  over: Partial<{ year: number; batch: number; removedAt: string; categoryState: string }> = {},
-): number {
-  const segments = relPath.split('/')
-  const miit = relPath.startsWith('miit')
-  return createClassifiedFile(db, { relPath, filename: segments[segments.length - 1]!, ext: miit ? 'xlsx' : 'pdf', bytes: 1, sha256: 'b'.repeat(64), removedAt: over.removedAt ?? null }, { source: miit ? 'miit' : 'jxj', kind: miit ? 'export' : 'announcement', year: over.year ?? null, batch: over.batch ?? null, categoryState: (over.categoryState as 'set' | 'inferred' | 'unset') ?? 'set' }).id
-}
-
-let seq = 0
-function seedEvidence(o: {
-  relPath: string
-  titleCode: string
-  eventKind: 'award' | 'review' | 'maintain' | 'nurture'
-  year: number | null
-  batch: number | null
-  attachment: string | null
-  rows: number
-}) {
-  seq += 1
-  const enterpriseId = db
-    .insert(schema.enterprise)
-    .values({ name: `企业${seq}`, nameNorm: `企业${seq}` })
-    .returning({ id: schema.enterprise.id })
-    .get().id
-  const recordId = db
-    .insert(schema.record)
-    .values({ enterpriseId, titleCode: o.titleCode, source: 'jxj' })
-    .returning({ id: schema.record.id })
-    .get().id
-  const eventId = db
-    .insert(schema.recordEvent)
-    .values({ recordId, eventType: o.eventKind, year: o.year, batchSeq: o.batch })
-    .returning({ id: schema.recordEvent.id })
-    .get().id
-  db.insert(schema.recordEvidence)
-    .values(
-      Array.from({ length: o.rows }, () => ({
-        recordEventId: eventId,
-        sourceFile: o.relPath,
-        attachment: o.attachment,
-      })),
-    )
-    .run()
-}
-
-beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'spztx-mcp-'))
-  process.env.NUXT_DB_PATH = join(dir, 'test.db')
-  const mod = await import('../../../db')
-  schema = mod.schema
-  db = mod.initializeDb({ create: true })
-
-  // 三个基线文件:192号(PDF,公布 2024/2)、工信部导出(非 PDF)、一份已移出库的。
-  seedFile(REL_PDF, { year: 2024, batch: 2 })
-  seedFile(REL_XLSX)
-  seedFile(REL_REMOVED, { year: 2023, batch: 1, removedAt: '2026-10-14T00:00:00.000Z' })
-})
-
-afterAll(() => {
-  rmSync(dir, { recursive: true, force: true })
-})
-
-describe('resolveFileRef 指一个文件', () => {
-  it('id 与 relPath 恰给其一:混给或都不给都是错', () => {
-    const both = resolveFileRef(db, { fileId: 1, relPath: REL_PDF })
-    expect(both.ok).toBe(false)
-    expect(both.ok === false && both.message).toContain('只能给一个')
-
-    const neither = resolveFileRef(db, {})
-    expect(neither.ok).toBe(false)
-    expect(neither.ok === false && neither.message).toContain('必须给')
-  })
-
-  it('按 id / 按 relPath 都能取到同一个文件', () => {
-    const byPath = resolveFileRef(db, { relPath: REL_PDF })
-    expect(byPath.ok).toBe(true)
-    if (!byPath.ok) return
-    const byId = resolveFileRef(db, { fileId: byPath.row.id })
-    expect(byId.ok).toBe(true)
-    if (!byId.ok) return
-    expect(byId.row.relPath).toBe(REL_PDF)
-    expect(byId.row.id).toBe(byPath.row.id)
-  })
-
-  it('不存在的文件给中文原因,不是抛异常', () => {
-    const byId = resolveFileRef(db, { fileId: 999999 })
-    expect(byId.ok).toBe(false)
-    expect(byId.ok === false && byId.message).toContain('文件不存在')
-    const byPath = resolveFileRef(db, { relPath: 'jxj/announcement/2024/1/没有这个.pdf' })
-    expect(byPath.ok).toBe(false)
-    expect(byPath.ok === false && byPath.message).toContain('文件不存在')
-  })
-
-  it('非法 id 被挡在查库之前', () => {
-    for (const bad of [0, -1, 1.5]) {
-      const r = resolveFileRef(db, { fileId: bad })
-      expect(r.ok).toBe(false)
-      expect(r.ok === false && r.message).toContain('正整数')
-    }
-  })
-
-  it('已移出库的文件:读认(allowRemoved),写不认(默认)', () => {
-    expect(resolveFileRef(db, { relPath: REL_REMOVED }).ok).toBe(false)
-    const read = resolveFileRef(db, { relPath: REL_REMOVED }, { allowRemoved: true })
-    expect(read.ok).toBe(true)
-    expect(read.ok === true && read.row.removedAt).not.toBeNull()
-  })
-
-  it('findFileIdByRelPath 取不到给 null(不猜)', () => {
-    expect(findFileIdByRelPath(db, REL_PDF)).toBeTypeOf('number')
-    expect(findFileIdByRelPath(db, 'nope/nope.txt')).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 3. 解析结果写回(save_parse_result 的落点)
-// ---------------------------------------------------------------------------
-
-describe('save_parse_result 的写入逻辑', () => {
+describe('解析段输入', () => {
   it('normalizeParseParts:附件名归一 + 排序', () => {
     const r = normalizeParseParts([
       {
@@ -378,281 +232,84 @@ describe('save_parse_result 的写入逻辑', () => {
     expect(ok.ok).toBe(true)
   })
 
-  it('applyParseResult 全量替换段,并置 parse_state=parsed', () => {
-    const fileId = seedFile('jxj/announcement/2026/1/写解析结果.pdf', { year: 2026, batch: 1 })
-    const r = applyParseResult(db, fileId, {
-      parts: [
-        { titleCode: 'specialized_sme', eventKind: 'award', year: 2026, batch: 1, attachment: '附件1', rowCount: 10 },
-        { titleCode: 'specialized_sme', eventKind: 'review', year: 2023, batch: 1, attachment: '附件2', rowCount: 3 },
-      ],
-    })
-    expect(r.ok).toBe(true)
-    expect(getStoredFile(db, fileId)?.parseState).toBe('parsed')
-    expect(getStoredFile(db, fileId)?.parts).toHaveLength(2)
+})
 
-    // 再写一次(只留一段):**全量替换**,旧的两段都不该剩。
-    const again = applyParseResult(db, fileId, {
-      parts: [
-        { titleCode: 'specialized_sme', eventKind: 'award', year: 2026, batch: 1, attachment: '附件1', rowCount: 10 },
-      ],
-    })
-    expect(again.ok).toBe(true)
-    expect(getStoredFile(db, fileId)?.parts).toHaveLength(1)
+describe('MCP 文件引用与页图', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-file-surface-'))
+  const pdfPath = 'jxj/announcement/2024/2/unrendered.pdf'
+  const spreadsheetPath = 'miit/export/名单.xlsx'
+  const removedPath = 'jxj/announcement/2023/1/已移出的文件.pdf'
+  const removedAt = '2026-10-14T00:00:00.000Z'
+  let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
+  const db = () => usePostgresDirectoryDb()
 
-    // 空数组 = 这份文件没有段(不是「不改」)。
-    const cleared = applyParseResult(db, fileId, { parts: [] })
-    expect(cleared.ok).toBe(true)
-    expect(getStoredFile(db, fileId)?.parts).toHaveLength(0)
-  })
+  beforeAll(async () => {
+    runtime = await postgresRuntimeFixture({ dir })
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', runtime.url)
+    vi.stubEnv('NUXT_DB_READONLY', '0')
+    const pdf = minimalPdf({ pages: 3 })
+    mkdirSync(join(dir, 'jxj/announcement/2024/2'), { recursive: true })
+    writeFileSync(join(dir, pdfPath), pdf)
+    const sha256 = createHash('sha256').update(pdf).digest('hex')
+    await db().execute(sql`
+      INSERT INTO business.stored_file (rel_path, filename, ext, bytes, sha256, removed_at, created_at)
+      VALUES (${pdfPath}, ${basename(pdfPath)}, 'pdf', ${pdf.length}, ${sha256}, NULL, '2026-11-22'),
+        (${spreadsheetPath}, ${basename(spreadsheetPath)}, 'xlsx', 1, ${'b'.repeat(64)}, NULL, '2026-11-22'),
+        (${removedPath}, ${basename(removedPath)}, 'pdf', 1, ${'b'.repeat(64)}, ${removedAt}, '2026-11-22')
+    `)
+  }, 20_000)
 
-  it('applyParseResult 可以只改 parse_state', () => {
-    const fileId = seedFile('jxj/announcement/2026/1/只改状态.pdf', { year: 2026, batch: 1 })
-    const r = applyParseResult(db, fileId, { parseState: 'failed' })
-    expect(r.ok).toBe(true)
-    expect(getStoredFile(db, fileId)?.parseState).toBe('failed')
-  })
-
-  it('既没给 parts 也没给 parseState、或状态不在白名单 → 报错', () => {
-    const fileId = seedFile('jxj/announcement/2026/1/坏参数.pdf', { year: 2026, batch: 1 })
-    const empty = applyParseResult(db, fileId, {})
-    expect(empty.ok).toBe(false)
-    expect(empty.ok === false && empty.message).toContain('至少给')
-    const bad = applyParseResult(db, fileId, { parseState: 'whatever' })
-    expect(bad.ok).toBe(false)
-    expect(bad.ok === false && bad.message).toContain('白名单')
-  })
-
-  it('★ 边界:写解析结果**不碰** record / enterprise / record_evidence', () => {
-    // 票 18 的硬约束:MCP 只碰文件元数据 / 解析结果 / OCR 结果;
-    // 身份归并与回填只能走 pipeline(见 data-integrity 的安全阀)。
-    const fileId = seedFile('jxj/announcement/2026/1/边界.pdf', { year: 2026, batch: 1 })
-    const before = {
-      record: db.select().from(schema.record).all().length,
-      enterprise: db.select().from(schema.enterprise).all().length,
-      evidence: db.select().from(schema.recordEvidence).all().length,
-      event: db.select().from(schema.recordEvent).all().length,
+  afterAll(async () => {
+    try {
+      await closePostgresDirectoryDb()
+      runtime?.close()
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(dir, { recursive: true, force: true })
     }
-    const r = applyParseResult(db, fileId, {
-      parts: [
-        { titleCode: 'little_giant', eventKind: 'award', year: 2026, batch: 1, attachment: '附件1', rowCount: 7 },
-      ],
-    })
-    expect(r.ok).toBe(true)
-    expect({
-      record: db.select().from(schema.record).all().length,
-      enterprise: db.select().from(schema.enterprise).all().length,
-      evidence: db.select().from(schema.recordEvidence).all().length,
-      event: db.select().from(schema.recordEvent).all().length,
-    }).toEqual(before)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4. set_file_category 的写入逻辑(票 12 的代理通路)
-// ---------------------------------------------------------------------------
-
-describe('set_file_category 的写入逻辑', () => {
-  it('写回分类,并把 categoryState 从 unset 升为 set', () => {
-    const relPath = 'jxj/announcement/2026/2/待分类.pdf'
-    const id = seedFile(relPath, { categoryState: 'unset' })
-    const r = setFileCategoryForAgent(db, { fileId: id }, { source: 'jxj', kind: 'announcement', year: 2026, batch: 2 })
-    expect(r.ok).toBe(true)
-    expect(r.ok === true && r.row.year).toBe(2026)
-    expect(r.ok === true && r.row.batch).toBe(2)
-    expect(r.ok === true && r.row.categoryState).toBe('set')
   })
 
-  it('null 是「清空」,不是「不改」', () => {
-    const id = seedFile('jxj/announcement/2026/2/清空.pdf', { year: 2026, batch: 2 })
-    const r = setFileCategoryForAgent(db, { fileId: id }, { year: null })
-    expect(r.ok).toBe(true)
-    expect(r.ok === true && r.row.year).toBeNull()
-    // 分类由全到缺 → 退回 unset。
-    expect(r.ok === true && r.row.categoryState).toBe('unset')
-  })
-
-  it('磁盘事实字段被拒(不能借「改元数据」改路径)', () => {
-    const id = seedFile('jxj/announcement/2026/2/磁盘事实.pdf', { year: 2026, batch: 2 })
-    for (const key of ['relPath', 'bytes', 'sha256', 'filename']) {
-      const r = setFileCategoryForAgent(db, { fileId: id }, { [key]: 'x' })
-      expect(r.ok).toBe(false)
-      expect(r.ok === false && r.message).toContain('不可修改的字段')
+  it('id 与 relPath 恰给其一且 id 必须是正整数', () => {
+    expect(fileLocator({ fileId: 1, relPath: pdfPath })).toMatchObject({ ok: false, message: expect.stringContaining('只能给一个') })
+    expect(fileLocator({})).toMatchObject({ ok: false, message: expect.stringContaining('必须给') })
+    for (const fileId of [0, -1, 1.5]) {
+      expect(fileLocator({ fileId })).toMatchObject({ ok: false, message: expect.stringContaining('正整数') })
     }
-    // 一个字段都不给也是错。
-    const none = setFileCategoryForAgent(db, { fileId: id }, {})
-    expect(none.ok).toBe(false)
-    expect(none.ok === false && none.message).toContain('至少给一个')
   })
 
-  it('已移出库的文件不接受写入', () => {
-    const r = setFileCategoryForAgent(db, { relPath: REL_REMOVED }, { year: 2020 })
-    expect(r.ok).toBe(false)
-    expect(r.ok === false && r.message).toContain('已移出库')
+  it('按 id 与相对路径解析到同一个文件', async () => {
+    const byPath = await requirePostgresFileRef(db(), { relPath: pdfPath })
+    expect(byPath.relPath).toBe(pdfPath)
+    expect(await requirePostgresFileRef(db(), { fileId: byPath.id })).toEqual(byPath)
   })
 
-  it('改完之后 list_files 的查询层立刻能看到(端到端的库内半边)', () => {
-    const id = seedFile('jxj/announcement/2026/2/查得到.pdf', { categoryState: 'unset' })
-    setFileCategoryForAgent(db, { fileId: id }, { source: 'jxj', kind: 'announcement', year: 2026, batch: 2 })
-    const { rows } = listStoredFiles(db, { q: '查得到' })
-    expect(rows).toHaveLength(1)
-    expect(rows[0]!.year).toBe(2026)
-    expect(rows[0]!.categoryState).toBe('set')
+  it('不存在的 id 与相对路径返回 404 及中文原因', async () => {
+    for (const ref of [{ fileId: 999999 }, { relPath: 'jxj/announcement/2024/1/没有这个.pdf' }]) {
+      await expect(requirePostgresFileRef(db(), ref)).rejects.toMatchObject({
+        statusCode: 404, message: expect.stringContaining('文件不存在'),
+      })
+    }
   })
-})
 
-// ---------------------------------------------------------------------------
-// 5. 懒回填与页图(list_files / list_page_images 的落点)
-// ---------------------------------------------------------------------------
+  it('已移出文件可以读取且拒绝普通写入引用', async () => {
+    const ref = { relPath: removedPath }
+    await expect(requirePostgresFileRef(db(), ref)).rejects.toMatchObject({ statusCode: 404, message: expect.stringContaining('已移出库') })
+    expect(await requirePostgresFileRef(db(), ref, { allowRemoved: true })).toMatchObject({ relPath: removedPath, removedAt })
+  })
 
-describe('ensureFileStoreReady 懒回填', () => {
-  it('扫文件库补文件行,并按 evidence 补段;重跑不再回填(幂等)', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'spztx-mcp-files-'))
-    // 造一份**真实形状**的文件库:192号(两段)。
-    mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
-    writeFileSync(join(root, REL_PDF), 'not really a pdf, 只需要它在盘上')
-    mkdirSync(join(root, 'miit/export'), { recursive: true })
-    writeFileSync(join(root, REL_XLSX), 'xlsx placeholder')
+  it('非 PDF 返回 415，文件不存在返回 404，分辨率非法返回 400', async () => {
+    await expect(postgresPageImagesForAgent(db(), dir, { relPath: spreadsheetPath }))
+      .resolves.toMatchObject({ ok: false, statusCode: 415 })
+    await expect(postgresPageImagesForAgent(db(), dir, { relPath: 'missing.pdf' }))
+      .rejects.toMatchObject({ statusCode: 404 })
+    await expect(postgresPageImagesForAgent(db(), dir, { relPath: pdfPath, dpi: 9999 }))
+      .resolves.toMatchObject({ ok: false, statusCode: 400 })
+  })
 
-    const other = mkdtempSync(join(tmpdir(), 'spztx-mcp-db-'))
-    process.env.NUXT_DB_PATH = join(other, 'mcp.db')
-    const mod = await import('../../../db')
-    const fresh = mod.initializeDb({ create: true })
-    const f = mod.schema
-
-    // 192号:认定 2024/2(附件1,389 行)+ 复核 2021/2(附件2,67 行)。
-    const e1 = fresh
-      .insert(f.enterprise)
-      .values({ name: '宁波某企业', nameNorm: '宁波某企业' })
-      .returning({ id: f.enterprise.id })
-      .get().id
-    const rec = fresh
-      .insert(f.record)
-      .values({ enterpriseId: e1, titleCode: 'specialized_sme', source: 'jxj' })
-      .returning({ id: f.record.id })
-      .get().id
-    const ev1 = fresh
-      .insert(f.recordEvent)
-      .values({ recordId: rec, eventType: 'award', year: 2024, batchSeq: 2 })
-      .returning({ id: f.recordEvent.id })
-      .get().id
-    const ev2 = fresh
-      .insert(f.recordEvent)
-      .values({ recordId: rec, eventType: 'review', year: 2021, batchSeq: 2 })
-      .returning({ id: f.recordEvent.id })
-      .get().id
-    fresh
-      .insert(f.recordEvidence)
-      .values([
-        ...Array.from({ length: 389 }, () => ({
-          recordEventId: ev1,
-          sourceFile: REL_PDF,
-          attachment: '附 件 1',
-        })),
-        ...Array.from({ length: 67 }, () => ({
-          recordEventId: ev2,
-          sourceFile: REL_PDF,
-          attachment: '附件2',
-        })),
-      ])
-      .run()
-
-    __resetFileStoreReady()
-    const first = await ensureFileStoreReady(fresh, root)
-    expect(first).not.toBeNull()
-    // 盘上两个文件 → 两行(README.md 不在这个临时库里)。
-    expect(first!.inserted).toBe(2)
-    expect(first!.parts.parts).toBe(2)
-
-    // 重跑:不再回填。
-    expect(await ensureFileStoreReady(fresh, root)).toBeNull()
-
-    // ★ 验收口径:192号 的段 = 2 段,行数 389 / 67,附件名已归一。
-    const id = findFileIdByRelPath(fresh, REL_PDF)!
-    const row = getStoredFile(fresh, id)!
-    expect(row.parts).toHaveLength(2)
-    expect((row.parts as RosterFileFields['parts']).map((p) => [p.eventKind, p.year, p.batch, p.attachment, p.rowCount])).toEqual([
-      ['award', 2024, 2, '附件1', 389],
-      ['review', 2021, 2, '附件2', 67],
-    ])
-
-    // 冷启动回填只重建 derived 段;agent 覆盖同坐标并标冲突,未覆盖的 derived 段仍回来。
-    const overwritten = applyParseResult(fresh, id, {
-      parts: [
-        { titleCode: 'specialized_sme', eventKind: 'award', year: 2024, batch: 2, attachment: '附件1', rowCount: 1 },
-      ],
+  it('读取未渲染 PDF 的页数并保留空页图目录', async () => {
+    expect(await postgresPageImagesForAgent(db(), dir, { relPath: pdfPath })).toMatchObject({
+      ok: true, value: { pageCount: 3, rendered: 0, pages: [] },
     })
-    expect(overwritten.ok).toBe(true)
-    __resetFileStoreReady()
-    await ensureFileStoreReady(fresh, root)
-    expect(getStoredFile(fresh, id)!.parts).toEqual([
-      {
-        titleCode: 'specialized_sme',
-        eventKind: 'award',
-        year: 2024,
-        batch: 2,
-        attachment: '附件1',
-        rowCount: 1,
-        origin: 'agent',
-        hasConflict: true,
-      },
-      {
-        titleCode: 'specialized_sme',
-        eventKind: 'review',
-        year: 2021,
-        batch: 2,
-        attachment: '附件2',
-        rowCount: 67,
-        origin: 'derived',
-        hasConflict: false,
-      },
-    ])
-
-    rmSync(root, { recursive: true, force: true })
-    rmSync(other, { recursive: true, force: true })
-  })
-})
-
-describe('pageImagesForAgent 页图取值', () => {
-  it('非 PDF → 415;文件不存在 → 404;分辨率非法 → 400', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'spztx-mcp-pdf-'))
-    // 文件行在基线库里已有(REL_XLSX / REL_PDF),这里只需 root 供路径解析用。
-    const notPdf = await pageImagesForAgent(db, root, { relPath: REL_XLSX })
-    expect(notPdf.ok).toBe(false)
-    expect(notPdf.ok === false && notPdf.statusCode).toBe(415)
-
-    const missing = await pageImagesForAgent(db, root, { relPath: 'jxj/announcement/2024/1/没有.pdf' })
-    expect(missing.ok).toBe(false)
-    expect(missing.ok === false && missing.statusCode).toBe(404)
-
-    const badDpi = await pageImagesForAgent(db, root, { relPath: REL_PDF, dpi: 9999 })
-    expect(badDpi.ok).toBe(false)
-    expect(badDpi.ok === false && badDpi.statusCode).toBe(400)
-
-    rmSync(root, { recursive: true, force: true })
-  })
-
-  it('未渲染过的 PDF:如实报 rendered=0,不触发渲染', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'spztx-mcp-pdf2-'))
-    // 造一份最小可打开的 PDF(与 pdf-pages 的夹具同一手法)。
-    const { minimalPdf } = await import('../../support/minimal-pdf')
-    mkdirSync(join(root, 'jxj/announcement/2024/2'), { recursive: true })
-    // Use a separately registered real PDF; the shared metadata-only fixture has a synthetic digest.
-    const { registerStoredFile, parseUploadDeclaration } = await import('../../../layers/sme-roster/server/modules/sme-roster/file-upload-sqlite')
-    const realPath = 'jxj/announcement/2024/2/unrendered-identity.pdf'
-    writeFileSync(join(root, realPath), minimalPdf({ pages: 3 }))
-    await registerStoredFile(db, root, parseUploadDeclaration({ relPath: realPath }))
-
-    const r = await pageImagesForAgent(db, root, { relPath: realPath })
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.value.pageCount).toBe(3)
-    expect(r.value.rendered).toBe(0)
-    expect(r.value.pages).toEqual([])
-    // 目录里不该多出任何页图(本 tool 不渲染)。
-    const { readdirSync } = await import('node:fs')
-    const entries = readdirSync(join(root, 'jxj/announcement/2024/2'))
-    expect(entries).toEqual([realPath.split('/').pop()])
-
-    rmSync(root, { recursive: true, force: true })
+    expect(readdirSync(join(dir, 'jxj/announcement/2024/2'))).toEqual([basename(pdfPath)])
   })
 })

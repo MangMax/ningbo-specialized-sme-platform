@@ -7,7 +7,6 @@ import { platformBusinessObservation as observation, platformCollection as colle
   platformExportBatch as exportBatch, platformExportRow as exportRow,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import type * as schema from '../../../../db/schema'
 import { normalizeName, normalizeUscc } from '../domain'
 import type { PlatformStoredQuery, PlatformStoredRelation } from '../platform/read'
 import { readPostgresDisplayRows, type PostgresDisplayOwner } from '../platform/postgres-query-display'
@@ -23,7 +22,7 @@ import { projectEnterpriseDifferenceUniverse, projectRosterDetailHistory, projec
   projectRosterDetailTimeline, selectRosterDetailArchive, type RosterDetailArchive, type RosterEnterpriseDetail } from './enterprise-roster-projection'
 
 type Reader = Pick<NodePgDatabase, 'execute' | 'select' | 'selectDistinct'>
-type Enterprise = typeof schema.enterprise.$inferSelect
+type Enterprise = typeof enterpriseTable.$inferSelect
 type Difference = Parameters<typeof projectEnterpriseDifferenceUniverse>[0]['differences'][number]
 type Coordinate = Parameters<typeof projectEnterpriseDifferenceUniverse>[1][number]
 // Preserve one bound parameter per large archive selection; inArray uses one per ID.
@@ -83,7 +82,7 @@ async function readSources(db: Reader, enterprise: Enterprise, evidenceIds: numb
   for (const display of displays) {
     for (const item of display.relations) {
       const { sourceRdjb,sourcePage,...relation } = item.relation as unknown as PlatformStoredRelation & {
-        sourceRdjb?:string | null; sourcePage?:number | null
+        sourceRdjb?: string | null; sourcePage?: number | null
       }
       platformPositionsById.set(relation.id,{ sourceRdjb,sourcePage })
       relations.push(relation)
@@ -105,19 +104,19 @@ async function readExportMembership(db: Reader, enterprise: Enterprise) {
     const code = normalizeUscc(row.usccRaw)
     return (codes.get(code) ?? (row.nameRaw ? names.get(normalizeName(row.nameRaw)) : undefined)) === enterprise.id
       && (code === uscc || normalizeName(row.nameRaw) === enterprise.nameNorm)
-  }) as typeof schema.platformExportRow.$inferSelect[]
+  }) as typeof exportRow.$inferSelect[]
   const newer = alias(exportBatch, 'newer')
   const exportBatches = await db.select().from(exportBatch).where(or(inIds(exportBatch.id, exportRows.map(row => row.batchId)),
     notExists(db.select({ id: newer.id }).from(newer).where(and(eq(newer.titleCode, exportBatch.titleCode),
       or(gt(newer.year, exportBatch.year), and(eq(newer.year, exportBatch.year), gt(newer.id, exportBatch.id))))))))
-    .orderBy(exportBatch.id) as typeof schema.platformExportBatch.$inferSelect[]
+    .orderBy(exportBatch.id) as typeof exportBatch.$inferSelect[]
   return { exportRows,exportBatches }
 }
 
 export function readPostgresRosterEnterpriseDetail(db: NodePgDatabase, requestedId: number, asOf = Date.now()): Promise<RosterEnterpriseDetail | null> {
   if (!Number.isSafeInteger(requestedId)) return Promise.resolve(null)
   return db.transaction(async tx => {
-    let evidence: (typeof schema.recordEvidence.$inferSelect)[] = []
+    let evidence: (typeof recordEvidence.$inferSelect)[] = []
     const qualification = await readPostgresRosterDetailQualification(tx,requestedId,asOf,async owner=>{
       const rows = await tx.select({ evidence: recordEvidence }).from(recordEvidence)
         .innerJoin(recordEvent, eq(recordEvent.id, recordEvidence.recordEventId))

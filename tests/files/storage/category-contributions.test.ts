@@ -3,12 +3,8 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as h3 from 'h3'
-import { inArray, sql } from 'drizzle-orm'
-import { initializeDb } from '../../../db/client'
-import { storedFile } from '../../../db/schema'
-import { createFileStore, sha256Of, type FileCategoryServer, type FileStoreDb, type FileQueryFilters, type RegistrationWriter } from '../../../layers/core/server/utils/file-store'
-import { extendFileOpenApi } from '../../../layers/core/server/utils/file-openapi'
-import { rosterFileSqliteCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files-sqlite'
+import { eq, inArray, sql } from 'drizzle-orm'
+import { sha256Of, type FileCategoryServer, type FileQueryFilters, type RegistrationWriter } from '../../../layers/core/server/utils/file-store-contract'
 import { rosterFileServerCategory } from '../../../layers/sme-roster/server/modules/sme-roster/files'
 import { createTus, TUS_PATH } from '../../../layers/core/server/utils/tus'
 import { libraryFileServerCategory } from '../../../layers/core/server/utils/library-file-category'
@@ -36,49 +32,14 @@ const catalog = {
     options: [{ value: 'local', label: '本地' }, { value: 'remote', label: '外部' }],
     description: '馆藏,多值:`local` / `remote`。',
   }],
-  readFields(db: FileStoreDb, ids: readonly number[]) {
-    return new Map(db.all<{ file_id: number; collection: string }>(sql`
-      select file_id, collection from collection_file where file_id in ${ids}
-    `).map(({ file_id, collection }) => [file_id, { collection }]))
-  },
-  constraint(db: FileStoreDb, filters: FileQueryFilters) {
-    if (!filters.collection?.length) return
-    const matching = db.all<{ file_id: number }>(sql`
-      select file_id from collection_file where collection in ${filters.collection}
-    `)
-    return inArray(storedFile.id, matching.map(row => row.file_id))
-  },
-  prepareBackfill(path: string) {
-    if (!isCatalogPath(path)) return null
-    return (db: FileStoreDb, id: number) => {
-      db.run(sql`insert into collection_file values (${id}, 'local')`)
-    }
-  },
   landing: (metadata: Record<string, string | null | undefined>) => ['catalog', metadata.filename!],
-  registration: {
-    matchesPath: isCatalogPath,
-    prepare(input: Record<string, unknown>): RegistrationWriter {
-      // The fixture owns the catalog layout and classification, just as it does for backfill.
-      const relPath = String(input.relPath)
-      const write = catalog.prepareBackfill(relPath)
-      if (!/^catalog\/[^/]+\.pdf ?$/.test(relPath) || !write || Object.keys(input).length !== 1) {
-        throw h3.createError({ statusCode: 400 })
-      }
-      return async (db, { filename, abs, bytes }) => {
-        const sha256 = await sha256Of(abs)
-        return db.transaction(tx => {
-          const row = tx.insert(storedFile).values({ relPath, filename, ext: 'pdf', bytes, sha256 }).returning().get()
-          write(tx, row.id)
-          return { row: { ...row, displayName: filename, collection: 'local' }, created: true }
-        })
-      }
-    },
-  },
   metadata: {
     properties: { collection: { type: 'string' } },
     parse: (input: Record<string, unknown>) => ({ collection: String(input.collection) }),
-    write(db: FileStoreDb, id: number, patch: Record<string, unknown>) {
-      return db.run(sql`update collection_file set collection = ${patch.collection} where file_id = ${id}`).changes === 1
+    async writePostgres(db: NodePgDatabase, file: { id: number }, patch: Record<string, unknown>) {
+      const rows = await db.update(collectionFile).set({ collection: String(patch.collection) })
+        .where(eq(collectionFile.fileId, file.id)).returning({ id: collectionFile.fileId })
+      return rows.length === 1
     },
   },
 }
@@ -100,7 +61,7 @@ const postgresCatalog = {
     },
   },
   registration: {
-    ...catalog.registration,
+    matchesPath: isCatalogPath,
     preparePostgres(input: Record<string, unknown>): RegistrationWriter<NodePgDatabase> {
       const relPath = String(input.relPath)
       if (!/^catalog\/[^/]+\.pdf ?$/.test(relPath) || Object.keys(input).length !== 1) {
@@ -119,49 +80,6 @@ const postgresCatalog = {
 }
 const postgresCategories = [rosterFileServerCategory, postgresCatalog] as const
 
-const categories = [rosterFileSqliteCategory, catalog] as const
-
-function createDb(name: string) {
-  const db = initializeDb({ create: true, dbPath: join(dir, name + '.sqlite') })
-  db.run(sql`create table collection_file (file_id integer primary key, collection text)`)
-  return db
-}
-
-it('composes a second registered category for backfill, fields, filters, placement and metadata', () => {
-  const db = createDb('backfill')
-  const files = createFileStore(categories)
-  const list = { parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }] }
-  extendFileOpenApi({ paths: { '/api/files': { get: list } } }, categories)
-  expect(list.parameters.map(parameter => parameter.name))
-    .toEqual(['source', 'categoryState', 'parseState', 'collection', 'q'])
-  const scan = (relPath: string, filename: string) => ({ relPath, filename, bytes: 3, ext: 'pdf', sha256: 'a'.repeat(64) })
-  expect(files.backfillStoredFiles(db, [
-    scan('jxj/announcement/2024/notice.pdf', 'notice.pdf'),
-    scan('catalog/guide.pdf', 'guide.pdf'),
-  ])).toMatchObject({ inserted: 2, skipped: [] })
-
-  const { rows, total } = files.listStoredFiles(db, { collection: 'local' })
-  expect(total).toBe(1)
-  const [guide] = rows
-  expect(guide).toMatchObject({ filename: 'guide.pdf', collection: 'local' })
-  expect(files.getStoredFile(db, guide!.id)).toMatchObject({ collection: 'local' })
-  expect(files.listStoredFiles(db, { source: 'jxj', collection: 'local' }).total).toBe(0)
-
-  expect(files.resolveUploadPlacement({ fileCategory: 'catalog', filename: 'guide.pdf' }).segments).toEqual(['catalog', 'guide.pdf'])
-  expect(files.resolveUploadPlacement({ source: 'jxj', kind: 'announcement', filename: 'notice.pdf' }).segments)
-    .toEqual(['jxj', 'announcement', 'notice.pdf'])
-
-  const notice = files.listStoredFiles(db, { q: 'notice' }).rows[0]!
-  // A combined patch may reach more than one owner. A declined write rolls back all changes.
-  const mixedPatch = files.parseMetadataPatch({ year: '2026', collection: 'remote' })
-  expect(mixedPatch).toEqual({ year: 2026, collection: 'remote' })
-  expect(files.updateStoredFile(db, notice.id, mixedPatch)).toBeNull()
-  expect(files.getStoredFile(db, notice.id)).toMatchObject({ year: 2024 })
-  expect(files.updateStoredFile(db, guide!.id, files.parseMetadataPatch({ collection: 'remote' })))
-    .toMatchObject({ collection: 'remote' })
-  expect(files.listStoredFiles(db, { collection: ['remote', 'local'] }).total).toBe(1)
-})
-
 let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const live = it.skipIf(!process.env.ROSTER_TEST_POSTGRES_BIN)
 
@@ -176,7 +94,7 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   registry.configurePostgresFileCategories(installed)
   const tus = createTus({
     filesDir, incomingDir: join(dir, name + '-incoming'), allowedOrigins: [],
-    landing: metadata => registry.postgresFileCategoryRules.resolveUploadPlacement(metadata, { postgres: true }),
+    landing: metadata => registry.postgresFileCategoryRules.resolveUploadPlacement(metadata),
   })
   for (const key of ['defineEventHandler', 'createError', 'readBody', 'setResponseStatus', 'getQuery', 'setHeader', 'getRouterParam'] as const) {
     vi.stubGlobal(key, h3[key])
@@ -187,6 +105,7 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
   const listRoute = (await import('../../../layers/core/server/api/files/index.get')).default
   const libraryRoute = (await import('../../../layers/core/server/api/file-library.get')).default
   const rosterRoute = (await import('../../../layers/sme-roster/server/api/sme-roster/files.get')).default
+  const patchRoute = (await import('../../../layers/core/server/api/files/[id].patch')).default
   const detailRoute = (await import('../../../layers/core/server/api/files/[id]/maintenance.get')).default
   const router = h3.createRouter()
     .post('/api/files/register', registerRoute)
@@ -194,6 +113,7 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
     .get('/api/file-library', libraryRoute)
     .get('/api/sme-roster/files', rosterRoute)
     .get('/api/files/:id/maintenance', detailRoute)
+    .patch('/api/files/:id', patchRoute)
   const errors: string[] = []
   const app = h3.createApp({ onError: error => { errors.push(error.message) } })
   const http = h3.toWebHandler(app.use(router))
@@ -223,9 +143,9 @@ async function uploadAndRegisterFixture(name: string, installed: readonly FileCa
       expect(finish.status).toBe(204)
       return decodeURIComponent(finish.headers.get('X-Upload-Path')!)
     },
-    async request(path: string, input?: Record<string, unknown>) {
+    async request(path: string, input?: Record<string, unknown>, method = 'POST') {
       const response = await http(new Request(base + path, input && {
-        method: 'POST',
+        method,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(input),
       }))
@@ -265,6 +185,33 @@ live('uploads ordinary files without roster classification and lists shared orig
   expect(await request('/api/sme-roster/files?q=入库培育附件')).toEqual({ status: 200, body: { total: 0, rows: [] } })
   expect(await db.select({ id: postgresClassification.fileId }).from(postgresClassification)).toEqual([{ id: registeredNotice.body.id }])
 }, 30_000)
+
+live('updates contributed metadata and rolls back a patch rejected by another category', async () => {
+  const { upload, request } = await uploadAndRegisterFixture('category-metadata')
+  const catalogPath = await upload({ fileCategory: 'catalog', filename: 'guide.pdf' })
+  const catalogFile = await request('/api/files/register', { relPath: catalogPath })
+  expect(catalogFile.status).toBe(201)
+  const noticePath = await upload({ source: 'jxj', kind: 'announcement', year: '2024', filename: 'notice.pdf' })
+  const notice = await request('/api/files/register', { relPath: noticePath, source: 'jxj', kind: 'announcement', year: 2024 })
+  expect(notice.status).toBe(201)
+
+  expect(await request('/api/files?collection=local')).toMatchObject({
+    status: 200, body: { total: 1, rows: [{ id: catalogFile.body.id, collection: 'local' }] },
+  })
+  expect(await request('/api/files?source=jxj&collection=local')).toMatchObject({
+    status: 200, body: { total: 0, rows: [] },
+  })
+  expect(await request('/api/files/' + notice.body.id, { year: 2026, collection: 'remote' }, 'PATCH'))
+    .toMatchObject({ status: 404 })
+  expect(await request('/api/files?source=jxj')).toMatchObject({
+    status: 200, body: { total: 1, rows: [{ id: notice.body.id, year: 2024 }] },
+  })
+  expect(await request('/api/files/' + catalogFile.body.id, { collection: 'remote' }, 'PATCH'))
+    .toMatchObject({ status: 200, body: { id: catalogFile.body.id, collection: 'remote' } })
+  expect(await request('/api/files?collection=remote')).toMatchObject({
+    status: 200, body: { total: 1, rows: [{ id: catalogFile.body.id, collection: 'remote' }] },
+  })
+}, 20_000)
 
 async function expectNoRegistrationRows(db: NodePgDatabase) {
   expect(await db.select().from(postgresFile)).toEqual([])

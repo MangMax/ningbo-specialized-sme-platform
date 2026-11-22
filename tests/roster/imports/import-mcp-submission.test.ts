@@ -9,7 +9,7 @@ vi.mock('../../../layers/core/server/utils/mcp-guard', () => ({ writeGuard: f.gu
 import preflight from '../../../layers/sme-roster/server/mcp/tools/preflight_roster_batch'
 import commit from '../../../layers/sme-roster/server/mcp/tools/save_roster_batch'
 import { rosterImportMcpContext } from '../../../layers/sme-roster/server/utils/roster-import-mcp-context'
-import { ImportReceiptError } from '../../../layers/sme-roster/server/utils/import-receipts'
+import { ImportReceiptError } from '../../../layers/sme-roster/server/utils/import-receipt-model'
 const input = { idempotencyKey: 'fixture-180', sourceKind: 'platform_export', sourceIdentity: 'fixture180', payload: { exportSnapshot: {} } }
 beforeEach(() => { vi.clearAllMocks(); f.execute.mockResolvedValue({ status: 'preflight' }); vi.stubGlobal('createError', createError); vi.stubGlobal('useRuntimeConfig', () => ({ filesDir: '/fixture' })) })
 afterEach(() => vi.unstubAllGlobals())

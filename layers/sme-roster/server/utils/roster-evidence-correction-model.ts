@@ -1,15 +1,21 @@
+import type { OfficialEventRow } from './roster-event-version-model'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { realpath, stat } from 'node:fs/promises'
 import { relative, isAbsolute } from 'node:path'
 import { z } from 'zod'
-import type * as schema from '../../../../db/schema'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { storedFilePart as StoredFilePartTable } from '../../../../db/postgresql/roster-file-tables'
 import { normalizeAttachment } from '../../lib/attachment'
 import { evidencePreviewHref, isPageCapable } from '../../lib/roster/evidence-page'
 import { readPdfPageCount, resolveWithinRoot } from '../../../core/server/utils/pdf-pages'
 import { officialPublishedRowSchema, OfficialFactError, type OfficialClaimChange } from './official-evidence-claim-model'
 import { OfficialEvidenceError } from './official-evidence'
-import type { readExactEvidence, fileIdentity, planEvidenceCorrectionTargets } from './roster-evidence-correction'
+import type { storedFile } from '../../../../db/postgresql/file-tables'
+import type { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
+
+type EvidenceFile = Pick<typeof storedFile.$inferSelect, 'id' | 'relPath' | 'sha256' | 'removedAt'>
+  & { bytes: number } & Pick<typeof rosterFileClassification.$inferSelect, 'source' | 'kind' | 'titleCode'>
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -38,12 +44,12 @@ export function fail(code: string, message: string, status = 422): never { throw
 
 export const evidenceCorrectionDigest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
-const coordinateOf = (row: typeof schema.recordEvidence.$inferSelect): EvidenceCoordinate => ({ sourceFile: row.sourceFile, attachment: row.attachment, listNo: row.listNo, page: row.page })
+const coordinateOf = (row: typeof RecordEvidenceTable.$inferSelect): EvidenceCoordinate => ({ sourceFile: row.sourceFile, attachment: row.attachment, listNo: row.listNo, page: row.page })
 
 export function projectExactEvidence(row: {
-  evidence: typeof schema.recordEvidence.$inferSelect; event: typeof schema.recordEvent.$inferSelect
+  evidence: typeof RecordEvidenceTable.$inferSelect; event: OfficialEventRow
   recordId: number; enterpriseId: number; titleCode: string; source: 'jxj' | 'miit'
-}, file: ReturnType<typeof fileIdentity>, revision: number) {
+}, file: EvidenceFile | null, revision: number) {
   const evidenceId = row.evidence.id
   const coordinate = coordinateOf(row.evidence)
   return { evidenceId, eventId: row.event.id, recordId: row.recordId, enterpriseId: row.enterpriseId, source: row.source, titleCode: row.titleCode, event: row.event, coordinate, file, revision, version: evidenceCorrectionDigest({ row, file, revision }), sourceHref: evidencePreviewHref(coordinate) }
@@ -80,9 +86,9 @@ async function inspectSource(filesDir: string | undefined, coordinate: EvidenceC
 
 export type Inspection = Awaited<ReturnType<typeof inspectSource>>
 
-type ExactEvidence = ReturnType<typeof readExactEvidence>
+type ExactEvidence = ReturnType<typeof projectExactEvidence>
 
-type DestinationPart = Pick<typeof schema.storedFilePart.$inferSelect, 'titleCode' | 'eventKind' | 'year' | 'batch' | 'attachment' | 'hasConflict'>
+type DestinationPart = Pick<typeof StoredFilePartTable.$inferSelect, 'titleCode' | 'eventKind' | 'year' | 'batch' | 'attachment' | 'hasConflict'>
 
 export type EvidencePlanInput = { type: 'evidence'; id: number } | { type: 'enterprise'; id: number } | { type: 'file'; sourceFile: string }
   | { type: 'parts'; fileId: number } | { type: 'collisions'; coordinate: EvidenceCoordinate; id: number } | { type: 'correspondences'; eventId: number }
@@ -90,9 +96,9 @@ export type EvidencePlanInput = { type: 'evidence'; id: number } | { type: 'ente
 type EvidencePlanValues = {
   evidence: ExactEvidence
   enterprise: boolean
-  file: ReturnType<typeof fileIdentity>
+  file: EvidenceFile | null
   parts: DestinationPart[]
-  collisions: { id: number; attachment: string | null; event: typeof schema.recordEvent.$inferSelect }[]
+  collisions: { id: number; attachment: string | null; event: OfficialEventRow }[]
   correspondences: number
 }
 
@@ -100,7 +106,7 @@ function* evidenceInput<T extends EvidencePlanInput['type']>(input: Extract<Evid
   return (yield input) as EvidencePlanValues[T]
 }
 
-function validateFile(row: ExactEvidence, file: ReturnType<typeof fileIdentity>, inspection: Inspection, strictFile: boolean) {
+function validateFile(row: ExactEvidence, file: EvidenceFile | null, inspection: Inspection, strictFile: boolean) {
   if (strictFile && (!file || file.removedAt || file.source !== 'jxj' || file.kind !== 'announcement' || file.titleCode && file.titleCode !== row.titleCode)) fail('file_identity_conflict', 'An active official announcement file of the same title is required')
   if (file && (file.removedAt || file.sha256 !== inspection.sha256 || file.bytes !== inspection.bytes)) fail('file_changed', 'Original file differs from registered identity', 409)
 }
@@ -152,7 +158,7 @@ export function* projectEvidenceCorrectionTargets(request: EvidenceCorrectionReq
   return targets
 }
 
-export function projectEvidenceCorrectionPlan(request: EvidenceCorrectionRequest, targets: ReturnType<typeof planEvidenceCorrectionTargets>, factsHash?: string) {
+export function projectEvidenceCorrectionPlan(request: EvidenceCorrectionRequest, targets: ReturnType<typeof projectEvidenceCorrectionTargets> extends Generator<unknown, infer Result> ? Result : never, factsHash?: string) {
   const impact = { updated: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, audit: targets.filter(t => evidenceCorrectionDigest(t.before) !== evidenceCorrectionDigest(t.after) || t.rowChange?.changed).length, correspondencePolicy: 'dynamic_source_fingerprint_revalidation' }
   return { status: 'preflight', targets, impact, planHash: evidenceCorrectionDigest({ request, targets, impact, facts: factsHash }) }
 }

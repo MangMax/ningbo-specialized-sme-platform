@@ -1,5 +1,5 @@
 import { ok } from 'node:assert/strict'
-import { submitNativePlatformQuery } from '../../platform/fixtures/native-query'
+import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -12,7 +12,6 @@ import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { ocrResult } from '../../../db/postgresql/file-tables'
 import { storedFilePart } from '../../../db/postgresql/roster-file-tables'
-import { initializeDb } from '../../../db/client'
 import { spawnCompiledApp, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'read-311b-http-'))
@@ -25,16 +24,13 @@ let queryId: number
 let service: { baseUrl: string; stop(): Promise<void> }
 let output = ''
 beforeAll(async () => {
-  const sourcePath = join(dir, 'fixture.sqlite')
-  const source = initializeDb({ create: true, dbPath: sourcePath })
-  try {
-    queryId = submitNativePlatformQuery(source, { interface: 'business_list', queryKey: 'B3', queriedAt: '2026-11-05T00:00:00Z', status: 'success', rawResponse: 'Explicit synthetic empty source' }).queryId
-  } finally {
-    source.$client.close()
-  }
-  runtime = await postgresRuntimeFixture({ dir, sourcePath })
+  runtime = await postgresRuntimeFixture({ dir })
   pool = new pg.Pool({ connectionString: runtime.url, options: '-c search_path=business,public' })
   db = drizzle<Record<string, never>>(pool)
+  ;({ queryId } = await seedPostgresPlatformQuery(db, {
+    interface: 'business_list', queryKey: 'B3', queriedAt: '2026-11-05T00:00:00Z',
+    status: 'success', rawResponse: 'Explicit synthetic empty source',
+  }))
   const port = await reserveLoopbackPort()
   const child = spawnCompiledApp(port, {
     cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],

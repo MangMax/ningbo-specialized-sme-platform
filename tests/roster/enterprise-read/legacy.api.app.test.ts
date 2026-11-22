@@ -1,12 +1,11 @@
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { initializeDb } from '../../../db/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { decodeJsonRead } from '../../support/json-read'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { schema } from '../../../db'
+import * as schema from '../fixtures/postgres-tables'
 
 /**
  * Characterize the real GET route handlers against a read-only synthetic legacy snapshot.
@@ -21,7 +20,7 @@ const enterprise = {
   district: '海曙区',
   city: null,
   regStatus: null,
-  qualityFlags: ['uscc_missing'],
+  qualityFlags: '["uscc_missing"]',
 }
 const record = {
   id: 101,
@@ -31,7 +30,7 @@ const record = {
   district: '海曙区',
   usccRaw: null,
   nameRaw: enterprise.name,
-  qualityFlags: [],
+  qualityFlags: '[]',
 }
 const event = {
   id: 201,
@@ -64,17 +63,20 @@ const legacyEvidence = [
 
 let listHandler: (event: unknown) => Promise<unknown>
 let detailHandler: (event: unknown) => Promise<unknown>
-let db: ReturnType<typeof initializeDb>
+let db: ReturnType<typeof usePostgresDirectoryDb>
 const tempDir = mkdtempSync(join(tmpdir(), 'roster-enterprise-legacy-api-'))
 
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 beforeAll(async () => {
-  db = initializeDb({ create: true, dbPath: join(tempDir, 'roster.db') })
-  db.insert(schema.enterprise).values(enterprise).run()
-  db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id }).run()
-  db.insert(schema.record).values(record).run()
-  db.insert(schema.recordEvent).values(event).run()
-  db.insert(schema.recordEvidence).values(legacyEvidence).run()
+  postgres = await postgresRuntimeFixture({ dir: tempDir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
+  await db.insert(schema.enterprise).values(enterprise)
+  await db.insert(schema.rosterLegacyMember).values({ enterpriseId: enterprise.id })
+  await db.insert(schema.record).values(record)
+  await db.insert(schema.recordEvent).values(event)
+  await db.insert(schema.recordEvidence).values(legacyEvidence)
 
   vi.stubGlobal('setHeader', () => {})
   vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
@@ -83,9 +85,6 @@ beforeAll(async () => {
   vi.stubGlobal('getRouterParam', () => String(enterprise.id))
 
 
-  postgres = await postgresRuntimeFixture({ dir: tempDir, sourcePath: join(tempDir, 'roster.db') })
-  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
-  vi.stubEnv('NUXT_DB_READONLY', '0')
 
   listHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises.get')).default) as unknown as typeof listHandler
   detailHandler = decodeJsonRead((await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default) as unknown as typeof detailHandler
@@ -93,7 +92,6 @@ beforeAll(async () => {
 
 afterAll(async () => { await closePostgresDirectoryDb(); postgres?.close(); vi.unstubAllEnvs();
   vi.unstubAllGlobals()
-  db?.$client.close()
   rmSync(tempDir, { recursive: true, force: true })
 })
 
@@ -121,7 +119,7 @@ describe('legacy Word/Excel 出处页码 REST 读取', () => {
       { sourceFile: 'synthetic/legacy/appendix.xlsx', page: null },
     ])
 
-    // The SQLite legacy rows remain untouched; normalization belongs to the read projection.
-    expect(db.select({ page: schema.recordEvidence.page }).from(schema.recordEvidence).all().map((item) => item.page)).toEqual([12, 12])
+    // The legacy evidence rows remain untouched; normalization belongs to the read projection.
+    expect((await db.select({ page: schema.recordEvidence.page }).from(schema.recordEvidence)).map((item) => item.page)).toEqual([12, 12])
   })
 })

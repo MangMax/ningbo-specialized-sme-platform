@@ -2,12 +2,15 @@ import { formalValiditySchema } from '../../lib/roster/formal-validity'
 import { isDeepStrictEqual } from 'node:util'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type * as schema from '../../../../db/schema'
+import type { importBatch as ImportBatchTable } from '../../../../db/postgresql/import-tables'
+import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
+import type { recordCorrespondence as RecordCorrespondenceTable } from '../../../../db/postgresql/qualification-tables'
 import { computeTitleLifecycle } from '../../lib/roster/lifecycle'
 import { CURRENT_TITLES, diagnoseOfficialEventFields } from '../../lib/roster/current-qualification-model'
-import type { readCurrentQualificationAssessment } from '../../lib/roster/current-qualification'
+import type { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
+import type { OfficialEventRow as StoredEvent, RosterRecordRow as StoredRecord } from './roster-event-version-model'
+import type { storedFile } from '../../../../db/postgresql/file-tables'
 import type { RosterImportBeforeQualificationReadback, RosterImportAfterQualificationReadback } from '../../lib/roster-import-client'
-import type { buildPlan, snapshot, lifecycleEvents } from './roster-event-correction'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER - 1)
 
@@ -30,14 +33,19 @@ export const eventCorrectionHash = (value: unknown) => createHash('sha256').upda
 
 export function eventCorrectionFailure(statusCode: number, code: string, message: string): never { throw Object.assign(new Error(message), { statusCode, code }) }
 
-type StoredEvent = typeof schema.recordEvent.$inferSelect
+type CorrectionSnapshot = {
+  event: StoredEvent
+  record: StoredRecord
+  evidence: Array<typeof RecordEvidenceTable.$inferSelect>
+  files: (Pick<typeof storedFile.$inferSelect, 'id' | 'relPath' | 'sha256' | 'removedAt'> & { bytes: number })[]
+}
 
-type CorrectionRelation = Pick<typeof schema.recordCorrespondence.$inferSelect, 'id' | 'revision' | 'status'>
+type CorrectionRelation = Pick<typeof RecordCorrespondenceTable.$inferSelect, 'id' | 'revision' | 'status'>
 
 export type EventCorrectionInputs = {
-  snapshot(id: number): ReturnType<typeof snapshot>
+  snapshot(id: number): CorrectionSnapshot
   correspondence(id: number): CorrectionRelation[]
-  titleEvents(record: typeof schema.record.$inferSelect): StoredEvent[]
+  titleEvents(record: StoredRecord): StoredEvent[]
   siblings(recordId: number): StoredEvent[]
   origin(id: number): StoredEvent | null
 }
@@ -49,8 +57,8 @@ export function validateEventCorrectionTargets(request: EventCorrectionRequest) 
 
 export function projectEventCorrectionPlan(request: EventCorrectionRequest, inputs: EventCorrectionInputs) {
   validateEventCorrectionTargets(request)
-  const titleEvents = new Map<string, ReturnType<typeof lifecycleEvents>>()
-  const siblingsByRecord = new Map<number, Array<typeof schema.recordEvent.$inferSelect>>()
+  const titleEvents = new Map<string, StoredEvent[]>()
+  const siblingsByRecord = new Map<number, StoredEvent[]>()
   const targets = request.operations.map(op => {
     const source = inputs.snapshot(op.eventId), before = source.event
     if (source.record.id !== op.recordId || source.record.enterpriseId !== op.enterpriseId) eventCorrectionFailure(409, 'target_mismatch', 'Event record/enterprise ownership changed')
@@ -73,7 +81,7 @@ export function projectEventCorrectionPlan(request: EventCorrectionRequest, inpu
     return { titleCode: source.record.titleCode, eventId: op.eventId, recordId: op.recordId, enterpriseId: op.enterpriseId, before, after, evidence: source.evidence, files: source.files, correspondences: correspondences.sort((a, b) => a.id - b.id), lifecycleBefore: computeTitleLifecycle(titleEvents.get(titleKey)!) }
   })
   const finalEvents = new Map(targets.map(target => [target.eventId, target.after]))
-  const validityOrigins: Array<{ eventId: number; origin: typeof schema.recordEvent.$inferSelect | null }> = []
+  const validityOrigins: Array<{ eventId: number; origin: StoredEvent | null }> = []
   for (const target of targets) {
     // Input-key scoped candidates only; no all-events/raw query materialization.
     if (!siblingsByRecord.has(target.recordId)) siblingsByRecord.set(target.recordId, inputs.siblings(target.recordId))
@@ -170,7 +178,7 @@ export function eventCorrectionReadbackScope(targets: readonly { enterpriseId: n
   return { readback } as const
 }
 
-export function eventCorrectionCapture(assessment: ReturnType<typeof readCurrentQualificationAssessment> | null, stage: QualificationPhase, target: { enterpriseId: number }, safety?: CorrectionQualificationSafety): QualificationReadback {
+export function eventCorrectionCapture(assessment: Awaited<ReturnType<typeof readPostgresLegacyQualification>> | null, stage: QualificationPhase, target: { enterpriseId: number }, safety?: CorrectionQualificationSafety): QualificationReadback {
   if (!assessment) return unavailable(stage, target)
   return protectCapture({ stage, status: 'captured' as const, target, assessment }, stage, target, safety)
 }
@@ -218,7 +226,7 @@ function replayReadback(result: Record<string, unknown>, stage: QualificationPha
   return responseWithReadback(legacy, storedReadback(result.qualificationReadback, stage, safety), safety)
 }
 
-type EventCorrectionBatch = Pick<typeof schema.importBatch.$inferSelect, 'id' | 'sourceKind' | 'sourceIdentity' | 'preflightResult' | 'summary' | 'status'>
+type EventCorrectionBatch = Pick<typeof ImportBatchTable.$inferSelect, 'id' | 'sourceKind' | 'sourceIdentity' | 'status'> & { preflightResult: unknown; summary: unknown }
 
 export function assertEventCorrectionBatch(batch: EventCorrectionBatch | undefined, request: EventCorrectionRequest) {
   if (batch && (batch.sourceKind !== 'event_correction' || batch.sourceIdentity !== request.sourceIdentity || (batch.preflightResult as { requestHash?: string } | null)?.requestHash !== eventCorrectionHash(request))) {
@@ -239,7 +247,7 @@ export function eventCorrectionPreflightReplay(old: EventCorrectionBatch | undef
 }
 
 export function eventCorrectionCommitBatch(batch: EventCorrectionBatch | undefined, planHash: string) {
-  const stored = batch?.preflightResult as ReturnType<typeof buildPlan> | null
+  const stored = batch?.preflightResult as ReturnType<typeof projectEventCorrectionPlan> | null
   if (!batch || !stored || stored.planHash !== planHash) eventCorrectionFailure(409, 'plan_mismatch', 'Matching bound preflight required')
   return batch
 }
@@ -250,7 +258,7 @@ export function eventCorrectionCommitReplay(batch: EventCorrectionBatch, safety?
   return batch.summary
 }
 
-export function eventCorrectionPreflightResult(batchId: number, plan: ReturnType<typeof buildPlan>) {
+export function eventCorrectionPreflightResult(batchId: number, plan: ReturnType<typeof projectEventCorrectionPlan>) {
   const qualificationDiagnostics = plan.targets.map(target => ({ ref: 'event:' + target.eventId, eventType: target.after.eventType, ...diagnoseOfficialEventFields(target.after) }))
   return { batchId, batchStatus: 'preflight', ...plan, qualificationDiagnostics }
 }

@@ -1,27 +1,3 @@
-/**
- * 测试用的**真实 HTTP 夹具启动器** —— RL-03 / RL-05 / RL-11 三处端到端夹具的共用底座。
- *
- * ── 为什么起真端口,而不是 `createNitro` / `nuxt dev` ─────────────────────
- * 契约验收要求「以真实 HTTP 契约测试」,不以直接函数调用或直写数据库代替。而本仓的 vitest
- * 跑在**裸 node** 下:`h3` 在测试进程里解析不到(只挂在 `.pnpm` 下、没有顶层入口),
- * Nuxt 的 `@db` 等别名也要 `nuxt build` 之后才在 `.nuxt` 成型 —— 所以进程内 `createNitro`
- * 拿不到业务路由(见 `tests/agent-http.test.ts` 里那个只用来「问路由表」的 `createNitro`)。
- * 办法是:`node:http` 起**真端口**,把 Nitro 路由也在调的**同一份**核心函数挂上去
- * (`layers/sme-roster/server/utils/roster-import-http.ts` / `platform-snapshots-http.ts`,
- * 路由文件只是薄转调)。测的不是替身实现,契约只有一份。
- *
- * ── 这个文件负责的,就是那三份夹具里**逐字重复**的部分 ────────────────────
- * 读 body 的循环、`JSON.parse` 兜底、`listen(0,'127.0.0.1')` / `AddressInfo` / `close`、
- * `headerOf`、404/500 的 JSON 信封、query 的解析口径。各夹具只剩自己的**路由表**。
- *
- * ── 路由规则(一条,简单到不用记)────────────────────────────────────────
- * - `routes` 按**不含 query 的路径**精确匹配,**不看方法** —— 命中就把请求原样交给核心,
- *   方法不对由**核心自己**挡(写面回 405,读面回 405),夹具不替它做方法白名单。
- *   (真实路由表里 `*.post.ts` 只接 POST,所以夹具「不看方法」比真实路由**更宽**;
- *   这么定是为了让核心的方法守卫在真 HTTP 上也被走到,而不是被夹具静默吃掉。)
- * - 未命中 `routes` 且方法是 `GET` ⇒ 再查 `getRoutes`(读面本来就是 GET 专属)。
- * - 仍未命中 ⇒ `404 {"message":"not found"}`;处理器抛异常 ⇒ 状态码取 `statusCode`,否则 `500`。
- */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 

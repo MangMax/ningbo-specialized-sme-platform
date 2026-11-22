@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { isJobId } from '../../../../core/lib/job'
 import { appLog, type LogContext } from '../../../../core/lib/logging'
 import { getPostgresJob, type JobCompletion, type JobSpec } from '../../../../core/server/public'
-import type { JobRow } from '../../../../core/server/utils/job-store'
+import type { JobRow } from '../../../../core/server/utils/job-contract'
 import { currentExportReceipt, isExportArtifactExpired, postgresExportDirectory } from '../current-export-artifact'
 
 const paramsSchema = z.strictObject({

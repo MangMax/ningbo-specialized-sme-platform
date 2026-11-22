@@ -8,7 +8,7 @@ import { installJobSpecs, registerJobSpecs } from './utils/job-specs'
 import { installTaskCenter } from './task-center'
 import { configurePostgresFileCategories } from '../layers/core/server/utils/file-category-runtime'
 import { libraryFileServerCategory } from '../layers/core/server/utils/library-file-category'
-import type { JobSpec } from '../layers/core/server/utils/job-runner'
+import type { JobSpec } from '../layers/core/server/utils/job-contract'
 
 import * as leadListSpecs from '../layers/lead-lists/server/utils/export-job'
 import { leadListFileServerCategory } from '../layers/lead-lists/server/utils/file-category'

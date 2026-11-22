@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type * as s from '../../../../db/schema'
+import type { enterpriseFactRevision as EnterpriseFactRevisionTable } from '../../../../db/postgresql/qualification-tables'
 import { EnterpriseProfileError } from './enterprise-profile-model'
 import { enterpriseProfilePatchSchema } from './enterprise-profile-model'
 
@@ -48,7 +48,15 @@ export function parseEnterpriseFactInput<T>(schema: z.ZodType<T>, body: unknown)
   return result.data
 }
 
-export function projectEnterpriseFactState(enterpriseId: number, history: Array<typeof s.enterpriseFactRevision.$inferSelect>) {
+export type EnterpriseFactRevision = Omit<typeof EnterpriseFactRevisionTable.$inferSelect, 'fact' | 'actor' | 'status'> & {
+  fact: Record<string, unknown>
+  actor: { type: 'user' | 'agent'; id: string }
+  status: 'pending' | 'confirmed' | 'replaced' | 'withdrawn'
+}
+
+export type EnterpriseFactReceipt = { factId: number; version: string; committedAt: string }
+
+export function projectEnterpriseFactState(enterpriseId: number, history: Array<EnterpriseFactRevision>) {
   const facts = new Map<number, typeof history[number]>()
   for (const row of history) facts.set(row.factId, row)
   return { enterpriseId, version: enterpriseFactHash({ enterpriseId, lastRevision: history.at(-1)?.id ?? null }), facts: [...facts.values()], history }
@@ -58,7 +66,7 @@ export function planEnterpriseFact(
   enterpriseId: number,
   request: z.infer<typeof enterpriseFactCommandSchema>,
   requestHash: string,
-  prior: { requestHash: string; receipt: typeof s.enterpriseFactReceipt.$inferSelect['receipt'] } | undefined,
+  prior: { requestHash: string; receipt: EnterpriseFactReceipt } | undefined,
   current: ReturnType<typeof projectEnterpriseFactState>,
 ) {
   const target = 'factId' in request ? current.facts.find(f => f.factId === request.factId) : undefined
@@ -75,7 +83,7 @@ export function planEnterpriseFact(
 export function enterpriseFactRevisions(enterpriseId: number, plan: ReturnType<typeof planEnterpriseFact>, createdAt: string) {
   const { request, target } = plan
   const audit = { enterpriseId, actor: request.actor, basis: request.basis, action: request.action, createdAt }
-  const revisions: Array<typeof s.enterpriseFactRevision.$inferInsert> = []
+  const revisions: Array<Omit<EnterpriseFactRevision, 'id'>> = []
   if (request.action === 'assert' || request.action === 'replace') {
     if (target) revisions.push({ ...audit, factId: target.factId, revision: target.revision + 1,
       fact: target.fact, status: 'replaced', replaces: target.replaces })

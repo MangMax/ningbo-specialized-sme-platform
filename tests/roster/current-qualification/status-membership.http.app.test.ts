@@ -1,21 +1,23 @@
 import { readDevelopmentDiscovery } from '../current-export/fixtures/specialized-export'
 import { spawnCompiledApp } from '../../support/owned-process.mjs'
-import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { CURRENT_RULE_VERSION, QUALIFICATION_ASSESSMENT_VERSION } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
-import { dirname, join, resolve } from 'node:path'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { join, resolve } from 'node:path'
+import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
-import { qualificationFileFixture } from '../fixtures/qualification-matrix'
-import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-query'
-import type { CurrentQualificationSnapshot } from '../../../layers/sme-roster/lib/roster/current-qualification'
+import { qualificationMatrix } from '../fixtures/qualification-matrix'
+import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
+import type { CurrentQualificationSnapshot } from '../../../layers/sme-roster/lib/roster/current-qualification-model'
 import { spawnOwnedChild, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
-let fixture: ReturnType<typeof qualificationFileFixture> | undefined
+const root = mkdtempSync(join(tmpdir(), 'qualification-status-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let child: ReturnType<typeof spawnOwnedChild> | undefined
 let client: Client | undefined
@@ -26,17 +28,16 @@ const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(valu
 let developmentSpec: any
 beforeAll(async () => {
   developmentSpec = await readDevelopmentDiscovery()
-  fixture = qualificationFileFixture()
-  const f = fixture
+  postgres = await postgresRuntimeFixture({ dir: root })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  const f = qualificationMatrix(usePostgresDirectoryDb())
   year = new Date().getUTCFullYear()
-  const eligible = f.formal('synthetic_408_public_eligible', [{ eventType: 'award', year, decidedYear: year, batchSeq: 1 }], { uscc: '91330200000000408X' })
-  const pending = f.formal('synthetic_408_public_pending', [{ eventType: 'award', year: year - 4, decidedYear: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, decidedYear: null, batchSeq: 1, reviewOutcome: null }], { uscc: '913302000000004091' })
+  const eligible = await f.formal('synthetic_408_public_eligible', [{ eventType: 'award', year, decidedYear: year, batchSeq: 1 }], { uscc: '91330200000000408X' })
+  const pending = await f.formal('synthetic_408_public_pending', [{ eventType: 'award', year: year - 4, decidedYear: year - 4, batchSeq: 1 }, { eventType: 'review', year: year - 4, decidedYear: null, batchSeq: 1, reviewOutcome: null }], { uscc: '913302000000004091' })
   eligibleId = eligible.enterprise.id; pendingId = pending.enterprise.id; reviewId = pending.events[1]!.id
-  f.platform(eligibleId, 'failed')
-  f.recognized(pendingId, pending.events[0]!.id, { rddqrq: '2028-06-01', whpc: '2024-2' })
-  const cwd = resolve(import.meta.dirname, '../../..'), root = dirname(f.sqlite.name)
-  installLeadListSchema(f.sqlite)
-  postgres = await postgresRuntimeFixture({ dir: root, sourcePath: f.sqlite.name })
+  await f.platform(eligibleId, 'failed')
+  await f.recognized(pendingId, pending.events[0]!.id, { rddqrq: '2028-06-01', whpc: '2024-2' })
+  const cwd = resolve(import.meta.dirname, '../../..')
   const port = await reserveLoopbackPort()
   base = `http://127.0.0.1:${port}`
   child = spawnCompiledApp(port, {
@@ -53,14 +54,13 @@ beforeAll(async () => {
     client = undefined
     try { if (child) await stopOwnedChild(child) } catch (stopError) { failures.push(stopError) }
     child = undefined
-    try { postgres?.close(); postgres = undefined; f.close() } catch (dbError) { failures.push(dbError) }
-    fixture = undefined
+    try { postgres?.close(); postgres = undefined } catch (dbError) { failures.push(dbError) }
     throw new AggregateError(failures, 'Synthetic408 Nuxt startup failed: ' + output)
   }
 }, 90000)
 afterAll(async () => {
   try { await client?.close() } finally {
-    try { if (child) await stopOwnedChild(child) } finally { postgres?.close(); postgres = undefined; fixture?.close() }
+    try { if (child) await stopOwnedChild(child) } finally { await closePostgresDirectoryDb(); postgres?.close(); postgres = undefined; vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) }
   }
 })
 

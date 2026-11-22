@@ -1,19 +1,12 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import pg from 'pg'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
-import { initializeDb } from '../../../db/client'
 import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { completeInProcessPostgresIntake } from '../imports/fixtures/in-process-intake-postgres'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import { savePostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102/postgres-writes'
-import { saveDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle-102'
-import { listRosterDifferences as reference } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
-import { commitRosterImport } from '../../../layers/sme-roster/server/utils/roster-import'
 import type { RosterImportCommitResponse, RosterImportPayload, RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 
@@ -35,28 +28,22 @@ async function fixture() {
   // Both writers stamp generated decision times from the same application clock.
   vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-21T12:00:00.000Z') })
   const db = openDatabase()
-  const dir = mkdtempSync(join(tmpdir(), 'differences-oracle-'))
-  const oracle = initializeDb({ create: true, dbPath: join(dir, 'source.db') })
-  cleanup.push(() => { oracle.$client.close(); rmSync(dir, { recursive: true, force: true }) })
   let sequence = 0
-  const write = async (payload: RosterImportPayload, oraclePayload: RosterImportPayload = payload) => {
+  const write = async (payload: RosterImportPayload) => {
     const key = `synthetic-differences-${++sequence}`
     const request: RosterImportRequest = { idempotencyKey: key, sourceKind: 'announcement', sourceIdentity: key + '.pdf', payload }
     const output = await runPostgresMixedImport('commit', request)
     const receipt = await completeInProcessPostgresIntake(db, output, request) as RosterImportCommitResponse
     expect(receipt, JSON.stringify(receipt.items)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
-    const offline = commitRosterImport(oracle, { ...request, payload: oraclePayload }, [], { deferCandidateTasks: true })
-    expect(offline, JSON.stringify(offline.items)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
     return receipt
   }
   await write({ announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic differences' }, records: Array.from({ length: 20 }, (_, i) => ({ enterprise: { name: `合成差异${String(i).padStart(2, '0')}`, ...(i === 0 ? { uscc: '91330211255994457P' } : {}) }, titleCode: 'specialized_sme', events: [{ eventType: 'award', year: 2022, batchSeq: 1 }] })) } })
   await write({ differences: Array.from({ length: 20 }, (_, i) => (['missing_in_miit', 'extra_in_miit'] as const).map(direction => ({ enterpriseName: `合成差异${String(i).padStart(2, '0')}`, titleCode: 'specialized_sme', direction, status: 'needs_review' as const, measureCode: 'manual_review', recordedAt: '2026-10-18T00:00:00.000Z' }))).flat() })
   const save = async (command: Parameters<typeof savePostgresDecision102>[1]) => {
     const receipt = await savePostgresDecision102(db, command)
-    expect(saveDecision102(oracle, command)).toMatchObject({ versionId: receipt.versionId })
     return receipt
   }
-  return { oracle, write, save }
+  return { write, save }
 }
 
 // Count real PostgreSQL driver results crossing into the application.
@@ -122,10 +109,15 @@ it('preserves REST filters counts deep pages evidence and the intentionally narr
   await f.write({ platformQueries: [{ interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-19T00:00:00.000Z', status: 'failed', rawResponse: 'SYNTHETIC_RAW', failureReason: 'synthetic failure', relations: [{ sequenceNo: 1, nameRaw: '合成旧名称', usccRaw: '91330211255994457P', verificationStatus: 'confirmed' }, { sequenceNo: 2, nameRaw: 'unmatched synthetic' }] }],
     aliases: [{ enterpriseName: '合成差异00', name: '合成旧名称', sourceKind: 'platform_business', verificationStatus: 'confirmed', sourceRelationRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2', sequenceNo: 1 } }, { enterpriseName: '合成差异01', name: '合成旧名称', sourceKind: 'platform_apply', verificationStatus: 'pending' }],
     differences: [{ enterpriseName: '合成差异00', titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'pending_review', measureCode: 'follow_review', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z', evidenceQueryRef: { interface: 'business_list', queryKey: 'name:合成差异00', rdjb: '2' } }, { enterpriseName: '合成差异01', titleCode: 'specialized_sme', direction: 'extra_in_miit', status: 'confirmed_no_diff', measureCode: 'none', verificationStatus: 'confirmed', recordedAt: '2026-10-19T00:00:00.000Z' }, { enterpriseName: '合成差异02', titleCode: 'little_giant', direction: 'missing_in_miit', status: 'needs_review', reasonCode: 'moved_in', measureCode: 'record_moved_in', movedIn: { city: '合成城市' }, recordedAt: '2026-10-19T00:00:00.000Z' }] })
-  const { parseRosterDifferenceQuery } = await import('../../../layers/sme-roster/server/utils/roster-read-query')
-  for (const args of [{}, { page: '3', pageSize: '7' }, { page: '200', pageSize: '5' }, { q: '合成（旧）名称', title: 'specialized_sme,little_giant' }, { status: 'confirmed_reason,confirmed_no_diff', direction: 'missing_in_miit,extra_in_miit' }, { reason: 'pending_review,moved_in', pageSize: '1' }, { q: 'does-not-exist' }]) {
-    const query = new URLSearchParams(args as Record<string, string>).toString()
-    expect(await api.rest('?' + query)).toEqual(reference(f.oracle, parseRosterDifferenceQuery(args)))
+  for (const [query, total, rows] of [
+    ['', 41, 41], ['page=3&pageSize=7', 41, 7], ['page=200&pageSize=5', 41, 0],
+    ['q=合成（旧）名称&title=specialized_sme,little_giant', 2, 2],
+    ['status=confirmed_reason,confirmed_no_diff&direction=missing_in_miit,extra_in_miit', 2, 2],
+    ['reason=pending_review,moved_in&pageSize=1', 2, 1], ['q=does-not-exist', 0, 0],
+  ] as const) {
+    const result = await api.rest('?' + query)
+    expect(result.total, query).toBe(total)
+    expect(result.rows, query).toHaveLength(rows)
   }
   const aliasRows = await api.rest('?q=' + encodeURIComponent('合成旧名称'))
   expect(aliasRows).toMatchObject({ total: 2, rows: [{ name: '合成差异00' }, { name: '合成差异00' }] })
@@ -151,7 +143,6 @@ it('keeps title coverage history truncation and withdrawal fresh after applicati
   expect(row.queryCoverage.sources).toHaveLength(50)
   expect(row.queryCoverage.sources[0].queryStatus).toBe('failed')
   expect(row.queryCoverage.sources.every((s: any) => s.outcome === 'unknown')).toBe(true)
-  expect(await api.rest('?q=合成差异00')).toEqual(reference(f.oracle, { q: '合成差异00' }))
   if (typeof latest.versionId !== 'number') throw new Error('Application decision receipt must include a numeric version')
   const withdrawn = await f.save({ ...scope, action: 'withdraw', expectedCurrentId: latest.versionId, idempotencyKey: 'synthetic132-withdraw', actor: { type: 'agent', id: 'synthetic132' }, basis: 'synthetic withdrawal', ruleVersion: '1', effectiveAt: '2026-10-20T00:00:00.000Z' })
   const rest = (await api.rest('?q=合成差异00&direction=missing_in_miit')).rows[0]
@@ -197,7 +188,6 @@ it('preserves exact identity title partitions source conditions and no record ou
     { interface: 'recognized_list', queryKey: uscc, titleCode: 'specialized_sme', rdjb: '2', queriedAt: '2026-10-20T00:00:03.000Z', status: 'no_record', collectionEvidence: { ...evidence('queryBusList', '2', { uscc, rddqrq: '2025', combination: 'and' }), queriedAt: '2026-10-20T00:00:03.000Z', completedAt: '2026-10-20T00:00:04.000Z' } },
   ] })
   const rest = await api.rest('?q=91330211255994457p')
-  expect(rest).toEqual(reference(f.oracle, { q: uscc }))
   expect(rest.total).toBe(2)
   for (const row of rest.rows) {
     expect(row).toMatchObject({ status: 'needs_review', queryCoverage: { status: 'complete', truncated: false }, assessment: 'decided' })
@@ -241,16 +231,9 @@ it('bounds driver key materialization by distinct spellings while preserving pub
     { ...attempt(excluded[2]!, 'failed', later), interface: 'apply_list', relations: [{ sequenceNo: 1, usccRaw: '91330211255994457P', nameRaw: '合成差异00' }] },
     attempt('archive:ascii-unrelated', 'failed', later),
   ] satisfies NonNullable<RosterImportPayload['platformQueries']>
-  // The offline source still exercises a NUL-bearing key with the independent
-  // scalar reader. Use another excluded spelling on the PostgreSQL text path.
-  const initial = await f.write(
-    { platformQueries: rawHistory.map(row => ({ ...row, queryKey: row.queryKey.replace('\0', '!') })) },
-    { platformQueries: rawHistory },
-  )
-  const capturedKey = f.oracle.$client.prepare(
-    'SELECT count(*) AS n FROM platform_collection WHERE hex(CAST(query_key AS BLOB)) = ?',
-  ).get(Buffer.from(excluded[1]!).toString('hex').toUpperCase())
-  expect(capturedKey).toEqual({ n: 8 })
+  const initial = await f.write({
+    platformQueries: rawHistory.map(row => ({ ...row, queryKey: row.queryKey.replace('\0', '!') })),
+  })
   const queryIds = (receipt: typeof initial) => receipt.items.filter(item => item.kind === 'platform_query').map(item => Number(item.ref.split(':')[1]))
   const initialIds = queryIds(initial)
   const relatedId = initialIds[38]!, nameId = initialIds[36]!, otherNameId = initialIds[37]!
@@ -296,9 +279,6 @@ it('bounds driver key materialization by distinct spellings while preserving pub
       const matching = mcp.rows.find((r: any) => r.enterpriseId === row.enterpriseId && r.direction === row.direction)
       expect(matching.queryCoverage).toEqual(row.queryCoverage)
     }
-    // Supplementary scalar-reference parity; literal assertions above own the
-    // expected matching branches, statuses, ordering and history boundary.
-    expect(rest).toEqual(reference(f.oracle, { pageSize: 50 }))
   }
   await check(false)
   const statuses = ['no_record', 'not_queried', 'partial', 'failed'] as const

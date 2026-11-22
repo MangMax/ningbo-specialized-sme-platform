@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { expect, it, vi } from 'vitest'
 import { enterpriseBusinessTimeline } from '../../../layers/sme-roster/lib/roster/enterprise-business-timeline'
 import { sourceDate, type PlatformQualificationFact } from '../../../layers/sme-roster/lib/roster/platform-qualification'
 
@@ -44,47 +46,62 @@ it('empty sources remain explicit and another enterprise cannot enter the timeli
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initializeDb } from '../../../db/client'
-import * as schema from '../../../db/schema'
-import { getRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-roster-sqlite'
+import * as schema from '../fixtures/postgres-tables'
+import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-detail-postgres'
 
-it('detail binds the timeline and qualification summary to the requested snapshot day', () => {
+it('detail binds the timeline and qualification summary to the requested snapshot day', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'detail-813-'))
-  const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.sqlite') })
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   try {
-    const enterprise = db.insert(schema.enterprise).values({ name: '详情快照企业', nameNorm: '详情快照企业', usccNorm: fact.uscc }).returning().get()
-    const record = db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: '详情快照企业' }).returning().get()
-    db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2026, batchSeq: 1 }).run()
-    const detail = getRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z'))!
+    postgres = await postgresRuntimeFixture({ dir })
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+    const db = usePostgresDirectoryDb()
+    const enterprise = (await db.insert(schema.enterprise).values({ name: '详情快照企业', nameNorm: '详情快照企业', usccNorm: fact.uscc }).returning())[0]!
+    const record = (await db.insert(schema.record).values({ enterpriseId: enterprise.id, titleCode: 'specialized_sme', source: 'jxj', nameRaw: '详情快照企业' }).returning())[0]!
+    await db.insert(schema.recordEvent).values({ recordId: record.id, eventType: 'award', year: 2026, batchSeq: 1 })
+    const detail = (await readPostgresRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z')))!
     expect(detail.businessTimeline.asOf).toBe('2026-11-16T00:00:00.000Z')
     expect(detail.qualificationAssessment.asOf).toBe('2026-11-16T00:00:00.000Z')
     expect(detail.businessTimeline.sources[0]!.events).toHaveLength(1)
     expect(detail.businessTimeline.sources[0]!.events[0]).toMatchObject({ matter: 'award', title: 'specialized_sme', businessTime: { value: '2026', precision: 'year' } })
     expect(detail.businessTimeline.sources.slice(1).map(s => [s.collectionStatus, s.events])).toEqual([['not_collected', []], ['not_collected', []], ['not_collected', []]])
-  } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+  } finally {
+    await closePostgresDirectoryDb()
+    postgres?.close()
+    vi.unstubAllEnvs()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 import { submitSyntheticRecognizedCollection } from '../fixtures/recognized-source'
-it('detail shares the directory fact with qualification without publication or correspondence after repeated capture', () => {
+it('detail shares the directory fact with qualification without publication or correspondence after repeated capture', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'detail-813-directory-'))
-  const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.sqlite') })
+  let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
   try {
-    const enterprise = db.insert(schema.enterprise).values({ name: '目录独立企业', nameNorm: '目录独立企业', usccNorm: fact.uscc }).returning().get()
+    postgres = await postgresRuntimeFixture({ dir })
+    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+    const db = usePostgresDirectoryDb()
+    const enterprise = (await db.insert(schema.enterprise).values({ name: '目录独立企业', nameNorm: '目录独立企业', usccNorm: fact.uscc }).returning())[0]!
     const raw = { id: 'DIR-813', tyshxydm: fact.uscc, qymc: '平台原名称', rdjb: '2', rdtime: '2026-03-06', rddqrq: '2029-03-05', sfyx: '1', szsmc: '宁波市' }
     for (const queriedAt of ['2026-11-14T00:00:00Z', '2026-11-15T00:00:00Z']) {
-      submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt, conditions: { uscc: fact.uscc }, rows: [{ raw, enterpriseId: null }] })
+      await submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt, conditions: { uscc: fact.uscc }, rows: [{ raw, enterpriseId: null }] })
     }
-    const detail = getRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z'))!
+    const detail = (await readPostgresRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z')))!
     expect(detail.events).toEqual([])
     expect(detail.businessTimeline.asOf).toBe(detail.qualificationAssessment.asOf)
     expect(detail.businessTimeline.sources.map(s => s.events.length)).toEqual([0, 1, 0, 0])
     expect(detail.businessTimeline.sources[1]!.events[0]).toMatchObject({ matter: 'recognition', conclusion: 'passed', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } }, collectedAt: '2026-11-15T00:00:00Z' })
     const summary = detail.qualificationAssessment.titles.find(t => t.titleCode === 'specialized_sme')!
     expect(summary.effectiveQualification).toMatchObject({ status: 'effective', source: { source: 'recognized_list', businessTime: { value: '2026-03-06' }, period: { from: { value: '2026-03-06' }, until: { value: '2029-03-05' } } } })
-    submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt: '2026-11-16T01:00:00Z', conditions: { uscc: fact.uscc }, rows: [{ raw: { ...raw, qymc: '平台更正名称', rddqrq: '2030-03-05' }, enterpriseId: null }] })
-    const refreshed = getRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z'))!
+    await submitSyntheticRecognizedCollection(db, { rdjb: '2', queriedAt: '2026-11-16T01:00:00Z', conditions: { uscc: fact.uscc }, rows: [{ raw: { ...raw, qymc: '平台更正名称', rddqrq: '2030-03-05' }, enterpriseId: null }] })
+    const refreshed = (await readPostgresRosterEnterpriseDetail(db, enterprise.id, Date.parse('2026-11-16T00:00:00Z')))!
     expect(refreshed.businessTimeline.sources[1]!.events[0]).toMatchObject({ platformName: '平台更正名称', period: { until: { value: '2030-03-05' } } })
     expect(refreshed.qualificationAssessment.titles.find(t => t.titleCode === 'specialized_sme')!.effectiveQualification).toMatchObject({ status: 'effective', source: { platformName: '平台更正名称', period: { until: { value: '2030-03-05' } } } })
     expect(detail.businessTimeline.sources[1]!.events[0]!.period.until.value).toBe('2029-03-05')
-  } finally { db.$client.close(); rmSync(dir, { recursive: true, force: true }) }
+  } finally {
+    await closePostgresDirectoryDb()
+    postgres?.close()
+    vi.unstubAllEnvs()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

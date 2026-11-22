@@ -1,4 +1,4 @@
-import type { JobSpec } from './job-runner'
+import type { JobSpec } from './job-contract'
 
 const specs = new Map<string, JobSpec>()
 

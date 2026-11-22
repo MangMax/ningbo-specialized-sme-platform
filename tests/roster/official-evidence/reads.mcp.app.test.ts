@@ -294,7 +294,7 @@ it('transport other legacy receipt tools retain SDK field errors', async () => {
 
 const pgBin = process.env.TEST_IMPORT_RECEIPTS_PG_BIN
 // This starts a second PostgreSQL 19 instance from a logical dump of the
-// first one. SQLite source fidelity belongs to postgresql-materialization.upgrade.test.ts.
+// first one.
 it.runIf(!!pgBin)('restores import receipts and exact immutable projections with HTTP and MCP parity', async () => {
   const pgDir = mkdtempSync('/tmp/receipt-pg-')
   const url = 'postgresql://receipt_fixture@localhost/postgres?host=' + encodeURIComponent(pgDir)
@@ -838,7 +838,8 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     expect(sourceIdentities.map(row => row.split('|')[0])).toEqual(['apply_list', 'business_list', 'recognized_list'])
     const conflict = structuredClone(archiveRequest)
     conflict.idempotencyKey = 'native-conflicting-archive'
-    conflict.payload.platformQueries[0]!.rawResponse = '{"replacement":true}'
+    const conflictingQuery = { ...conflict.payload.platformQueries[0]!, rawResponse: '{"replacement":true}' }
+    conflict.payload.platformQueries = [conflictingQuery]
     const rejectedArchive = await stage(conflict)
     expect(await rejectedArchive.json()).toMatchObject({ status: 'failed', items: [expect.objectContaining({
       error: expect.objectContaining({ code: 'query_replay_offline' }),

@@ -1,109 +1,106 @@
-import { initializeDb } from '../../../db/client'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { useDb, schema } from '../../../db'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { TitleCode } from '../../../db/titles'
-import { getComparison, type ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
-import type { EventType } from '../../../layers/sme-roster/lib/query'
+import { getPostgresComparison, type ComparisonDirection } from '../../../layers/sme-roster/lib/comparison'
+import type { EventType } from '../../../layers/sme-roster/lib/query-projection'
+import * as schema from '../fixtures/postgres-tables'
+import { useIsolatedPostgresCases, singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 
-const dir = mkdtempSync(join(tmpdir(), 'spztx-comparison-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'test.db') })
-const ids: Record<string, number> = {}
+const openDatabase = useIsolatedPostgresCases()
+let ids: Record<string, number>
+let db: ReturnType<typeof openDatabase>
 
-function enterprise(key: string, uscc: string | null, name = key, city: string | null = null, regStatus: string | null = null) {
-  const id = db.insert(schema.enterprise)
+async function enterprise(key: string, uscc: string | null, name = key, city: string | null = null, regStatus: string | null = null) {
+  const id = singlePostgresFixtureRow(await db.insert(schema.enterprise)
     .values({ name, nameNorm: name, usccNorm: uscc, city, regStatus })
-    .returning({ id: schema.enterprise.id }).get().id
+    .returning({ id: schema.enterprise.id })).id
   ids[key] = id
   return id
 }
 
-function record(enterpriseId: number, source: 'jxj' | 'miit', titleCode: TitleCode = 'specialized_sme', events: EventType[] = ['award']) {
-  const recordId = db.insert(schema.record)
+async function record(enterpriseId: number, source: 'jxj' | 'miit', titleCode: TitleCode = 'specialized_sme', events: EventType[] = ['award']) {
+  const recordId = singlePostgresFixtureRow(await db.insert(schema.record)
     .values({ enterpriseId, source, titleCode, district: '鄞州区' })
-    .returning({ id: schema.record.id }).get().id
-  events.forEach((eventType) => db.insert(schema.recordEvent)
-    .values({ recordId, eventType, year: 2001 }).run())
+    .returning({ id: schema.record.id })).id
+  for (const eventType of events) await db.insert(schema.recordEvent).values({ recordId, eventType, year: 2001 })
 }
 
-beforeAll(() => {
-  const both = enterprise('both', 'BOTH')
-  record(both, 'jxj')
-  record(both, 'miit')
-  record(enterprise('jxj', 'JXJ'), 'jxj', 'specialized_sme', ['award', 'review', 'review'])
-  record(enterprise('miit', 'MIIT'), 'miit')
-  record(enterprise('nurture', 'NURTURE'), 'jxj', 'specialized_sme', ['nurture'])
-  const nurtureMatched = enterprise('nurtureMatched', 'NURTURE-MATCHED')
-  record(nurtureMatched, 'jxj', 'specialized_sme', ['nurture'])
-  record(nurtureMatched, 'miit')
-  record(enterprise('conflictJ', '12330227732092318Q', '宁波市鄞州区规划设计院'), 'jxj')
-  record(enterprise('conflictM', '9133021257053651XQ', '宁波市鄞州区规划设计院'), 'miit')
-  const noUscc = enterprise('noUscc', null)
-  record(noUscc, 'jxj')
-  record(noUscc, 'miit')
-  record(enterprise('nullJ', null, '同名无统代'), 'jxj')
-  record(enterprise('nullM', null, '同名无统代'), 'miit')
-  record(enterprise('offCity', 'OFF-CITY', '迁出注销企业', '嘉兴市', '注销'), 'miit')
-  record(ids.jxj!, 'miit', 'innovative_sme')
-  record(enterprise('reviewOnly', 'REVIEW'), 'jxj', 'innovative_sme', ['review'])
-  record(enterprise('giantJ', 'GIANT-J'), 'jxj', 'little_giant')
-  record(enterprise('giantM', 'GIANT-M'), 'miit', 'little_giant')
-  const giantBoth = enterprise('giantBoth', 'GIANT-BOTH')
-  record(giantBoth, 'jxj', 'little_giant')
-  record(giantBoth, 'miit', 'little_giant')
+beforeEach(async () => {
+  db = openDatabase()
+  ids = {}
+  const both = await enterprise('both', 'BOTH')
+  await record(both, 'jxj')
+  await record(both, 'miit')
+  await record(await enterprise('jxj', 'JXJ'), 'jxj', 'specialized_sme', ['award', 'review', 'review'])
+  await record(await enterprise('miit', 'MIIT'), 'miit')
+  await record(await enterprise('nurture', 'NURTURE'), 'jxj', 'specialized_sme', ['nurture'])
+  const nurtureMatched = await enterprise('nurtureMatched', 'NURTURE-MATCHED')
+  await record(nurtureMatched, 'jxj', 'specialized_sme', ['nurture'])
+  await record(nurtureMatched, 'miit')
+  await record(await enterprise('conflictJ', '12330227732092318Q', '宁波市鄞州区规划设计院'), 'jxj')
+  await record(await enterprise('conflictM', '9133021257053651XQ', '宁波市鄞州区规划设计院'), 'miit')
+  const noUscc = await enterprise('noUscc', null)
+  await record(noUscc, 'jxj')
+  await record(noUscc, 'miit')
+  await record(await enterprise('nullJ', null, '同名无统代'), 'jxj')
+  await record(await enterprise('nullM', null, '同名无统代'), 'miit')
+  await record(await enterprise('offCity', 'OFF-CITY', '迁出注销企业', '嘉兴市', '注销'), 'miit')
+  await record(ids.jxj!, 'miit', 'innovative_sme')
+  await record(await enterprise('reviewOnly', 'REVIEW'), 'jxj', 'innovative_sme', ['review'])
+  await record(await enterprise('giantJ', 'GIANT-J'), 'jxj', 'little_giant')
+  await record(await enterprise('giantM', 'GIANT-M'), 'miit', 'little_giant')
+  const giantBoth = await enterprise('giantBoth', 'GIANT-BOTH')
+  await record(giantBoth, 'jxj', 'little_giant')
+  await record(giantBoth, 'miit', 'little_giant')
 })
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-const members = (direction: ComparisonDirection, title = 'specialized_sme') =>
-  getComparison(db, { title: [title], direction }).rows.map((r) => r.enterpriseId).sort((a, b) => a - b)
+const members = async (direction: ComparisonDirection, title = 'specialized_sme') =>
+  (await getPostgresComparison(db, { title: [title], direction })).rows.map((r) => r.enterpriseId).sort((a, b) => a - b)
 
-describe('getComparison 统代差集(企业 × 称号)', () => {
-  it('returns exact member sets for both directions without name fallback', () => {
-    expect(members('missing_in_miit')).toEqual(
+describe('getPostgresComparison 统代差集(企业 × 称号)', () => {
+  it('returns exact member sets for both directions without name fallback', async () => {
+    expect(await members('missing_in_miit')).toEqual(
       ['jxj', 'nurture', 'conflictJ', 'noUscc', 'nullJ'].map((key) => ids[key]!).sort((a, b) => a - b),
     )
-    expect(members('extra_in_miit')).toEqual(
+    expect(await members('extra_in_miit')).toEqual(
       ['miit', 'conflictM', 'noUscc', 'nullM', 'offCity'].map((key) => ids[key]!).sort((a, b) => a - b),
     )
   })
 
-  it('excludes a matching USCC from both directions', () => {
-    expect(getComparison(db).rows.filter((r) => r.enterpriseId === ids.both)).toEqual([])
+  it('excludes a matching USCC from both directions', async () => {
+    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.both)).toEqual([])
   })
 
-  it('includes nurture-only records in J(T), with and without a matching MIIT record', () => {
-    expect(members('missing_in_miit')).toContain(ids.nurture)
-    expect(members('extra_in_miit')).not.toContain(ids.nurture)
-    expect(getComparison(db).rows.filter((r) => r.enterpriseId === ids.nurtureMatched)).toEqual([])
+  it('includes nurture-only records in J(T), with and without a matching MIIT record', async () => {
+    expect(await members('missing_in_miit')).toContain(ids.nurture)
+    expect(await members('extra_in_miit')).not.toContain(ids.nurture)
+    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.nurtureMatched)).toEqual([])
   })
 
-  it('exposes the same legal person with different source USCCs in both directions', () => {
-    const rows = getComparison(db).rows.filter((r) => r.name === '宁波市鄞州区规划设计院')
+  it('exposes the same legal person with different source USCCs in both directions', async () => {
+    const rows = (await getPostgresComparison(db)).rows.filter((r) => r.name === '宁波市鄞州区规划设计院')
     expect(rows.map((r) => [r.uscc, r.direction]).sort()).toEqual([
       ['12330227732092318Q', 'missing_in_miit'],
       ['9133021257053651XQ', 'extra_in_miit'],
     ])
   })
 
-  it('never matches null USCCs, even for the same enterprise or identical names', () => {
-    expect(members('missing_in_miit')).toEqual(expect.arrayContaining([ids.noUscc, ids.nullJ]))
-    expect(members('extra_in_miit')).toEqual(expect.arrayContaining([ids.noUscc, ids.nullM]))
+  it('never matches null USCCs, even for the same enterprise or identical names', async () => {
+    expect(await members('missing_in_miit')).toEqual(expect.arrayContaining([ids.noUscc, ids.nullJ]))
+    expect(await members('extra_in_miit')).toEqual(expect.arrayContaining([ids.noUscc, ids.nullM]))
   })
 
-  it('counts each enterprise × title once, regardless of event count or year', () => {
-    expect(getComparison(db).rows.filter((r) => r.enterpriseId === ids.jxj)
+  it('counts each enterprise × title once, regardless of event count or year', async () => {
+    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.jxj)
       .map((r) => [r.titleCode, r.direction])).toEqual([
       ['specialized_sme', 'missing_in_miit'],
       ['innovative_sme', 'extra_in_miit'],
     ])
-    expect(members('missing_in_miit', 'innovative_sme')).toEqual([ids.reviewOnly])
+    expect(await members('missing_in_miit', 'innovative_sme')).toEqual([ids.reviewOnly])
   })
 
-  it('keeps migrated and deregistered enterprises and exposes evidence', () => {
-    expect(getComparison(db).rows.find((r) => r.enterpriseId === ids.offCity)).toEqual({
+  it('keeps migrated and deregistered enterprises and exposes evidence', async () => {
+    expect((await getPostgresComparison(db)).rows.find((r) => r.enterpriseId === ids.offCity)).toEqual({
       enterpriseId: ids.offCity,
       name: '迁出注销企业', uscc: 'OFF-CITY', district: '鄞州区',
       titleCode: 'specialized_sme', direction: 'extra_in_miit', curated: false,
@@ -119,19 +116,19 @@ describe('getComparison 统代差集(企业 × 称号)', () => {
    * 「经信局不发布小巨人」这句**已被证伪**的断言,本次是有意变更,不是回归。
    * 硬边界不变:平台导出永不改写公布历史;未匹配平台的公布条目仍然保留。
    */
-  it('小巨人两侧都参与比对:公布有而平台无、平台有而公布无都能筛出同一企业', () => {
-    expect(members('missing_in_miit', 'little_giant')).toEqual([ids.giantJ])
-    expect(members('extra_in_miit', 'little_giant')).toEqual([ids.giantM])
+  it('小巨人两侧都参与比对:公布有而平台无、平台有而公布无都能筛出同一企业', async () => {
+    expect(await members('missing_in_miit', 'little_giant')).toEqual([ids.giantJ])
+    expect(await members('extra_in_miit', 'little_giant')).toEqual([ids.giantM])
     // 两侧统代一致的那家**两个方向都不出现**(与其它称号同一判据)。
-    expect(getComparison(db).rows.filter((r) => r.enterpriseId === ids.giantBoth)).toEqual([])
+    expect((await getPostgresComparison(db)).rows.filter((r) => r.enterpriseId === ids.giantBoth)).toEqual([])
     // 筛选小巨人时只看得到小巨人,不会串到别的称号。
     expect(
-      getComparison(db, { title: ['little_giant'] }).rows.map((r) => r.titleCode),
+      (await getPostgresComparison(db, { title: ['little_giant'] })).rows.map((r) => r.titleCode),
     ).toEqual(['little_giant', 'little_giant'])
   })
 
-  it('returns global counts consistent with complete rows and independent of filters', () => {
-    const all = getComparison(db)
+  it('returns global counts consistent with complete rows and independent of filters', async () => {
+    const all = await getPostgresComparison(db)
     expect(all.counts).toEqual({
       little_giant: { missing_in_miit: 1, extra_in_miit: 1 },
       specialized_sme: { missing_in_miit: 5, extra_in_miit: 5 },
@@ -142,7 +139,7 @@ describe('getComparison 统代差集(企业 × 称号)', () => {
         expect(all.rows.filter((r) => r.titleCode === title && r.direction === direction)).toHaveLength(n)
       }
     }
-    const filtered = getComparison(db, { title: ['specialized_sme'], direction: 'missing_in_miit' })
+    const filtered = await getPostgresComparison(db, { title: ['specialized_sme'], direction: 'missing_in_miit' })
     expect(filtered.rows).toHaveLength(5)
     expect(filtered.rows.every((r) => r.direction === 'missing_in_miit' && r.titleCode === 'specialized_sme')).toBe(true)
     expect(filtered.counts).toEqual(all.counts)

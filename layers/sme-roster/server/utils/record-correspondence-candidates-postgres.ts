@@ -10,7 +10,8 @@ import {
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
 import { title } from '../../../../db/postgresql/title-table'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import type * as schema from '../../../../db/schema'
+import type { enterprise as EnterpriseTable } from '../../../../db/postgresql/enterprise-tables'
+import type { platformExportBatch as PlatformExportBatchTable } from '../../../../db/postgresql/platform-tables'
 import { normalizeUscc } from '../../lib/domain'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { type EventArchiveInput } from './event-archive-discovery'
@@ -122,14 +123,14 @@ export async function generatePostgresCandidates(db: Reader, input: CandidateInp
   if (input.eventId && !event) return null
   const enterpriseId = event?.record.enterpriseId ?? input.enterpriseId!, titleCode = event?.record.titleCode ?? input.titleCode!
   const owner = alias(enterprise, 'p')
-  const [ownerRow] = await db.select({ row: sql<typeof schema.enterprise.$inferSelect>`${postgresRosterRow(enterprise,'p')}` })
+  const [ownerRow] = await db.select({ row: sql<typeof EnterpriseTable.$inferSelect>`${postgresRosterRow(enterprise,'p')}` })
     .from(owner).where(and(eq(owner.id, enterpriseId), exists(db.select({ code: title.code }).from(title).where(eq(title.code, titleCode)))))
   if (!ownerRow) return null
   const identity = normalizeUscc(event?.record.usccRaw ?? ownerRow.row.usccNorm)
   const queries = await readPostgresCandidateQueries(db,input.queryIds)
   const b = alias(platformExportBatch, 'p')
   const batches = (await db.select({
-    row: sql<typeof schema.platformExportBatch.$inferSelect>`${postgresRosterRow(platformExportBatch,'p')}`,
+    row: sql<typeof PlatformExportBatchTable.$inferSelect>`${postgresRosterRow(platformExportBatch,'p')}`,
   }).from(b).where(eq(b.id, sql`ANY(${ids(input.exportBatchIds)})`)).orderBy(b.id)).map(({ row }) => row)
   if (queries.length !== new Set(input.queryIds).size || batches.length !== new Set(input.exportBatchIds).size) return null
   const targetPage = selection ? null : await pageCandidateGroups(db,input,enterpriseId,identity,titleCode)

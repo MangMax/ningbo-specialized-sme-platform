@@ -29,8 +29,7 @@ function count(value: bigint | string) {
 }
 
 function parseFileId(value: string | number) {
-  // SQLite compares an INTEGER column using numeric affinity when the filter
-  // text denotes a number. Other permitted filter tokens match no rows.
+  // File ID filters accept integral values in decimal or scientific notation.
   const text = String(value)
   if (/^[0-9]+$/.test(text)) {
     const integer = BigInt(text)

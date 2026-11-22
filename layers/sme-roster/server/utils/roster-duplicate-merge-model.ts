@@ -3,7 +3,7 @@ import { normalizeUscc } from '../../lib/domain'
 import type { NameMatchLevel } from '../../lib/roster/uscc-research'
 import { duplicateTwinKey, type DuplicateMergeEvidence, type DuplicateMergePendingReason, type DuplicateMergeReport } from '../../lib/roster/duplicate-merge'
 import type { DuplicateNameCandidate, RosterImportMerge } from '../../lib/roster-import-client'
-import type { evidenceQueries, evidenceRelations } from './roster-duplicate-merge'
+import type { PlatformStoredQuery, PlatformStoredRelation } from '../../lib/platform/read'
 
 /**
  * 接口 → 曾用名来源类别（契约 §1.2 的 `source_kind` 取值）。
@@ -24,9 +24,9 @@ const ALIAS_SOURCE_KIND: Record<string, 'platform_business' | 'platform_apply' |
  * 候选逐个查找，实测真实库上 `platform_relation` 一次全扫约 126ms，于是几十次查找要十几秒。
  * 索引一次建好、多次复用，**判据一个字没变**（索引里放的正是原来每次现算的那两张表）。
  */
-export type PlatformEvidenceQuery = ReturnType<typeof evidenceQueries>[number]
+export type PlatformEvidenceQuery = Pick<PlatformStoredQuery, 'id' | 'interface' | 'queryKey' | 'rdjb' | 'queriedAt'>
 
-export type PlatformEvidenceRelation = ReturnType<typeof evidenceRelations>[number]
+export type PlatformEvidenceRelation = Pick<PlatformStoredRelation, 'id' | 'queryId' | 'sequenceNo' | 'relationKey' | 'nameRaw' | 'usccRaw'>
 
 export interface PlatformEvidenceIndex {
   /** 归一化查询键 → 以它为键的查询。 */

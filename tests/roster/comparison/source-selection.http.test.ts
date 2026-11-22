@@ -1,6 +1,4 @@
-import { createReviewedFixtureImportClient } from '../imports/fixtures/reviewed-announcement'
-import { initializeDb } from '../../../db/client'
-import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
+import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -8,17 +6,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp, createRouter, createError, defineEventHandler, getQuery, toNodeListener } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { getComparison, type ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
+import { getPostgresComparison, type ComparisonRow } from '../../../layers/sme-roster/lib/comparison'
 import { type RosterImportRecord } from '../../../layers/sme-roster/lib/roster-import-client'
-import { startRosterApi, executeNativeImport } from '../imports/fixtures/import-server'
 
 const dir = mkdtempSync(join(tmpdir(), 'comparison-source-selection-'))
-const db = initializeDb({ create: true, dbPath: join(dir, 'fixture.db') })
-let imports: Awaited<ReturnType<typeof startRosterApi>>
+import pg from 'pg'
+import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
+import { enterprise, record } from '../fixtures/postgres-tables'
+let db: ReturnType<typeof usePostgresDirectoryDb>
+let empty: Awaited<ReturnType<typeof getPostgresComparison>>
 let server: Server
 let base: string
-let batch = 0
-let stagedBatch = 0
+
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 
 function syntheticUscc(n: number) {
@@ -29,43 +28,43 @@ function syntheticUscc(n: number) {
   return body + alphabet[(31 - sum % 31) % 31]
 }
 
+const identities = new Map<string, number>()
 async function seed(records: RosterImportRecord[]) {
-  const result = await createReviewedFixtureImportClient({ baseUrl: imports.baseUrl, token: 'synthetic-source-selection' }, db).commit({
-    idempotencyKey: `source-selection-${++batch}`, sourceKind: 'announcement', sourceIdentity: `synthetic/source-selection/${batch}`,
-    payload: { announcement: { sourceDocument: { source: 'jxj', title: 'Synthetic source membership' }, records } },
-  })
-  expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed', summary: { failed: 0 } })
+  for (const row of records) {
+    const { name, uscc, district } = row.enterprise
+    const key = uscc ?? name
+    let enterpriseId = identities.get(key)
+    if (enterpriseId === undefined) {
+      enterpriseId = singlePostgresFixtureRow(await db.insert(enterprise).values({ name, nameNorm: name, usccNorm: uscc }).returning()).id
+      identities.set(key, enterpriseId)
+    }
+    await db.insert(record).values({ enterpriseId, source: row.source ?? 'jxj', titleCode: row.titleCode, district }).onConflictDoNothing()
+  }
 }
 
-// Observe actual driver values (including cursors), never replace results. The
-// domain read isolates source-set work from unrelated platform hydration queries.
-function measureComparison() {
+async function measureComparison() {
   let rows = 0, bytes = 0
-  const queries: Array<{ sql: string; plan: unknown[] }> = []
-  const prepare = db.$client.prepare.bind(db.$client)
-  db.$client.prepare = ((...args: Parameters<typeof prepare>) => {
-    const statement = prepare(...args)
-    const count = (row: unknown) => { rows++; bytes += Buffer.byteLength(JSON.stringify(row) ?? '') }
-    const plan = (params: unknown[]) => queries.push({ sql: args[0], plan: prepare(`EXPLAIN QUERY PLAN ${args[0]}`).all(...params) })
-    for (const method of ['all', 'get'] as const) {
-      const run = statement[method].bind(statement)
-      Object.assign(statement, { [method]: (...params: unknown[]) => {
-        plan(params)
-        const value = run(...params)
-        if (method === 'all') for (const row of value as unknown[]) count(row)
-        else if (value != null) count(value)
-        return value
-      } })
+  const original = pg.Client.prototype.query
+  const observe = (query: pg.QueryResult | undefined) => {
+    for (const row of query?.rows ?? []) {
+      rows++
+      bytes += Buffer.byteLength(JSON.stringify(row))
     }
-    const iterate = statement.iterate.bind(statement)
-    Object.assign(statement, { iterate: function* (...params: unknown[]) {
-      plan(params)
-      for (const row of iterate(...params)) { count(row); yield row }
-    } })
-    return statement
-  }) as typeof prepare
-  try { return { result: getComparison(db), metrics: () => ({ rows, bytes, queries }) } }
-  finally { db.$client.prepare = prepare }
+  }
+  const spy = vi.spyOn(pg.Client.prototype, 'query').mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+    const index = args.findIndex(arg => typeof arg === 'function')
+    if (index >= 0) {
+      const callback = args[index] as (error: unknown, result: pg.QueryResult) => void
+      args[index] = (error: unknown, query: pg.QueryResult) => {
+        observe(query)
+        callback(error, query)
+      }
+    }
+    const result = Reflect.apply(original, this, args)
+    return result instanceof Promise ? result.then((query: pg.QueryResult) => { observe(query); return query }) : result
+  } as typeof original)
+  try { return { result: await getPostgresComparison(db), metrics: () => ({ rows, bytes }) } }
+  finally { spy.mockRestore() }
 }
 
 beforeAll(async () => {
@@ -73,7 +72,11 @@ beforeAll(async () => {
   vi.stubGlobal('getQuery', getQuery)
   vi.stubGlobal('createError', createError)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
-  imports = await startRosterApi({ db, apiToken: 'synthetic-source-selection', executeImport: executeNativeImport })
+  postgres = await postgresRuntimeFixture({ dir })
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_DB_READONLY', '0')
+  db = usePostgresDirectoryDb()
+  empty = await getPostgresComparison(db)
   const handler = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   server = createServer(toNodeListener(createApp().use(createRouter().get('/api/comparison', handler))))
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -91,24 +94,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await imports?.close()
   await closePostgresDirectoryDb()
   postgres?.close()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
-  db.$client.close(); rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true })
 })
 
 async function read(query = '') {
-  // The reviewed import builds an independent SQLite input. Each HTTP phase
-  // reads the corresponding materialized PostgreSQL generation.
-  if (stagedBatch !== batch || !postgres) {
-    await closePostgresDirectoryDb()
-    postgres?.close()
-    postgres = await postgresRuntimeFixture({ dir, sourcePath: db.$client.name })
-    vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
-    stagedBatch = batch
-  }
   const response = await fetch(base + query)
   expect(response.status, await response.clone().text()).toBe(200)
   return response.json()
@@ -123,7 +116,7 @@ const expectedCoordinates = [
 ]
 
 it('keeps source differences and driver materialization fixed as matched records grow', async () => {
-  const initial = measureComparison()
+  const initial = await measureComparison()
   expect(coordinates(initial.result.rows)).toEqual(expectedCoordinates)
   const observations = [{ matchedEnterprises: 1, ...initial.metrics() }]
   for (const count of [4, 20]) {
@@ -134,7 +127,7 @@ it('keeps source differences and driver materialization fixed as matched records
         { enterprise, titleCode: 'specialized_sme', source: 'miit', events: [] },
       ]
     }).flat())
-    const after = measureComparison()
+    const after = await measureComparison()
     expect(after.result).toEqual(initial.result)
     observations.push({ matchedEnterprises: count === 4 ? 5 : 25, ...after.metrics() })
   }
@@ -154,10 +147,10 @@ it('preserves full and summary HTTP membership, representatives, global counts, 
   const full = await read('?pageSize=50')
   expect(coordinates(full.rows)).toEqual(expectedCoordinates)
   expect(full.counts).toEqual(counts)
-  const filtered = getComparison(db, { title: ['innovative_sme'], direction: 'missing_in_miit' })
+  const filtered = await getPostgresComparison(db, { title: ['innovative_sme'], direction: 'missing_in_miit' })
   expect(coordinates(filtered.rows)).toEqual([expectedCoordinates[4]])
   expect(filtered.counts).toEqual(counts)
-  expect(getComparison(db, { title: ['unknown'] })).toEqual({ rows: [], counts })
+  expect(await getPostgresComparison(db, { title: ['unknown'] })).toEqual({ rows: [], counts })
   expect(full.rows.find((row: ComparisonRow) => row.name === 'Alpha复核')).toMatchObject({
     uscc: '91330211255994457P', curated: false,
     evidence: { matchedBy: 'uscc', otherSideUscc: null, currentCity: null, regStatus: null },
@@ -191,7 +184,7 @@ it('keeps distinct stored USCC identities and title scopes separate while retain
     ['Null双侧', 'innovative_sme', 'extra_in_miit', '余姚市'],
     ['Null双侧', 'innovative_sme', 'missing_in_miit', '鄞州区'],
   ]
-  expect(coordinates(getComparison(db, { title: ['specialized_sme', 'innovative_sme'] }).rows)).toEqual(expected)
+  expect(coordinates((await getPostgresComparison(db, { title: ['specialized_sme', 'innovative_sme'] })).rows)).toEqual(expected)
   for (const view of ['full', 'summary']) {
     const response = await read(`?view=${view}&title=specialized_sme,innovative_sme&pageSize=50`)
     expect(coordinates(response.rows)).toEqual(expected)
@@ -207,12 +200,9 @@ it('keeps distinct stored USCC identities and title scopes separate while retain
 }, 30_000)
 
 it('returns all zero title buckets for an empty source set', () => {
-  const empty = initializeDb({ create: true, dbPath: join(dir, 'empty.db') })
-  try {
-    expect(getComparison(empty)).toEqual({ rows: [], counts: {
-      little_giant: { missing_in_miit: 0, extra_in_miit: 0 },
-      specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 },
-      innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 },
-    } })
-  } finally { empty.$client.close() }
+  expect(empty).toEqual({ rows: [], counts: {
+    little_giant: { missing_in_miit: 0, extra_in_miit: 0 },
+    specialized_sme: { missing_in_miit: 0, extra_in_miit: 0 },
+    innovative_sme: { missing_in_miit: 0, extra_in_miit: 0 },
+  } })
 })

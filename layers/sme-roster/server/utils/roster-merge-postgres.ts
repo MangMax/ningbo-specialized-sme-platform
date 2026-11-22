@@ -10,7 +10,7 @@ import { differenceReason } from '../../../../db/postgresql/roster-selection-tab
 import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
-import type { MergeLineage } from './roster-import'
+import type { MergeLineage } from './roster-import-model'
 import { findPostgresImportQuery, findPostgresImportRelation } from './roster-import-references-postgres'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]

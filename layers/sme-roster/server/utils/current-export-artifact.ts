@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs'
 import { stat, unlink, realpath, readdir } from 'node:fs/promises'
 import { join, dirname, resolve } from 'node:path'
-import type { JobRow } from '../../../core/server/utils/job-store'
+import type { JobRow } from '../../../core/server/utils/job-contract'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 export const EXPORT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export const EXPORT_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

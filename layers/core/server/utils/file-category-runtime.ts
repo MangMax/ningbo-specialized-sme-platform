@@ -1,5 +1,5 @@
 import { createFileCategoryRules } from './file-category-rules'
-import type { FileCategoryServer } from './file-store'
+import type { FileCategoryServer } from './file-store-contract'
 
 export let serverFileCategories: readonly FileCategoryServer[] = []
 export let postgresFileCategoryRules = createFileCategoryRules(serverFileCategories)

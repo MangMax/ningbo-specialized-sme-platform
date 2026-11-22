@@ -1,32 +1,50 @@
-import { sqliteCredentialStorage, type CredentialContext } from '../../../layers/core/server/utils/credential-state'
-import { initializeDb } from '../../../db/client'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { afterEach, expect, it } from 'vitest'
-import { schema, useDb } from '../../../db'
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
+import pg from 'pg'
+import { afterAll, afterEach, beforeAll, expect, it } from 'vitest'
+import { readPostgresCredentialState, updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
+import type { CredentialReadContext } from '../../../layers/core/server/utils/credential-resolution'
 import { handleCredentialsRequest as handle } from '../../../layers/core/server/utils/credentials-http'
 import { startHttpFixture, type HttpFixture } from '../../support/http'
+import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 const handleCredentialsRequest = (
-  action: Parameters<typeof handle>[0], request: Parameters<typeof handle>[1], ctx: CredentialContext, revealKey?: string,
-) => handle(action, request, ctx, sqliteCredentialStorage(ctx), revealKey)
+  action: Parameters<typeof handle>[0], request: Parameters<typeof handle>[1],
+  ctx: CredentialReadContext & { db: NodePgDatabase }, revealKey?: string,
+) => handle(action, request, ctx, {
+  read: () => readPostgresCredentialState(ctx.db),
+  update: values => updatePostgresCredentialState(ctx.db, values),
+}, revealKey)
 
-let dir: string
-let db: ReturnType<typeof useDb>
+const dir = mkdtempSync(join(tmpdir(), 'credential-api-'))
+let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
+let db: ReturnType<typeof connect>
 let server: HttpFixture
-const connections: Database.Database[] = []
+const connections = new Set<pg.Pool>()
+
+beforeAll(async () => { runtime = await postgresRuntimeFixture({ dir }) }, 20_000)
 afterEach(async () => {
   await server?.close()
-  for (const connection of connections.splice(0)) if (connection.open) connection.close()
-  if (dir) rmSync(dir, { recursive: true, force: true })
+  await Promise.all([...connections].map(pool => pool.end()))
+  connections.clear()
 })
-function connect() {
-  const connection = new Database(join(dir, 'roster.sqlite'))
-  connections.push(connection)
-  return drizzle(connection, { schema })
+afterAll(() => {
+  try { runtime?.close() } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+function connect(readOnly = false) {
+  const pool = new pg.Pool({
+    connectionString: runtime.url,
+    options: readOnly ? '-c default_transaction_read_only=on' : undefined,
+  })
+  connections.add(pool)
+  return drizzle(pool)
+}
+async function disconnect(connection: ReturnType<typeof connect>) {
+  connections.delete(connection.$client)
+  await connection.$client.end()
 }
 async function serve() {
   server = await startHttpFixture({ routes: {
@@ -36,9 +54,8 @@ async function serve() {
   } })
 }
 async function start() {
-  dir = mkdtempSync(join(tmpdir(), 'credential-api-'))
-  db = initializeDb({ create: true, dbPath: join(dir, 'roster.sqlite') })
-  connections.push(db.$client)
+  runtime.psql(['-c', 'DROP TRIGGER IF EXISTS reject_cookie ON business.service_credential; TRUNCATE business.service_credential'])
+  db = connect()
   await serve()
 }
 async function request(method = 'GET', body?: unknown, suffix = '') {
@@ -79,8 +96,10 @@ it('accepts only registered namespaced keys at the settings HTTP boundary', asyn
 it('persists both credentials across database connection and HTTP server restart', async () => {
   await start()
   await request('PATCH', { 'core.ocrToken': 'synthetic-persisted-ocr', 'sme-roster.miitCookie': 'session=synthetic-persisted-cookie' })
-  await server.close(); db.$client.close()
-  db = connect(); await serve()
+  await server.close()
+  await disconnect(db)
+  db = connect()
+  await serve()
   const state = await (await request()).json()
   expect(state).toMatchObject({ 'core.ocrToken': { source: 'saved', hasSaved: true, masked: 'syn********ocr' }, 'sme-roster.miitCookie': { source: 'saved', hasSaved: true, masked: 'ses********kie' } })
   expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-persisted-ocr')
@@ -101,20 +120,28 @@ it('keeps independent updates across separate database connections and concurren
 it('rolls back the entire mixed update on a database failure and retries after recovery', async () => {
   await start()
   await request('PATCH', { 'core.ocrToken': 'synthetic-kept-ocr', 'sme-roster.miitCookie': 'session=synthetic-kept-cookie' })
-  db.$client.exec("CREATE TRIGGER reject_cookie BEFORE INSERT ON service_credential WHEN NEW.key = 'sme-roster.miitCookie' BEGIN SELECT RAISE(ABORT, 'synthetic-sensitive-sql'); END")
+  await db.$client.query(`
+    CREATE OR REPLACE FUNCTION business.reject_cookie() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'synthetic-sensitive-sql';
+    END
+    $$;
+    CREATE TRIGGER reject_cookie BEFORE INSERT OR UPDATE ON business.service_credential
+    FOR EACH ROW WHEN (NEW.key = 'sme-roster.miitCookie') EXECUTE FUNCTION business.reject_cookie();
+  `)
   const failed = await request('PATCH', { 'core.ocrToken': 'synthetic-never-written', 'sme-roster.miitCookie': 'session=synthetic-never-written' })
   expect(failed.status).toBe(503)
   expect(failed.headers.get('cache-control')).toBe('no-store')
   expect(JSON.stringify(await failed.json())).not.toMatch(/synthetic|service_credential|SQL|INSERT/)
   expect((await (await request('POST', {}, '/core.ocrToken/reveal')).json()).value).toBe('synthetic-kept-ocr')
   expect((await (await request('POST', {}, '/sme-roster.miitCookie/reveal')).json()).value).toBe('session=synthetic-kept-cookie')
-  db.$client.exec('DROP TRIGGER reject_cookie')
+  await db.$client.query('DROP TRIGGER reject_cookie ON business.service_credential')
   expect((await request('PATCH', { 'core.ocrToken': 'synthetic-retried', 'sme-roster.miitCookie': 'session=synthetic-retried' })).status).toBe(200)
 })
 it('rejects writes on a read-only database while preserving saved values', async () => {
   await start()
   await request('PATCH', { 'core.ocrToken': 'synthetic-kept' })
-  const readonly = useDb({ dbPath: join(dir, 'roster.sqlite'), readOnly: true }); connections.push(readonly.$client)
+  const readonly = connect(true)
   for (const [method, body] of [['PATCH', { 'core.ocrToken': 'synthetic-rejected' }], ['DELETE', { key: 'core.ocrToken' }]] as const) {
     const response = await handleCredentialsRequest('state', { method, body, headers: {} }, { db: readonly, env: {} })
     expect(response.status).toBe(503)
@@ -124,11 +151,11 @@ it('rejects writes on a read-only database while preserving saved values', async
 })
 it('fails closed when the database is unavailable instead of falling back or exposing SQL errors', async () => {
   await start()
-  db.$client.close()
+  await disconnect(db)
   for (const action of ['state', 'reveal'] as const) {
     const response = await handleCredentialsRequest(action, { method: action === 'state' ? 'GET' : 'POST', headers: {}, body: null }, { db, env: { NUXT_OCR_TOKEN: 'synthetic-fallback' } }, 'core.ocrToken')
     expect(response.status).toBe(503)
-    expect(JSON.stringify(response)).not.toMatch(/synthetic|closed|sqlite|roster.sqlite/)
+    expect(JSON.stringify(response)).not.toMatch(/synthetic|closed|Pool|service_credential/)
   }
 })
 it('clears only database overrides and restores deployment fallback without changing the environment', async () => {
@@ -153,16 +180,20 @@ it('rejects invalid payloads and omitted fields leave the saved credential uncha
 })
 it('configuration writes change only credential rows and never business or task tables', async () => {
   await start()
-  db.insert(schema.enterprise).values({ name: 'Synthetic enterprise', nameNorm: 'synthetic enterprise' }).run()
-  const snapshot = () => {
-    const tables = db.$client.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name <> 'service_credential' ORDER BY name").all() as { name: string }[]
-    return tables.map(({ name }) => ({ name, rows: db.$client.prepare(`SELECT * FROM "${name.replace(/"/g, '""')}"`).all() }))
+  await db.$client.query("INSERT INTO business.enterprise (name, name_norm) VALUES ('Synthetic enterprise', 'synthetic enterprise')")
+  const snapshot = async () => {
+    const { rows: tables } = await db.$client.query<{ tablename: string }>(`SELECT tablename FROM pg_tables
+      WHERE schemaname = 'business' AND tablename <> 'service_credential' ORDER BY tablename`)
+    return Promise.all(tables.map(async ({ tablename }) => ({
+      tablename,
+      rows: (await db.$client.query(`SELECT to_jsonb(t) AS row FROM business."${tablename.replaceAll('"', '""')}" AS t ORDER BY 1`)).rows,
+    })))
   }
-  const before = snapshot()
+  const before = await snapshot()
   await request('PATCH', { 'core.ocrToken': 'synthetic-db-only', 'sme-roster.miitCookie': 'session=synthetic-db-only' })
   await request('POST', {}, '/core.ocrToken/reveal')
-  expect(db.select().from(schema.serviceCredential).all()).toHaveLength(2)
-  expect(snapshot()).toEqual(before)
+  expect(Object.keys(await readPostgresCredentialState(db))).toHaveLength(2)
+  expect(await snapshot()).toEqual(before)
 })
 it.each([
   { label: 'one character', value: 'x', masked: '********' },

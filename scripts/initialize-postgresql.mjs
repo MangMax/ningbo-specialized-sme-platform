@@ -13,7 +13,6 @@ if (!process.env.PGDATABASE) throw new Error('Set PGDATABASE to the new PostgreS
 const require = createRequire(import.meta.url)
 const { createJiti } = createRequire(require.resolve('nuxt/package.json'))('jiti')
 const jiti = createJiti(import.meta.url, { fsCache: false })
-const { ENTERPRISE_KERNEL_VERSION } = await jiti.import('../db/enterprise-kernel-schema.ts')
 const { TITLE_SEED } = await jiti.import('../db/titles.ts')
 const { LOG_DEFAULTS } = await jiti.import('../layers/core/lib/logging/contract.ts')
 const { LOG_FIELD_PROFILES, defaultFieldControls } = await jiti.import('../layers/core/lib/logging/field-controls.ts')
@@ -29,7 +28,6 @@ const psql = bin && statSync(bin, { throwIfNoEntry: false })?.isDirectory() ? jo
 const result = spawnSync(psql, [
   '-X', '-w',
   '-v', 'logs_only=' + args.includes('--logs-only'),
-  '-v', 'kernel_version=' + ENTERPRISE_KERNEL_VERSION,
   '-v', 'titles=' + JSON.stringify(TITLE_SEED),
   '-v', 'retention_days=' + LOG_DEFAULTS.retentionDays,
   '-v', 'max_bytes=' + LOG_DEFAULTS.maxBytes,

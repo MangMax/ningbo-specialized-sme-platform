@@ -1,8 +1,5 @@
 import {expect,it} from 'vitest'
 import {comparePlatformComparison,type CandidateComparisonInput} from '../../../layers/sme-roster/lib/roster/platform-comparison'
-import {createCurrentQualificationAssessmentReader,QUALIFICATION_ASSESSMENT_VERSION} from '../../../layers/sme-roster/lib/roster/current-qualification'
-import * as schema from '../../../db/schema'
-import {nativeImportDb,businessSource,commitNativeSource} from '../../roster/imports/fixtures/native-import'
 
 const NULL_ORIGIN_ORACLE = {
   "version": "platform-comparison-410-v1",
@@ -369,19 +366,4 @@ it('keeps the independent null-origin literal comparison without inventing a pla
  expect(result.comparison.state).toBe('not_established')
  expect(result.comparison.cycles[0]!.reasons).toEqual(['not_queried'])
  expect(JSON.stringify(NULL_ORIGIN_ORACLE)).toBe(before)
-})
-it('reads native source observations without granting formal qualification or changing stored facts',()=>{
- const db=nativeImportDb()
- try{
- const e=db.insert(schema.enterprise).values({name:'Native comparison',nameNorm:'native comparison',usccNorm:'91330211255994457P'}).returning().get()
- const reader=createCurrentQualificationAssessmentReader(db.$client),at=Date.parse('2026-06-01T00:00:00Z')
- const before=reader.read(e.id,at).snapshot
- expect(before.assessmentVersion).toBe(QUALIFICATION_ASSESSMENT_VERSION)
- expect(before.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
- expect(commitNativeSource(db,businessSource(e.usccNorm!), 'native-comparison').status).toBe('committed')
- const stored=db.$client.serialize(),actual=reader.read(e.id,at).snapshot
- expect(actual.titles.map(t=>t.group)).toEqual(['excluded','excluded','excluded'])
- expect(actual.titles.find(t=>t.titleCode==='specialized_sme')!.platform.observations).toHaveLength(1)
- expect(db.$client.serialize().equals(stored)).toBe(true)
- }finally{db.$client.close()}
 })

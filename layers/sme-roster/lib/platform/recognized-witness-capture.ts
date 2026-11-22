@@ -1,29 +1,15 @@
 import { serialize } from 'node:v8'
-/** #733 A only: frozen mixed SQLite/JS witness grammar at ingest/offline/replay. */
-import type Database from 'better-sqlite3'
-import { z } from 'zod'
+
 export const WITNESS_RULE = 'recognized-witness-input-v1'
 export const witnessConditionNames = ['rddqrq','whpcyear','whpc'] as const
 export type WitnessValue = { kind: 'absent'|'null'|'text'|'number'|'boolean'|'array'|'object'; value: string|number|Buffer|null }
-const sqlNumber=z.custom<number>(value=>typeof value==='number')
-const sqlRow = z.object({ gate:z.number().nullable(), pages:z.union([z.string(),sqlNumber,z.null()]),
- rddqrq_kind:z.string().nullable(),rddqrq:z.union([z.string(),sqlNumber,z.null()]),
- whpcyear_kind:z.string().nullable(),whpcyear:z.union([z.string(),sqlNumber,z.null()]),
- whpc_kind:z.string().nullable(),whpc:z.union([z.string(),sqlNumber,z.null()]) })
-export function captureWitnessInputs(t: Database.Database, evidence: string|Buffer|null, storage: 'text'|'blob'|'null'=typeof evidence==='string'?'text':evidence===null?'null':'blob') {
- try {
-  // SQL outputs intentionally precede JS parsing: first duplicate key and JSON5.
-  const r=sqlRow.parse(t.prepare(`WITH original(e) AS (VALUES(CASE WHEN @storage='text' THEN CAST(@e AS TEXT) ELSE @e END)) SELECT
-   (json_extract(e,'$.source')='queryBusList' AND json_extract(e,'$.status')='success' AND json_extract(e,'$.completeness')='complete' AND json_extract(e,'$.fullRange')=1 AND json_extract(e,'$.effectiveConditions.combination')='and') gate,
-   json_extract(e,'$.pages') pages,
-   json_type(e,'$.effectiveConditions.rddqrq') rddqrq_kind,json_extract(e,'$.effectiveConditions.rddqrq') rddqrq,
-   json_type(e,'$.effectiveConditions.whpcyear') whpcyear_kind,json_extract(e,'$.effectiveConditions.whpcyear') whpcyear,
-   json_type(e,'$.effectiveConditions.whpc') whpc_kind,json_extract(e,'$.effectiveConditions.whpc') whpc FROM original`).get({e:evidence,storage}))
-  return {state:'captured' as const,gate:r.gate===1?1:0,pages:r.pages,conditions:{rddqrq:{kind:r.rddqrq_kind??'absent',value:r.rddqrq},whpcyear:{kind:r.whpcyear_kind??'absent',value:r.whpcyear},whpc:{kind:r.whpc_kind??'absent',value:r.whpc}},errorName:null,error:null}
- } catch(error) {
-  if(!(error instanceof Error)||error.message!=='malformed JSON')throw error
-  return {state:'error' as const,gate:null,pages:null,conditions:{rddqrq:{kind:'absent',value:null},whpcyear:{kind:'absent',value:null},whpc:{kind:'absent',value:null}},errorName:error.name,error:error.message}
- }
+export interface WitnessCapture {
+ state: 'captured' | 'error'
+ gate: number | null
+ pages: string | number | null
+ conditions: Record<(typeof witnessConditionNames)[number], { kind: string; value: string | number | null }>
+ errorName: string | null
+ error: string | null
 }
 export function witnessValue(value:unknown):WitnessValue {
  if(value===undefined)return {kind:'absent',value:null}
@@ -42,7 +28,7 @@ function primitive(value:unknown):string|number|boolean|null|undefined {
  if(value===null||value===undefined||typeof value==='number'||typeof value==='boolean'||typeof value==='string')return value
  return String(value)
 }
-export function captureWitnessPosition(input:ReturnType<typeof captureWitnessInputs>,sequence:number) {
+export function captureWitnessPosition(input:WitnessCapture,sequence:number) {
  const empty={ordinal:null,rdjb:witnessValue(undefined),page:witnessValue(undefined),rdjbKey:null,errorName:null,error:null}
  if(input.state==='error')return {...empty,state:'error',errorName:input.errorName,error:input.error}
  if(input.gate!==1)return {...empty,state:'not_applicable'}

@@ -5,17 +5,13 @@ import { join, resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import pg from 'pg'
-import { initializeDb } from '../../../db/client'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
-import { exportCandidate } from './fixtures/disconnected-export'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { installLeadListSchema } from '../../../layers/lead-lists/install-schema'
 
 // Actual Nuxt HTTP and its native subprocess/drain. Only setup/fault injection
 // touches the isolated synthetic fixture; all export/log assertions use public HTTP.
 const root = mkdtempSync('/tmp/export-188-')
-const dbPath = join(root, 'synthetic.db'), exportDir = join(root, 'workbooks')
-const db = initializeDb({ create: true,  dbPath })
+const exportDir = join(root, 'workbooks')
 const token = 'synthetic-export-188-token'
 const privateText = 'PRIVATE_EXPORT188_CONTENT'
 const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' }
@@ -131,10 +127,9 @@ async function start() {
   writeFileSync(join(root, 'fixture.txt'), root)
 }
 beforeAll(async () => {
-  exportCandidate(db, privateText)
-  installLeadListSchema(db.$client)
-  runtime = await postgresRuntimeFixture({ dir: root, sourcePath: dbPath })
+  runtime = await postgresRuntimeFixture({ dir: root })
   postgres = new pg.Pool({ connectionString: runtime.url })
+  await postgresCandidate(postgres, privateText)
   await start()
 }, 90000)
 afterAll(async () => {
@@ -142,7 +137,6 @@ afterAll(async () => {
     writeFileSync(join(root, 'server.log'), output)
     await postgres?.end()
     runtime?.close()
-    db.$client.close()
   }
 })
 

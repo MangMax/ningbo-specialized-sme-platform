@@ -41,7 +41,7 @@ import {
   type RelationRef,
 } from '../../../layers/sme-roster/lib/platform/payload'
 import type { PlatformQueriesResult } from '../../../layers/sme-roster/lib/platform/read'
-import type { MergeLineage } from '../../../layers/sme-roster/server/utils/roster-import'
+import type { MergeLineage } from '../../../layers/sme-roster/server/utils/roster-import-model'
 
 const dir = mkdtempSync(join(tmpdir(), 'spztx-platform-e2e-'))
 let db: ReturnType<typeof usePostgresDirectoryDb>
@@ -101,7 +101,8 @@ const json = async (path: string) => {
 
 beforeAll(async () => {
   postgres = await postgresRuntimeFixture({ dir })
-  for (const [key, value] of Object.entries(postgres.env)) vi.stubEnv(key, value)
+  vi.stubEnv('NUXT_POSTGRES_DIRECTORY_URL', postgres.url)
+  vi.stubEnv('NUXT_POSTGRES_LOG_URL', postgres.url)
   vi.stubEnv('NUXT_DB_READONLY', '0')
   for (const [key, value] of Object.entries({ defineEventHandler, getQuery, createError, getHeader, readBody, setHeader, setResponseStatus })) vi.stubGlobal(key, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: TOKEN, filesDir: dir, curatedPath: join(dir, 'no-curation.json') }))
