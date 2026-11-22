@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
+import { recordCorrespondence } from '../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
 import { readPostgresQueryAssessments } from '../../../layers/sme-roster/lib/roster/query-assessment-postgres'
 import { currentPostgresDecisions102, historyPostgresDecision102 } from '../../../layers/sme-roster/server/utils/decision-lifecycle/postgres-reads'
@@ -80,4 +81,23 @@ it('rebinds human evidence to an identical current capture and invalidates it wh
  const [invalidated] = await f.db.select().from(differenceReason).where(eq(differenceReason.id, decision!.id))
  expect(invalidated).toMatchObject({ evidenceRelationId: null, retiredEvidenceReviewed: false, retiredEvidenceValidity: 'evidence_changed' })
  expect(await readFixtureAudit(f.db, id)).toEqual(originalAudit)
+})
+
+it('keeps a stale confirmation stale after an identical recapture', async () => {
+ const f = await fixture()
+ const first = await f.add()
+ const saved = await f.save(f.request('stale-before-recapture', [{ action: 'create', status: 'confirmed', edge: f.edge(first.id) }]))
+ const id = saved.correspondenceIds[0]!
+ const audit = await readFixtureAudit(f.db, id)
+ const historical = JSON.parse(audit.at(-1)!.evidence)
+ historical.relation.titleRaw = '3'
+ await f.db.update(recordCorrespondence).set({ provenance: JSON.stringify(historical) }).where(eq(recordCorrespondence.id, id))
+ expect(await readPostgresCorrespondenceRefs(f.db, { validityIds: [id] })).toMatchObject([{ relationId: first.id, requiresRevalidation: true }])
+
+ const repeat = await f.add({ queryRaw: 'Fresh transmission of identical data' })
+ const [source] = await f.db.select({ recordId: platformBusinessObservation.recordId }).from(platformBusinessObservation)
+   .where(eq(platformBusinessObservation.publicId, repeat.id))
+ expect(await prunePostgresPlatformCaptures(f.db, [source!.recordId!], true)).toBe(1)
+ expect(await readPostgresCorrespondenceRefs(f.db, { validityIds: [id] })).toMatchObject([{ relationId: repeat.id, requiresRevalidation: true }])
+ expect(await readFixtureAudit(f.db, id)).toEqual(audit)
 })

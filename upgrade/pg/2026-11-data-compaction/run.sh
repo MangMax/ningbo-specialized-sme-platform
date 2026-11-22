@@ -8,3 +8,4 @@ if [[ -d "$client" ]]; then client="$client/psql"; fi
 "$client" -X -w -f apply.sql
 node steps/17-refresh-platform-digests.mjs
 "$client" -X -w -f steps/18-install-platform-capture-retention.sql
+node steps/19-prune-platform-captures.mjs

@@ -17,8 +17,10 @@ ALTER TABLE difference_reason
   ADD COLUMN IF NOT EXISTS original_evidence_relation_public_id bigint,
   ADD COLUMN IF NOT EXISTS original_evidence_query_public_id bigint;
 
+DROP FUNCTION IF EXISTS prune_platform_captures(bigint[], boolean);
+
 CREATE OR REPLACE FUNCTION prune_platform_captures(
-  selected_records bigint[], keep_previous boolean
+  selected_records bigint[], keep_previous boolean, valid_source_edges bigint[]
 ) RETURNS integer LANGUAGE plpgsql SET search_path = business, pg_catalog AS $$
 DECLARE
   superseded bigint[];
@@ -197,7 +199,7 @@ BEGIN
     HAVING count(DISTINCT status) = 1 AND min(status) IN ('candidate', 'confirmed', 'rejected', 'unlinked')
   ), rebound_edges AS (
     UPDATE record_correspondence e
-    SET observation_id = dest.id, edge_key = dest.destination_key, platform_evidence_rebound_revision = dest.assignment_revision,
+    SET observation_id = dest.id, edge_key = dest.destination_key, platform_evidence_rebound_revision = CASE WHEN e.id = ANY(valid_source_edges) THEN dest.assignment_revision END,
       target_identity = (e.target_identity::jsonb || jsonb_build_object(
         'relationId', dest.public_id, 'queryId', dest.collection_public_id,
         'queryNaturalKey', jsonb_build_array(dest.interface, dest.query_key, dest.rdjb, dest.queried_at, dest.sequence_no)

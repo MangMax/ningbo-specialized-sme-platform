@@ -67,7 +67,7 @@ function eventMatches(id: SQL, predecessor = false) {
     ) END`
 }
 
-function relationMatches(db: Db, assignment: { revision: SQLWrapper; enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }, reboundRevision: SQLWrapper) {
+function relationMatches(db: Db, assignment: { revision: SQLWrapper; enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }, reboundRevision: SQLWrapper, verifyRebindSource: boolean) {
   const o = alias(platformBusinessObservation, 'o')
   const c = alias(platformCollection, 'c')
   const first = alias(platformObservationAssignment, 'first_assignment')
@@ -118,7 +118,7 @@ function relationMatches(db: Db, assignment: { revision: SQLWrapper; enterpriseI
     .leftJoin(a, eq(a.versionId, o.versionId))
     .leftJoin(b, eq(b.versionId, o.versionId))
     .leftJoin(r, eq(r.versionId, o.versionId))
-    .where(and(eq(o.id, sql`p.observation_id`), isCurrentPlatformCaptureRow(db, o), isNotNull(o.sourceValues), ...fields,
+    .where(and(eq(o.id, sql`p.observation_id`), verifyRebindSource ? undefined : isCurrentPlatformCaptureRow(db, o), isNotNull(o.sourceValues), ...fields,
       or(eq(reboundRevision, assignment.revision), and(...position, ...savedFacts, ...query)),
       sql`(${comparisonStatus} ? 'base64' AND NOT (${comparisonStatus} ? 'storage')) IS NOT TRUE`))
   return sql`CASE WHEN p.observation_id IS NULL THEN p.type = 'event_export_context' AND
@@ -133,13 +133,14 @@ const exportMatches = sql`CASE WHEN p.export_row_id IS NULL THEN
       AND ${storedFields(platformExportBatch, 'b', refValue('exportBatch'))}) END`
 
 type RefSources = { eventIds: number[]; relationIds: number[]; exportRowIds: number[] }
-export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] } | { validityIds: number[] }, witnessTitle?: string) {
+export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly number[] | RefSources | { annualDecisionIds: number[] } | { validityIds: number[] } | { rebindSourceIds: number[] }, witnessTitle?: string) {
   const edge = recordCorrespondence, relation = platformBusinessObservation
   const anyId = (ids: readonly number[]) => sql`ANY(${sql.param(ids)}::bigint[])`
   let where: SQL | undefined
-  const explicitValidity = 'annualDecisionIds' in ids || 'validityIds' in ids
+  const verifyRebindSource = 'rebindSourceIds' in ids
+  const explicitValidity = 'annualDecisionIds' in ids || 'validityIds' in ids || verifyRebindSource
   if (explicitValidity) {
-    const selectedIds = 'annualDecisionIds' in ids ? ids.annualDecisionIds : ids.validityIds
+    const selectedIds = 'annualDecisionIds' in ids ? ids.annualDecisionIds : 'validityIds' in ids ? ids.validityIds : ids.rebindSourceIds
     if (!selectedIds.length) return []
     where = eq(edge.id, anyId(selectedIds))
   } else if ('eventIds' in ids) {
@@ -172,7 +173,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     enterpriseId: sql`${assignment.enterpriseId}`,
     matchBasis: sql`${assignment.matchBasis}`,
     verificationStatus: sql`${assignment.verificationStatus}`,
-  }, p.reboundRevision)
+  }, p.reboundRevision, verifyRebindSource)
   const projected = db.select({
     ref: sql`json_build_object('id',${p.id},'type',${p.type},'role',${p.role},'status',${p.status},'eventId',${p.eventId},
       'predecessorEventId',${p.predecessorEventId},'relationId',p.relation_id,'exportRowId',${p.exportRowId},
