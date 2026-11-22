@@ -10,7 +10,7 @@ import {
 } from '../../../../../db/postgresql/platform-tables'
 import type { platformObservationAssignment as PlatformObservationAssignmentTable } from '../../../../../db/postgresql/platform-tables'
 import type { EnterpriseFactRevision } from '../enterprise-fact-model'
-import { currentPlatformObservation, isCurrentPlatformCollection } from '../../../lib/platform/current-observation-postgres'
+import { currentPlatformObservation, isCurrentPlatformCollection, platformDecisionQueryMode } from '../../../lib/platform/current-observation-postgres'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
 import { lockPostgresCurrentCapture } from '../platform-capture-retention-postgres'
@@ -71,7 +71,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, qualificatio
       errorCode: c.errorCode, errorMessage: c.errorMessage, maxRequests: c.maxRequests, maxRows: c.maxRows,
       maxDurationMs: c.maxDurationMs, pageSize: c.pageSize,
     },
-  }).from(c).where(and(eq(c.publicId, queryId), relation ? undefined : isCurrentPlatformCollection(tx, c, 'evidence'))))[0] : null
+  }).from(c).where(and(eq(c.publicId, queryId), relation ? undefined : isCurrentPlatformCollection(tx, c, platformDecisionQueryMode(d.status)))))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
   const sourceScope = collection && (qualification || needsPages) ? (await readPostgresCollectionScopes(tx, [collection])).get(collection.id)! : null

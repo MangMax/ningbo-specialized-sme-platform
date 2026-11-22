@@ -216,6 +216,7 @@ postgresTest('later-page inconsistency keeps first-page rows and the original to
   await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 52) : normalReply(s, r, n)
   const job = await submit(), done = await finish(job.jobId)
+  expect(done.state, JSON.stringify(done.error ?? done.result)).toBe('done')
   const partial = (await queries()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
   expect(partial.query.status).toBe('partial')
   expect(partial.relations).toHaveLength(50)
@@ -298,6 +299,7 @@ postgresTest('later-page timeout exhausts bounded retries, retains 50 rows and t
     return normalReply(s, r, n)
   }
   const done = await finish((await submit()).jobId)
+  expect(done.state, JSON.stringify(done.error ?? done.result)).toBe('done')
   const entry = (await queries()).find(e => e.query.interface === 'business_list' && e.query.rdjb === '3')
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
@@ -362,6 +364,7 @@ postgresTest('missing later-page total cannot inherit earlier metadata and masqu
   await upstream()
   reply = (s, r, n) => s === 'businessList' && r === '3' && n === 2 ? page(s, n, 51, { maxCount: undefined }) : normalReply(s, r, n)
   const done = await finish((await submit()).jobId)
+  expect(done.state, JSON.stringify(done.error ?? done.result)).toBe('done')
   const entry = (await queries()).find(e => e.query.rdjb === '3')
   expect(entry.query.status).toBe('partial')
   expect(entry.relations).toHaveLength(50)
@@ -387,6 +390,7 @@ postgresTest('a changed later page is returned as current instead of the superse
 postgresTest('four failed slots remain four failed collection slots through public task list and detail, while report targets stay one', async () => {
   await upstream(); upstreamStatus = 400; reply = () => 'synthetic upstream failure'
   const job = await submit(), done = await finish(job.jobId)
+  expect(done.state, JSON.stringify(done.error ?? done.result)).toBe('done')
   expect(done.result.collection).toMatchObject({ complete: 0, partial: 0, failed: 4, unknown: 0 })
   const detail = await api(`/api/task-center/${job.jobId}`)
   expect(detail.outcome).toBeNull()

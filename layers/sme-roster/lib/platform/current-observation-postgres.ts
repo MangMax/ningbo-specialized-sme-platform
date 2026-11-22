@@ -49,7 +49,11 @@ export function isCurrentPlatformCaptureRow(db: Reader, row: ObservationCoordina
 
 type ScopeCoordinate = CaptureTime & Record<'id' | 'interface' | 'queryKey' | 'rdjb' | 'conditionFacts' | 'fullRange', SQLWrapper>
 
-export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, eligibility?: 'rows' | 'evidence') {
+export function platformDecisionQueryMode(status: string): 'attempt' | 'evidence' {
+  return status === 'query_failed' || status === 'needs_review' ? 'attempt' : 'evidence'
+}
+
+export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, eligibility?: 'rows' | 'evidence' | 'attempt') {
   const source = alias(collection, 'scoped_collection')
   // Drizzle does not expose null-safe equality.
   const current = db.select({ id: source.id }).from(source).where(and(

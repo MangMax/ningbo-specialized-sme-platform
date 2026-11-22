@@ -10,7 +10,7 @@ import { platformBusinessObservation as observation, platformCollection, platfor
 import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
-import { isCurrentPlatformCollection } from '../../lib/platform/current-observation-postgres'
+import { isCurrentPlatformCollection, platformDecisionQueryMode } from '../../lib/platform/current-observation-postgres'
 import { RDJB_TITLE_CODES } from '../../lib/platform/recognized-evidence'
 import type { RosterImportDifference, RosterImportItemResult } from '../../lib/roster-import-client'
 import { findPostgresImportQuery, findPostgresImportRelation, findPostgresImportRelationById, type PostgresImportRelation } from './roster-import-references-postgres'
@@ -49,13 +49,13 @@ async function locateEnterprise(tx: Tx, difference: RosterImportDifference, lock
   return owner
 }
 
-async function findCollection(tx: Tx, aliasId: number, requireCurrent = false) {
+async function findCollection(tx: Tx, aliasId: number, mode?: ReturnType<typeof platformDecisionQueryMode>) {
   if (!Number.isSafeInteger(aliasId) || aliasId < 1) return undefined
   const [collection] = await tx.select({
     id: platformCollection.publicId, nativeId: platformCollection.id, interface: platformCollection.interface,
     queryKey: platformCollection.queryKey, rdjb: platformCollection.rdjb,
   }).from(platformCollection)
-    .where(and(eq(platformCollection.publicId, aliasId), requireCurrent ? isCurrentPlatformCollection(tx, platformCollection, 'evidence') : undefined))
+    .where(and(eq(platformCollection.publicId, aliasId), mode ? isCurrentPlatformCollection(tx, platformCollection, mode) : undefined))
   return collection
 }
 
@@ -153,7 +153,8 @@ async function planDifference(tx: Tx, difference: RosterImportDifference, index:
     relation = await findPostgresImportRelationById(tx, relationId)
   }
   if (relationId !== null && !relation) return reject('evidence_subject_mismatch', 'Relation evidence not found', 'evidenceRelationRef')
-  const query = queryId === null ? null : (await findCollection(tx, queryId, !relation) ?? null)
+  const queryMode = relation ? undefined : platformDecisionQueryMode(difference.status)
+  const query = queryId === null ? null : (await findCollection(tx, queryId, queryMode) ?? null)
   if (queryId !== null && !query) return reject('evidence_subject_mismatch', 'Current query evidence not found', 'evidenceQueryRef')
   if (query && relation && query.nativeId !== relation.collectionId) {
     return reject('evidence_subject_mismatch', 'Query and relation evidence must identify the same source query', 'evidenceRelationRef')

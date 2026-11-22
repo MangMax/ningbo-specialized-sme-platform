@@ -422,7 +422,7 @@ it.each([
   expect(row.relations[0]).toMatchObject({ relationKey: businessRow.id, sourcePage: 1, sourceRdjb })
 })
 
-it('new typed observations leave old string hashes, IDs, explicit decisions and append-only audit untouched', async () => {
+it('changed typed content detaches superseded evidence and preserves its original audit', async () => {
   const e = await collect({ id: 'historical-decision', qymc: '合成', n: 1 })
   const old = structuredClone(e); delete old.rawData
   const saved = await submit('REST', 'commit', request([recognizedResultToImport(old)]))
@@ -440,8 +440,11 @@ it('new typed observations leave old string hashes, IDs, explicit decisions and 
   expect(newer.projection.recordId).toBe(projection.recordId)
   expect(newer.projection.versionId).not.toBe(projection.versionId)
   const after = await businessState()
-  for (const table of Object.keys(before)) expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
+  for (const table of Object.keys(before).filter(name => name !== 'record_correspondence')) {
+    expect(after[table]).toEqual(expect.arrayContaining(before[table] as unknown[]))
+  }
   expect(newer.projection.relationId).toBeGreaterThan(projection.relationId)
-  expect(after.record_correspondence).toEqual(before.record_correspondence)
+  expect(after.record_correspondence).toEqual(before.record_correspondence!.map(row => row.id === edge!.id
+    ? { ...row, observation_id: null } : row))
   expect(after.record_correspondence_audit).toEqual(before.record_correspondence_audit)
 })
