@@ -17,7 +17,7 @@ import { lockPostgresCurrentCapture } from '../platform-capture-retention-postgr
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
 import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle/contract'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
-import { maintainedDifferenceKind, retiredReviewProcessKind, reviewedReplacementKind, reviewReplayKey } from './reviewed-decisions'
+import { maintainedDifferenceKind, reviewedReplacementKind, reviewReplayKey } from './reviewed-decisions'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Fact = EnterpriseFactRevision
@@ -113,11 +113,11 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
     const [review] = await tx.select({
       kind: importBatch.sourceKind, hash: importBatch.sourceSha256, summary: importBatch.summary,
     }).from(importBatch).where(and(eq(importBatch.idempotencyKey, reviewReplayKey(command.idempotencyKey)),
-      inArray(importBatch.sourceKind, [retiredReviewProcessKind, maintainedDifferenceKind, reviewedReplacementKind])))
+      inArray(importBatch.sourceKind, [maintainedDifferenceKind, reviewedReplacementKind])))
     if (review && review.kind !== reviewedReplacementKind) {
       if (review.hash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
       const summary = JSON.parse(review.summary!) as Record<string, unknown>
-      return review.kind === maintainedDifferenceKind ? summary.response as Record<string, unknown> : summary
+      return summary.response as Record<string, unknown>
     }
     const reason = differenceReason
     const columns = { id: reason.id, lifecycleAction: reason.lifecycleAction, previousId: reason.previousId, recordedAt: reason.recordedAt }

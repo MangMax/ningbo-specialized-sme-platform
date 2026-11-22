@@ -5,7 +5,6 @@ import { differenceReason } from '../../../../../db/postgresql/roster-selection-
 
 export const reviewedReplacementKind = 'reviewed_difference_replacement'
 export const maintainedDifferenceKind = 'maintained_difference'
-export const retiredReviewProcessKind = 'retired_evidence_review_process'
 
 export function reviewReplayKey(key: string) {
   return 'evidence-review:' + key

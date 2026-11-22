@@ -64,7 +64,7 @@ it('preserves decision validity and existing review receipts after retiring impa
     runtime.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
     await pool.query('DROP TABLE evidence_review_receipt_114')
     await expect(savePostgresDecision102(db, { ...request, idempotencyKey: 'historical-process' })).rejects.toMatchObject({
-      statusCode: 409, code: 'idempotency_conflict',
+      statusCode: 422, code: 'invalid_request',
     })
     const assessments = await readPostgresQueryAssessments(db, [11, 12, 13, 14, 15].map(scope))
     expect(assessments.map(item => [item.currentDecision.versionId, item.explanationValidity.status])).toEqual([
