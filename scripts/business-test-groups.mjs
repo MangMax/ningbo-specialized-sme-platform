@@ -11,7 +11,7 @@ const postgresGroup = {
 }
 export const postgresTestFiles = [
   'tests/files/segments/postgres-source-boundaries.http.test.ts',
-  'tests/roster/legacy-export/xlsx.test.ts',
+  'tests/roster/comparison/enterprise-title-antijoin.test.ts',
   'tests/roster/enterprise-read/research-postgres.http.test.ts',
 ]
 const owners = {

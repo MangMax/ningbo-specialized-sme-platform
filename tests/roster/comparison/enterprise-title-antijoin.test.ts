@@ -58,7 +58,7 @@ beforeEach(async () => {
 const members = async (direction: ComparisonDirection, title = 'specialized_sme') =>
   (await readPostgresDifferenceCoordinates(db, { title: [title], direction })).rows.map((r) => r.enterpriseId).sort((a, b) => a - b)
 
-describe('readPostgresDifferenceCoordinates 统代差集(企业 × 称号)', () => {
+describe('PostgreSQL 统代差集(企业 × 称号)', () => {
   it('returns exact member sets for both directions without name fallback', async () => {
     expect(await members('missing_in_miit')).toEqual(
       ['jxj', 'nurture', 'conflictJ', 'noUscc', 'nullJ'].map((key) => ids[key]!).sort((a, b) => a - b),
