@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise as enterpriseTable } from '../../../../../db/postgresql/enterprise-tables'
-import { evidenceReviewReceipt114 } from '../../../../../db/postgresql/evidence-review-tables'
+import { importBatch } from '../../../../../db/postgresql/import-tables'
 import { enterpriseFactRevision } from '../../../../../db/postgresql/qualification-tables'
 import { differenceReason } from '../../../../../db/postgresql/roster-selection-tables'
 import {
@@ -17,6 +17,7 @@ import { lockPostgresCurrentCapture } from '../platform-capture-retention-postgr
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
 import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle/contract'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
+import { maintainedDifferenceKind, retiredReviewProcessKind, reviewedReplacementKind, reviewReplayKey } from './reviewed-decisions'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
 type Fact = EnterpriseFactRevision
@@ -109,12 +110,14 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
   return db.transaction(async tx => {
     await lockPostgresCurrentCapture(tx)
     await lockPostgresDecisionOwnership102(tx)
-    const receipt = evidenceReviewReceipt114
-    const [review] = await tx.select({ hash: receipt.requestHash, response: sql<Record<string, unknown>>`${receipt.response}::json` })
-      .from(receipt).where(eq(receipt.idempotencyKey, command.idempotencyKey))
-    if (review) {
+    const [review] = await tx.select({
+      kind: importBatch.sourceKind, hash: importBatch.sourceSha256, summary: importBatch.summary,
+    }).from(importBatch).where(and(eq(importBatch.idempotencyKey, reviewReplayKey(command.idempotencyKey)),
+      inArray(importBatch.sourceKind, [retiredReviewProcessKind, maintainedDifferenceKind, reviewedReplacementKind])))
+    if (review && review.kind !== reviewedReplacementKind) {
       if (review.hash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
-      return review.response
+      const summary = JSON.parse(review.summary!) as Record<string, unknown>
+      return review.kind === maintainedDifferenceKind ? summary.response as Record<string, unknown> : summary
     }
     const reason = differenceReason
     const columns = { id: reason.id, lifecycleAction: reason.lifecycleAction, previousId: reason.previousId, recordedAt: reason.recordedAt }
@@ -122,7 +125,10 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
       .from(reason).where(eq(reason.idempotencyKey, command.idempotencyKey))
     if (prior) {
       if (prior.hash !== hash) throw new DecisionError102(409, 'idempotency_conflict', 'Idempotency key already has a different request')
-      return decisionReceipt102(prior)
+      const result = decisionReceipt102(prior)
+      if (!review) return result
+      const { reviewedRevisionId } = JSON.parse(review.summary!) as { reviewedRevisionId: number }
+      return { ...result, reviewedRevisionId }
     }
     await tx.select({ id: enterpriseTable.id }).from(enterpriseTable).where(eq(enterpriseTable.id, command.enterpriseId)).for('update')
     if (command.reviewedEvidence || command.action === 'maintain') throw new DecisionError102(422, 'invalid_request', 'Automatic evidence review has been retired')

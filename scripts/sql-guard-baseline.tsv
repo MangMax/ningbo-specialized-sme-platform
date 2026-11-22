@@ -208,7 +208,7 @@ layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TqPNBi_l6r0M
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	Ts3CyKt0Dy0ejL_-mBqMtPVCb68HnW-dFrEkwg0lfvK8:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TSwWFlzwF0E5_N-Tt974RtStnK4rxNWPzb1MqHLbbqpo:2	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
 layers/sme-roster/server/utils/decision-lifecycle/postgres-reads.ts	TthAM6Pn36K2rUixRcAY82AfEFB68Lu4pfOvk3QPQvx0	Drizzle 0.45.4 没有 UNNEST WITH ORDINALITY 表值构造器和返回列声明，保留请求位置、重复坐标及对应输入游标。
-layers/sme-roster/server/utils/decision-lifecycle/postgres-writes.ts	T4RQsa3Z-1KMpRlq8yU-FIX66oWr4gnHL5mjT-PncR0I	Drizzle 0.45.4 没有通用 CAST 表达式，恢复历史保存的 PostgreSQL JSON 值。
+layers/sme-roster/server/utils/decision-lifecycle/reviewed-decisions.ts	THKdo6q9_DvccSUBvFB5xJg8oEi6ZDP4TBlrBI4ZSc7I	Drizzle lacks a typed PostgreSQL cast for comparing bigint decision IDs against the text batch source identity.
 layers/sme-roster/server/utils/difference-import-postgres.ts	TXlRXjB-gEdv5uCfLkBU-YhVxWP9fF8iWMGcXbo4yC7o	Drizzle 0.45.4 无窗口函数构造器；按历史稳定顺序计算累计行数或来源排名。
 layers/sme-roster/server/utils/difference-snapshot.ts	T9KLmuuv0rS3Ado2bcHFFbU7IuFB1XsO-jmNfksPIY5o	Drizzle 0.45.4 无 PostgreSQL 快照导出构造器；这一条独立函数调用使应用查询和 pg_dump 共用同一事务快照。
 layers/sme-roster/server/utils/difference-snapshot.ts	TX_pLVjWsOMoWaVMvl6sKFVkdvQKsZ9g1mlr0CozI2GQ	Drizzle 0.45.4 无聚合内部 ORDER BY，备份范围保留冻结记录 ID 次序。
@@ -640,3 +640,4 @@ upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts
 upgrade/pg/2026-11-data-compaction/steps/support/read-legacy-platform-refresh.ts	TxScACji0gQ1HCRdxLbHF_gHvSMNe739-LcxbNe8bAuo	Read the retired inputs only during the independent V1 digest verification.
 upgrade/pg/2026-11-data-compaction/steps/support/split-platform-batch-results.sql	FQm-tlE_GCWEsp8P0eJM6rZrs0bAtHbbRbK_0d3zWURM	Backfill ordered platform batch segment rows without losing original JSON escape sequences. Drizzle query builders do not express the PL/pgSQL loop and lateral JSON ordinality.
 upgrade/pg/2026-11-data-compaction/steps/support/verify-platform-source-comparison.sql	Fwo6iTer8lZ4L310l-Z0GiJi_nxZIxzwXTKRgkBKlhT0	Offline PostgreSQL compaction DDL and audited one-time source materialization.
+upgrade/pg/2026-11-evidence-review-cutover/apply.sql	F40uWBYI_nJM-p4GhqFEFYJ7-F6scNFUcQ-jAjn2D0No	Offline transactional cutover uses a PostgreSQL advisory lock and PL/pgSQL assertions to abort on lossy projections.

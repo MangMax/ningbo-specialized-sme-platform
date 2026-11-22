@@ -201,17 +201,18 @@ it('rejects different legacy versions and rechecks adopted difference scope at a
     const planned = await planPostgresRosterMerge(tx, input, 0)
     expect(planned.item.ok).toBe(true)
     await tx.execute(sql`
-      INSERT INTO evidence_review_receipt_114 (idempotency_key,request_hash,kind,enterprise_id,title_code,direction,
-        decision_id,reviewed_revision_id,actor,basis,response,recorded_at)
-      VALUES ('adopt-merge-fixture','hash','maintain',7002,'little_giant','missing_in_miit',
-        7802,1,'{}','fixture','{}','2026-11-20')
+      INSERT INTO difference_reason (id,enterprise_id,title_code,direction,recorded_at,created_at,lifecycle_action,previous_id)
+      VALUES (7803,7002,'little_giant','missing_in_miit','2026-11-20','2026-11-20','replace',7802);
+      INSERT INTO import_batch (idempotency_key,source_kind,source_identity,status,summary,created_at,committed_at)
+      VALUES ('evidence-review:adopt-merge-fixture','reviewed_difference_replacement','7803','committed',
+        '{"reviewedRevisionId":0}','2026-11-20','2026-11-20')
     `)
     expect(await applyPostgresRosterMerge(tx, planned.plan!)).toMatchObject({
-      ok: false, error: { code: 'merge_difference_lifecycle_conflict' },
+      ok: false, error: { code: 'merge_difference_lifecycle_conflict', message: expect.stringContaining('7802') },
     })
     expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
     expect((await tx.execute(sql`SELECT id,enterprise_id FROM difference_reason ORDER BY id`)).rows)
-      .toEqual([{ id: '7801', enterprise_id: '7001' }, { id: '7802', enterprise_id: '7002' }])
+      .toEqual([{ id: '7801', enterprise_id: '7001' }, { id: '7802', enterprise_id: '7002' }, { id: '7803', enterprise_id: '7002' }])
   })
 })
 

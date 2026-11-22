@@ -57,6 +57,15 @@ it('preserves decision validity and existing review receipts after retiring impa
       effectiveAt: request.effectiveAt, response: JSON.stringify(response), recordedAt: request.effectiveAt,
     })
     for (let run = 0; run < 2; run++) runtime.psql(['-f', 'upgrade/pg/2026-11-data-compaction/steps/14-retire-evidence-impact-tracker.sql'])
+    await pool.query(`
+      INSERT INTO evidence_review_receipt_114 (idempotency_key, request_hash, kind, actor, basis, response, recorded_at)
+      VALUES ('historical-process', repeat('0', 64), 'process', '{}', 'queue drain', '{}', '2026-01-01')
+    `)
+    runtime.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
+    await pool.query('DROP TABLE evidence_review_receipt_114')
+    await expect(savePostgresDecision102(db, { ...request, idempotencyKey: 'historical-process' })).rejects.toMatchObject({
+      statusCode: 409, code: 'idempotency_conflict',
+    })
     const assessments = await readPostgresQueryAssessments(db, [11, 12, 13, 14, 15].map(scope))
     expect(assessments.map(item => [item.currentDecision.versionId, item.explanationValidity.status])).toEqual([
       [11, 'valid'], [12, 'evidence_changed'], [13, 'premise_invalid'], [14, 'evidence_changed'], [15, 'unknown'],

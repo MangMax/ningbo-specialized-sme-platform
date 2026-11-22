@@ -1,8 +1,8 @@
+import { isManagedDifference } from './decision-lifecycle/reviewed-decisions'
 import { and, desc, eq, exists, gt, isNotNull, isNull, ne, notExists, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
-import { evidenceReviewReceipt114 } from '../../../../db/postgresql/evidence-review-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
 import { recordCorrespondence } from '../../../../db/postgresql/qualification-tables'
@@ -102,17 +102,13 @@ const differenceFields = [
 ] as const
 
 async function mergeConflict(tx: Tx, from: number, into: number, ref: string) {
-  const receipt = evidenceReviewReceipt114
-  const managedReview = tx.select({ id: receipt.id }).from(receipt).where(and(
-    or(eq(receipt.decisionId, differenceReason.id), eq(receipt.sourceDecisionId, differenceReason.id)),
-    isNotNull(receipt.reviewedRevisionId)))
   const sourceScope = tx.select({ id: sourceDifference.id }).from(sourceDifference).where(and(
     eq(sourceDifference.enterpriseId, from), eq(sourceDifference.titleCode, differenceReason.titleCode),
     eq(sourceDifference.direction, differenceReason.direction)))
   const [managed] = await tx.select({ id: differenceReason.id, enterpriseId: differenceReason.enterpriseId,
     titleCode: differenceReason.titleCode, direction: differenceReason.direction }).from(differenceReason)
     .where(and(or(eq(differenceReason.enterpriseId, from), and(eq(differenceReason.enterpriseId, into), exists(sourceScope))),
-      or(isNotNull(differenceReason.lifecycleAction), exists(managedReview))))
+      isManagedDifference()))
     .orderBy(desc(eq(differenceReason.enterpriseId, from)), differenceReason.id).limit(1)
   if (managed) {
     return failure(ref, 'merge_difference_lifecycle_conflict',

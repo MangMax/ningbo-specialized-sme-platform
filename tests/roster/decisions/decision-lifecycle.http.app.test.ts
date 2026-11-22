@@ -6,12 +6,13 @@ import { join, resolve } from 'node:path'
 
 import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { enterprise as enterpriseTable } from '../../../db/postgresql/enterprise-tables'
 import { record } from '../../../db/postgresql/ledger-tables'
 import { differenceReason } from '../../../db/postgresql/roster-selection-tables'
+import { importBatch } from '../../../db/postgresql/import-tables'
 import { evidenceReviewReceipt114 } from '../../../db/postgresql/evidence-review-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
@@ -116,19 +117,24 @@ describe('ticket 102 public decision lifecycle', () => {
       status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending',
       lifecycleAction: command.action === 'withdraw' ? 'withdraw' : 'replace',
       recordedAt: '2026-10-19T01:00:00.000Z',
-      ...(!review ? { idempotencyKey: command.idempotencyKey, requestHash: hash } : {}),
+      ...(command.action !== 'maintain' ? { idempotencyKey: command.idempotencyKey, requestHash: hash,
+        basis: command.basis, effectiveAt: command.effectiveAt } : {}),
     })
     const receipt = { versionId: row.id, currentId: command.action === 'withdraw' ? null : row.id, previousId: null, action: command.action, recordedAt: row.recordedAt,
       ...(review ? { reviewedRevisionId: 98765 } : {}) }
-    if (review) await db.insert(evidenceReviewReceipt114).values({
-      idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
-      enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
-      decisionId: row.id, reviewedRevisionId: 98765, actor: JSON.stringify(command.actor), basis: command.basis,
-      ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: JSON.stringify(receipt), recordedAt: row.recordedAt,
-    })
+    if (review) {
+      await db.insert(evidenceReviewReceipt114).values({
+        idempotencyKey: command.idempotencyKey, requestHash: hash, kind: command.action,
+        enterpriseId: command.enterpriseId, titleCode: command.titleCode, direction: command.direction,
+        decisionId: row.id, reviewedRevisionId: 98765, actor: JSON.stringify(command.actor), basis: command.basis,
+        ruleVersion: command.ruleVersion, effectiveAt: command.effectiveAt, response: JSON.stringify(receipt), recordedAt: row.recordedAt,
+      })
+      postgres.psql(['-f', 'upgrade/pg/2026-11-evidence-review-cutover/apply.sql'])
+      await db.delete(evidenceReviewReceipt114).where(eq(evidenceReviewReceipt114.idempotencyKey, command.idempotencyKey))
+    }
     const persisted = async () => ({
       decisions: (await db.execute(sql`select * from difference_reason where enterprise_id=${command.enterpriseId}`)).rows,
-      reviews: (await db.execute(sql`select * from evidence_review_receipt_114 where enterprise_id=${command.enterpriseId}`)).rows,
+      reviews: await db.select().from(importBatch).where(eq(importBatch.idempotencyKey, 'evidence-review:' + command.idempotencyKey)),
     })
     const before = await persisted()
     // Reorder every object and exercise trimming: wire order must not affect normalized replay.

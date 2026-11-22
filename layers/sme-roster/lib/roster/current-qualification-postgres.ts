@@ -1,7 +1,9 @@
 import { and, desc, eq, getTableColumns, inArray, isNotNull, isNull, max, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
-import { evidenceReviewReceipt114 } from '../../../../db/postgresql/evidence-review-tables'
+import { importBatch } from '../../../../db/postgresql/import-tables'
+import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
+import { maintainedDifferenceKind, reviewTarget } from '../../server/utils/decision-lifecycle/reviewed-decisions'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { officialEvidenceRowRevision } from '../../../../db/postgresql/official-evidence-tables'
@@ -461,12 +463,14 @@ export async function readPostgresLegacyQualification(tx: PostgresQualificationT
   })), coverage)
   const byScope = new Map(assessments.map(result => [result.currentDecision.titleCode + ':' + result.currentDecision.direction, result]))
   const observations = await readPostgresDifferenceObservations(tx, active.flatMap(row => row.evidenceRelationId === null ? [] : [row.evidenceRelationId]))
-  const receipt = evidenceReviewReceipt114
-  const receipts = active.length ? await tx.selectDistinctOn([receipt.decisionId], {
-    id: receipt.decisionId, receipt: { basis: receipt.basis, effectiveAt: receipt.effectiveAt },
-  }).from(receipt).where(and(inArray(receipt.decisionId, active.map(row => row.id)), isNotNull(receipt.reviewedRevisionId)))
-    .orderBy(receipt.decisionId, desc(receipt.id)) : []
-  const byDecision = new Map(receipts.map(row => [row.id, row.receipt] as const))
+  const d = differenceReason
+  const receipts = active.length ? await tx.selectDistinctOn([d.id], {
+    id: d.id, receipt: { basis: d.basis, effectiveAt: d.effectiveAt },
+    kind: importBatch.sourceKind, summary: importBatch.summary,
+  }).from(d).innerJoin(importBatch, reviewTarget(d.id)).where(inArray(d.id, active.map(row => row.id)))
+    .orderBy(d.id, desc(importBatch.id)) : []
+  const byDecision = new Map(receipts.map(row => [row.id, row.kind === maintainedDifferenceKind
+    ? (JSON.parse(row.summary!) as { qualification: typeof row.receipt }).qualification : row.receipt] as const))
   const projected = new Map<CurrentTitle, LegacyQualificationInput>([...inputs].map(([title, input]) => [title, {
     ...input,
     readLegacyHeads: () => heads,
