@@ -40,12 +40,14 @@ INSERT INTO enterprise_source_list_type (code, name) VALUES
 INSERT INTO title (code, name_zh, level, rank)
 SELECT row.code, row."nameZh", row.level, row.rank
 FROM jsonb_to_recordset(:'titles'::jsonb) AS row(code text, "nameZh" text, level text, rank bigint);
+\ir business-catalog-comments.sql
 \endif
 
 CREATE SCHEMA runtime_logs;
 SET LOCAL search_path TO runtime_logs, pg_catalog;
 \ir runtime-log-schema.sql
 \ir runtime-log-indexes.sql
+\ir runtime-log-catalog-comments.sql
 INSERT INTO log_policy (id, "retentionDays", "maxBytes") VALUES (1, :'retention_days', :'max_bytes');
 INSERT INTO log_collection (id, collection, revision) VALUES (1, :'log_collection', 0);
 COMMIT;

@@ -31,7 +31,8 @@ layers/sme-roster/server/utils/platform-archive-postgres.ts	TaUTFvnZ4CzF8QefBoya
 layers/sme-roster/server/utils/task-center-route.ts	T_SE9ykJYL-Uo1edm9UbBDVe0mXi58Jktfkz9dbo0BUA
 layers/sme-roster/server/utils/title-cycle-disposition-postgres.ts	TO6xZrN6KhNwpjxMxcc5m7CETyiGh8c8_SgPNy5Sg6Iw
 # Justified exceptions: the optional third column records the reviewed reason.
-db/postgresql/bootstrap.sql	FD_hsDQRO3PlwxB0pTqnVLQcGYJxRzaaqTH-Wopzw_0I	安装 PostgreSQL 结构和采集保留过程。
+db/postgresql/bootstrap.sql	Fya1HBcTkcBWpiO3FfCAILXh0J4dTKp26LIiandgDvnA	Install the PostgreSQL schema and shared catalog comments.
+db/postgresql/business-catalog-comments.sql	FAwoVekr4SaAVXlt2ncTb1-Ez7LEpfR5N2fEOmR7wFUQ	PostgreSQL COMMENT ON DDL for business schema documentation.
 db/postgresql/client.ts	IKqS8xL0RaLGLCweUQRC4BLJWsYeyEX7AUgHQNS5nJTs	Drizzle accepts the existing pg pool; the driver configures session options, connection timeouts and startup version validation.
 db/postgresql/client.ts	DGedDIzHc8JvwFZd_UfhQVKAe1couSlutIEfW3sPx6cI	Drizzle node-postgres 适配器接收受管 pg.Pool，连接参数和连接初始化检查在适配器边界配置。
 db/postgresql/enterprise-directory-indexes.sql	F0IBxoSr7tKcmEldw_rbJpySPz2wya6W-MPdPFGVVkZw	Install the shared enterprise search extension and directory indexes.
@@ -56,6 +57,7 @@ db/postgresql/roster-platform-schema.sql	FrefjLr2kN4ZrbcQxoppFjE_hfxXOzo2SF9Pn1a
 db/postgresql/roster-review-schema.sql	FLDHeus5SD5T2BsNvFkDk3-DlMprUKvzpWQCcQwKyYyw	Shared PostgreSQL bootstrap DDL.
 db/postgresql/roster-schema.sql	FuzPhs1OZo9V3eQ8l4xs9jHErrlX_za5rQG7ij_fAjx4	Define the native PostgreSQL roster schema and typed import receipt metadata.
 db/postgresql/roster-triggers.sql	Fc-XDV2w8qthKVsiLhGX7JkMY0iB7IrT5KL22Y-fsu54	Shared PostgreSQL bootstrap DDL.
+db/postgresql/runtime-log-catalog-comments.sql	FWQkC00OAMnyW99w-ffmeYNXih6nJbFNQQvHKU_JSNsc	仅 COMMENT ON 运行日志表与字段的中文说明，Drizzle 无目录注释 DDL
 db/postgresql/runtime-log-indexes.sql	FswA5ZQ3EtzwSG4PnCc8VwJzbRlZmWxV92C7iv94ivTg	Install the shared retained PostgreSQL runtime log indexes.
 db/postgresql/runtime-log-schema.sql	FjdE7pPImb87xO394HTaUkOPwo89SslvgjX8z_-asWko	Define the shared PostgreSQL runtime log policy and detail-only event storage.
 layers/core/lib/logging/postgres-storage.ts	TCtPLa5C_1qSlre2hRG1Fls3Hj-VYQ4ACrk17-6vLSj0	Drizzle 0.45.4 无列算术表达式构造器，在数据库仍持有行锁时执行原子的增减。
@@ -438,6 +440,7 @@ layers/sme-roster/server/utils/roster-file-postgres.ts	TsLFucpCV1s_qYe1dTpramUq1
 layers/sme-roster/server/utils/roster-file-postgres.ts	TUTQF7wZabYrgOhEBS6Qd8-MOktNrdw2aAb0IOeWhXxc	Drizzle 0.45.4 inArray 展开每个值，使用显式数组类型与一个绑定参数维持无界输入。
 layers/sme-roster/server/utils/roster-file-postgres.ts	Tx6-4QZ4berL0P76Eb1jQqWjyat7SLO44KFtry61Xc1o	Drizzle 0.45.4 没有 PostgreSQL 文本 JSON 检查、提取、类型转换或聚合构造器，保留旧文本语义与数据库侧有界投影。
 layers/sme-roster/server/utils/roster-merge-postgres.ts	Tl3K811zTm7VvSIgu0GZnQfi9wqwpff0xgyyCrKEk9sU	Drizzle 0.45.4 无列算术表达式构造器，在数据库仍持有行锁时执行原子的增减。
+upgrade/pg/2026-11-catalog-comments/apply.sql	F5gOh7KkaEvtWtgwbefSpRIGM4XEQOKdsRLiy7m2djLQ	已有库升级入口，仅按顺序引用建库共用的注释 SQL
 upgrade/pg/2026-11-data-compaction/steps/01-install-runtime-log-compaction.sql	FTnxq55vhUUhElUz3jYZ8HmIDypolkYhzGcdZTgsfUxc	原地重整历史事件与容量计数并删除重复列及索引。Drizzle 查询构造器不支持在同一事务执行 ALTER TABLE DROP COLUMN 与 DROP INDEX。
 upgrade/pg/2026-11-data-compaction/steps/02-remove-offline-platform-tables.sql	FjHF9OAXaE7YICwMRK_xZLsO2cOH9vS1mGghfPJX-NNk	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
 upgrade/pg/2026-11-data-compaction/steps/03-install-platform-public-ids.sql	FRwhox8QdNZBDIzJHwps_rKQRCtUNkJIbveMkaCyRM_0	Install or migrate the native PostgreSQL schema, constraints and sequences. Drizzle query builders cannot express this psql DDL.
