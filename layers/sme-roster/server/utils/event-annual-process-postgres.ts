@@ -10,7 +10,7 @@ import { isCurrentPlatformObservation } from '../../lib/platform/current-observa
 import { projectAnnualFinalQualification, validAnnualDecisionQuery, type AnnualWriteScope, type AnnualWriteStep } from './annual-correspondence-contract'
 import { ANNUAL_COMPARISON_RAW_LIMIT } from './annual-process-limits'
 import { annualScopeRecordIds, projectAnnualWriteScope } from './annual-correspondence-projection'
-import { normalizedUscc } from './event-archive-discovery-model'
+import { normalizedUscc } from './normalized-uscc-postgres'
 import { prepareAnnualObservations, projectAnnualProcess, scopeAnnualEvent, type AnnualEventScope, type AnnualObservationFacts, type Rows, type Queries } from './event-annual-process-model'
 import {
   readPostgresPlatformBusinessCorrespondences, readPostgresPlatformBusinessGroups, readPostgresPlatformBusinessMetadata,

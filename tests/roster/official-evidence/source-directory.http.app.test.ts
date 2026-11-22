@@ -85,43 +85,6 @@ const read = async (url: string) => {
   return response.json()
 }
 
-it('lists each formal event source once across PDF Word and Excel without altering stored facts', async () => {
-  const before = await snapshot()
-  const url = '/api/roster/record-comparison/sources?kind=official_document&pageSize=200'
-  const catalog = await read(url)
-  expect(catalog.total).toBe(3)
-  expect(catalog.rows).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: doc.id, label: '已登记公布文件', subtitle: '原文号', path: 'formal.pdf' }),
-    expect.objectContaining({ id: -word.evidence.id, label: 'unregistered.docx', path: 'unregistered.docx', observedAt: null }),
-    expect.objectContaining({ id: -excel.evidence.id, label: 'unregistered.xlsx', path: 'unregistered.xlsx', observedAt: null }),
-  ]))
-  expect(await read(url)).toEqual(catalog)
-  expect(await snapshot()).toEqual(before)
-})
-
-it('selects unregistered sources and preserves event attachment identity when list numbers repeat', async () => {
-  const compare = async (id: number) => read(`/api/roster/record-comparison?queryIds=${queryId}&exportBatchIds=&officialSourceDocumentIds=${id}`)
-  const result = await compare(doc.id)
-  expect(result.rows.filter((row: any) => row.evidence.some((item: any) => item.inSelectedSource)).map((row: any) => [row.event.id, row.evidence[0].attachment, row.evidence[0].listNo, row.evidence[0].page])).toEqual([
-    [pdf.event.id, '附件一 / 名单一', 1, 3], [sameNumber.event.id, '附件二 / 名单二', 1, 8],
-  ])
-  const wordResult = await compare(-word.evidence.id)
-  expect(wordResult.rows.find((row: any) => row.event.id === word.event.id)).toMatchObject({ event: { year: null, batchSeq: null }, evidence: [{ sourceFile: 'unregistered.docx', page: null, inSelectedSource: true }] })
-  const excelResult = await compare(-excel.evidence.id)
-  expect(excelResult.rows.find((row: any) => row.event.id === excel.event.id).evidence).toMatchObject([{ sourceFile: 'unregistered.xlsx', inSelectedSource: true }])
-  const labels = await read(`/api/roster/record-comparison/sources?kind=official_document&ids=${-word.evidence.id}`)
-  expect(labels).toMatchObject({ total: 1, rows: [{ id: -word.evidence.id, label: 'unregistered.docx' }] })
-  const pages = await Promise.all([1, 2, 3].map(page => read(`/api/roster/record-comparison/sources?kind=official_document&pageSize=1&page=${page}`)))
-  expect(new Set(pages.flatMap(page => page.rows.map((row: any) => row.path))).size).toBe(3)
-  for (const invalid of ['0', '-9999999']) expect((await fetch(`${service.baseUrl}/api/roster/record-comparison?queryIds=${queryId}&exportBatchIds=&officialSourceDocumentIds=${invalid}`)).status).toBe(400)
-  expect((await fetch(`${service.baseUrl}/api/roster/record-comparison/sources?kind=query&ids=-1`)).status).toBe(400)
-  const rpc = await fetch(`${service.baseUrl}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_record_comparison', arguments: { queryIds: [queryId], exportBatchIds: [], officialSourceDocumentIds: [-word.evidence.id] } } }) })
-  expect(rpc.status).toBe(200)
-  const raw = await rpc.text()
-  const payload = JSON.parse(raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw)
-  expect(JSON.parse(payload.result.content[0].text)).toEqual(wordResult)
-})
-
 it('reports missing files through HTTP HEAD instead of falling back to an HTML page', async () => {
   const missing = await fetch(`${service.baseUrl}/api/files/missing.pdf`, { method: 'HEAD' })
   expect(missing.status).toBe(404)

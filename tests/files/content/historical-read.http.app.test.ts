@@ -127,29 +127,9 @@ it('lazy public parts preserve legacy row IDs and catalog registration never cer
     expect(await db.select().from(storedFilePart)).toContainEqual(partRow)
     expect(detail.partsBinding).toEqual({ historical: 'unknown', inputLineage: { status: 'unknown' } })
     expect(detail.contentIdentity).toMatchObject({ status: bytes === 'xyz' ? 'file_content_conflict' : 'verified', registered: { fileId: file.id } })
-    const catalog = await (await rest('/api/roster/record-comparison/sources?kind=official_document')).json()
-    expect(catalog.rows.find((row: any) => row.path === relPath)).toMatchObject({ id: -evidenceRow.id, contentIdentity: { registered: { fileId: file.id, bytes: 3 }, status: 'unknown', historical: 'unknown' } })
   }
   expect(await db.select().from(storedFilePart)).toContainEqual(partRow)
   expect(await db.select().from(recordEvidence)).toContainEqual(evidenceRow)
-})
-
-it('comparison REST and MCP evidence retain stable registration alongside old path and unknown binding', async () => {
-  const relPath = 'directory-only.pdf'
-  writeFileSync(join(root, relPath), 'abc')
-  const file = await (await rest('/api/files/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ relPath }) })).json()
-  const [enterpriseRow] = await db.insert(enterprise).values({ name: 'Independent directory fixture', nameNorm: 'Independent directory fixture' }).returning()
-  ok(enterpriseRow, 'Enterprise fixture insert did not return a row')
-  const [recordRow] = await db.insert(record).values({ enterpriseId: enterpriseRow.id, source: 'jxj', titleCode: 'specialized_sme' }).returning()
-  ok(recordRow, 'Record fixture insert did not return a row')
-  const [eventRow] = await db.insert(recordEvent).values({ recordId: recordRow.id, eventType: 'award', year: 2024 }).returning()
-  ok(eventRow, 'Record event fixture insert did not return a row')
-  const [evidenceRow] = await db.insert(recordEvidence).values({ recordEventId: eventRow.id, sourceFile: relPath, listNo: 1 }).returning()
-  ok(evidenceRow, 'Record evidence fixture insert did not return a row')
-  const value = await (await rest(`/api/roster/record-comparison?queryIds=${queryId}&exportBatchIds=&officialSourceDocumentIds=${-evidenceRow.id}`)).json()
-  const selectedRow = value.rows.find((row: { event: { id: number } }) => row.event.id === eventRow.id)
-  expect(selectedRow.evidence).toContainEqual(expect.objectContaining({ id: evidenceRow.id, sourceFile: relPath, inSelectedSource: true, contentIdentity: { registered: expect.objectContaining({ fileId: file.id, bytes: 3 }), status: 'unknown', historical: 'unknown' } }))
-  expect((await rpc('list_record_comparison', { queryIds: [queryId], exportBatchIds: [], officialSourceDocumentIds: [-evidenceRow.id] })).value).toEqual(value)
 })
 
 it('known capture and parse inputRef remain distinct from legacy provenance and current file checks', async () => {

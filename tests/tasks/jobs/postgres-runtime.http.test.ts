@@ -316,7 +316,6 @@ it.runIf(!!bin)('uses the PostgreSQL capability catalog and keeps private task d
   const kinds = await (await request('/api/jobs/kinds')).json()
   expect(kinds.kinds).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'render-pages', status: 'ready' }),
-    expect.objectContaining({ kind: 'reconcile', status: 'ready' }),
     expect.objectContaining({ kind: 'fixture-unimplemented', status: 'todo' }),
     expect.objectContaining({ kind: 'fixture-private', status: 'ready' }),
   ]))
@@ -783,7 +782,7 @@ it.runIf(!!bin)('keeps task-center list and detail summaries scoped, public and 
     }
     const headers = { authorization: 'Bearer ' + token }
     const scopes = [
-      { query: 'tab=sme-roster&group=platform', kinds: ['platform-query-batch', 'reconcile', 'difference-snapshot', 'event-archive-candidates', 'event-annual-correspondence'] },
+      { query: 'tab=sme-roster&group=platform', kinds: ['platform-query-batch', 'difference-snapshot'] },
       { query: 'tab=sme-roster&group=export', kinds: ['current-roster-export'] },
       { query: 'tab=core&group=ocr', kinds: ['ocr', 'render-pages'] },
       { query: 'tab=all', kinds: scenarios.map(({ kind }) => kind) },
@@ -804,18 +803,17 @@ it.runIf(!!bin)('keeps task-center list and detail summaries scoped, public and 
       expect(pgResponse.status, kind + '/' + state).toBe(200)
       const text = await pgResponse.text()
       expect(text).not.toMatch(/PRIVATE_FAILURE|\/private\//)
-      expect(JSON.parse(text), kind + '/' + state).toMatchObject({ id, kind, state })
+      const summary = JSON.parse(text)
+      expect(summary, kind + '/' + state).toMatchObject({ id, kind, state })
+      if (['event-archive-candidates', 'event-annual-correspondence', 'reconcile'].includes(kind)) {
+        expect(summary).toMatchObject({ label: kind, links: [], capabilities: { retry: false } })
+        expect(summary).not.toHaveProperty('discovery')
+        expect(summary).not.toHaveProperty('annual')
+        expect(summary).not.toHaveProperty('reconcile')
+      }
     }
     const failed = await (await request('/api/task-center/' + scenarios[0]!.id, { headers })).json()
     expect(failed.error).toBe('导出失败；请检查数据与产物存储后显式重新生成。原始错误不展示。')
-    const retry = await (await request('/api/task-center/' + scenarios[3]!.id, { headers })).json()
-    expect(retry.capabilities).toMatchObject({ retry: true, reason: '仅补查本批次未完成项，保留已完成结果。' })
-    const annual = await (await request('/api/task-center/' + scenarios[5]!.id, { headers })).json()
-    expect(annual).toMatchObject({
-      items: [],
-      annual: { total: 3, done: 1, failed: 1, unfinished: 1, attempt: 2 },
-      capabilities: { retry: false, reason: '请通过年度专属接口核对当前来源代次与重试资格；此处不重放年度任务。' },
-    })
   } finally {
     await pool.query('DELETE FROM business.job WHERE id = ANY($1)', [scenarios.map(({ id }) => id)])
     await pool.query('DELETE FROM business.stored_file WHERE id = $1', [file.id])

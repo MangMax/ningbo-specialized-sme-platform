@@ -9,13 +9,12 @@ import { singlePostgresFixtureRow } from '../../support/isolated-postgres-cases'
 import * as schema from '../fixtures/postgres-tables'
 import { eq } from 'drizzle-orm'
 import { createApp, toNodeListener, getQuery as h3Query, setHeader as h3Header, createError as h3Error } from 'h3'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ReadStream } from 'node:fs'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { patchCuration } from '../../../layers/sme-roster/lib/curation-model'
 import { getPostgresComparison } from '../../../layers/sme-roster/lib/comparison'
 import { readBaselineComparison } from './oracles/enterprise-title-antijoin'
 
@@ -290,7 +289,9 @@ describe('PostgreSQL comparison export route', () => {
 
   it('matches the independent offline comparison and applies curated and confirmed alias filters over HTTP', async () => {
     const curatedPath = join(dir, 'curated-with-exclusion.json')
-    patchCuration(curatedPath, { uscc: 'USCC26', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true })
+    writeFileSync(curatedPath, JSON.stringify({
+      [JSON.stringify(['USCC26', 'specialized_sme', 'missing_in_miit'])]: { at: '2026-10-26T00:00:00Z' },
+    }))
     vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath }))
     const db = usePostgresDirectoryDb()
     const sources = await db.select({

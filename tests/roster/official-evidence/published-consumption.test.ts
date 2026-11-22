@@ -17,7 +17,6 @@ import { supplementPostgresAnnouncement } from '../../../layers/sme-roster/serve
 import { readPostgresRosterEnterpriseDetail } from '../../../layers/sme-roster/lib/roster/enterprise-detail-postgres'
 import { listPostgresCurrentQualified } from '../../../layers/sme-roster/lib/roster/current-qualified-query-postgres'
 import type { CurrentQualifiedResult } from '../../../layers/sme-roster/lib/roster/current-qualified-page'
-import { handlePostgresCorrespondenceRequest } from '../../../layers/sme-roster/server/utils/record-correspondence-runtime'
 import { usePostgresRosterDb } from '../../../layers/sme-roster/server/utils/postgres-roster-db'
 import { receiptRedactor } from '../../../layers/sme-roster/server/utils/import-receipt-redaction'
 import { startHttpFixture } from '../../support/http'
@@ -66,7 +65,6 @@ async function fixture() {
     ...Object.fromEntries((['preflight', 'commit'] as const).map(action => ['/correction/' + action, (input: Parameters<typeof handlePostgresRosterImportRequest>[1]) => handlePostgresEvidenceCorrectionWrite({ ...input, action }, { apiToken, filesDir })])),
     '/detail': async input => ({ status: 200, body: await readPostgresRosterEnterpriseDetail(db, Number(input.query.id)) }),
     '/current': async input => ({ status: 200, body: await listPostgresCurrentQualified(db, { titleCode: 'specialized_sme', pageSize: Number(input.query.pageSize ?? 25), page: Number(input.query.page ?? 1) }) }),
-    '/source': input => handlePostgresCorrespondenceRequest({ ...input, action: 'source', kind: 'event', id: input.query.id }, apiToken),
     '/exact': input => handlePostgresOfficialEvidenceRead({ ...input, kind: 'evidence', action: 'get', id: input.query.id, query: { official: 'latest' } }, { db, apiToken }),
   } }); closes.push(server.close)
   const trace: unknown[] = []; closes.push(() => writeFileSync(join(dir, 'public-commands.json'), JSON.stringify(trace, null, 2)))
@@ -120,7 +118,7 @@ async function paired() {
   return f
 }
 
-it("pairs anonymous detail source and retained current names by stable evidence IDs without exposing C envelopes", async () => {
+it("pairs anonymous detail and retained current names by stable evidence IDs without exposing C envelopes", async () => {
   const f = await paired(), ids = await f.ids(), expected = [minimal(1, 1, '2021旧名'), minimal(2, 2, '2024新名')]
   const detail = await f.http('/detail?id=' + await f.ownerId())
   expect(factsOf(detail)).toEqual(expected)
@@ -131,14 +129,9 @@ it("pairs anonymous detail source and retained current names by stable evidence 
   expect(factsOf(current.rows[0])).toEqual(expected)
   expect(current.rows[0].publishedNames).toEqual(['现用名'])
   for (const id of ids) {
-    const source = await f.http('/source?id=' + id.recordEventId)
-    expect(factsOf(source.source)).toEqual([expected[id.id - 1]])
-    expect(source.source.evidence[0].publishedName).toEqual(expected[id.id - 1])
-    expect(Object.keys(source.source.evidence[0].publishedName).sort()).toEqual(['availability','eventId','evidenceId','nameRaw','revision','sourceBindingKnown'])
     const exact = await f.exact(id.id)
     expect(exact.official.row.nameRaw).toBe(expected[id.id - 1]!.nameRaw)
     expect(exact.official.row.actor).toBeDefined()
-    expect(JSON.stringify(factsOf(source.source))).not.toMatch(/actor|basis|command|sha256|usccRaw|districtRaw|capturedEnterpriseId/)
   }
 })
 
@@ -151,7 +144,6 @@ it("preserves null empty whitespace binding unknown legacy and repeated equal na
   ] }])]), 'mixed')
   const expected = [minimal(1,1,null), minimal(2,1,''), minimal(3,1,' \t旧名\n '), minimal(4,1,'相同名称',1,false), minimal(5,1,'相同名称'), { evidenceId:6,eventId:1,revision:null,availability:'unknown_legacy',nameRaw:null,sourceBindingKnown:null }]
   expect(factsOf(await f.http('/detail?id=' + await f.ownerId()))).toEqual(expected)
-  expect(factsOf((await f.http('/source?id=1')).source)).toEqual(expected)
   expect(factsOf((await f.http('/current')).rows[0])).toEqual(expected)
 })
 
@@ -176,7 +168,6 @@ it("reads raw-only latest after public correction without caching or changing qu
   expect(factsOf(after.rows[0])).toEqual([minimal(1,1,'2021旧名'),minimal(2,2,'更正公布原名',2)])
   expect([after.total,after.uncertainTotal,after.options,after.rows[0].group,after.rows[0].publishedNames]).toEqual([before.total,before.uncertainTotal,before.options,before.rows[0].group,before.rows[0].publishedNames])
   expect(factsOf(await f.http('/detail?id=' + await f.ownerId()))).toEqual(factsOf(after.rows[0]))
-  expect(factsOf((await f.http('/source?id=2')).source)).toEqual([minimal(2,2,'更正公布原名',2)])
   expect(after.rows[0].basis).not.toBe(before.rows[0].basis) // B correctly increments event.revision.
 })
 
@@ -187,7 +178,6 @@ it("separates unavailable safe errors from unknown legacy while preserving origi
   expect(detail.publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
   expect(detail.evidence.map((v:any) => [v.id,v.sourceFile,v.page])).toEqual([[1,'2021公布.pdf',1],[2,'2024公布.pdf',1]])
   expect(JSON.stringify(detail)).not.toContain('private sql secret capture')
-  expect((await f.http('/source?id=1')).source.publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
   const query = await f.http('/current')
   expect(query.total).toBe(1); expect(query.rows[0].group).toBe('eligible')
   expect(query.rows[0].publishedPresentation).toEqual({availability:'unavailable',error:'read_failed',facts:[]})
@@ -209,7 +199,7 @@ it("reuses one selected event Map across source detail and repeated references w
   expect(latest).not.toHaveBeenCalled()
 })
 
-it("applies final source copy and text budget without truncating old locators or shrinking A pages", async () => {
+it("preserves published names and locators within the detail response budget", async () => {
   const f = await fixture(), name = 'x'.repeat(600)
   await f.commit(f.announcement([f.record('specialized_sme',[{eventType:'award',year:2024,batchSeq:1,evidence:Array.from({length:20},(_,i) => f.evidence(f.published(name,1,i+1)))}])]),'budget')
   const read = vi.spyOn(official,'readPostgresOfficialEvidencePages')
@@ -218,28 +208,17 @@ it("applies final source copy and text budget without truncating old locators or
   expect(detail.publishedPresentation.facts).toHaveLength(20)
   expect(detail.qualificationAssessment.titles.map((title: any) => title.titleCode)).toEqual(['little_giant', 'specialized_sme', 'innovative_sme'])
   expect(read).toHaveBeenCalledTimes(1)
-  const source = await f.http('/source?id=1')
-  expect(source.source.publishedPresentation).toEqual({availability:'unavailable',error:'response_limit',facts:[]})
-  expect(source.source.evidence).toHaveLength(20)
-  expect(source.source.evidence.map((v:any) => [v.id,v.page,v.listNo])).toEqual(Array.from({length:20},(_,i)=>[i+1,1,i+1]))
-  expect(source.source.evidence.every((v:any) => !('publishedName' in v))).toBe(true)
-  expect(read).toHaveBeenCalledTimes(2)
-  expect(read.mock.calls.map(call => call[1])).toEqual([[{eventId:1}],[{eventId:1}]])
+  expect(detail.evidence).toHaveLength(20)
 })
 
-it("preserves A field and event scope failures as typed unavailable without exposing raw errors", async () => {
+it("preserves an oversized name as typed unavailable without exposing raw errors", async () => {
   const f = await paired()
   // Explicit corrupt historical capture; public B rejects these invalid inputs.
   await f.seedRetainedName('x'.repeat(4001))
   const detail = await f.http('/detail?id=' + await f.ownerId())
   expect(detail.publishedPresentation).toEqual({availability:'unavailable',error:'field_limit',facts:[]})
   expect(detail.evidence).toHaveLength(2)
-  await f.seedRetainedName('2021旧名')
-  // Explicit extreme legacy event scope, not a normal import shortcut.
-  await f.execute("INSERT INTO record_evidence(record_event_id,source_file,page,list_no) SELECT 1,'historical.pdf',1,n FROM generate_series(2,301) n")
-  const source = await f.http('/source?id=1')
-  expect(source.source.publishedPresentation).toEqual({availability:'unavailable',error:'source_limit',facts:[]})
-  expect(source.source.evidence).toHaveLength(301)
+
 })
 
 it("retains captured old and new names after public merge using the surviving owner IDs", async () => {
@@ -252,7 +231,6 @@ it("retains captured old and new names after public merge using the surviving ow
   const detail = await f.http('/detail?id=' + newOwner)
   expect(detail.enterprise.enterpriseId).toBe(newOwner); expect(factsOf(detail)).toEqual(expected)
   expect(factsOf((await f.http('/current')).rows[0])).toEqual(expected)
-  expect(factsOf((await f.http('/source?id=1')).source)).toEqual([expected[0]])
   expect((await f.exact(1)).official.row).toMatchObject({capturedEnterpriseId:oldOwner,currentOwner:{enterpriseId:newOwner}})
 })
 
@@ -326,7 +304,6 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   const router = h3.createRouter()
   router.get('/api/roster/enterprises/:id',(await import('../../../layers/sme-roster/server/api/roster/enterprises/[id].get')).default)
   router.get('/api/roster/current-enterprises',(await import('../../../layers/sme-roster/server/api/roster/current-enterprises.get')).default)
-  router.get('/api/roster/correspondences/events/:id',(await import('../../../layers/sme-roster/server/api/roster/correspondences/events/[id].get')).default)
   router.get('/api/roster/evidence/:id',(await import('../../../layers/sme-roster/server/api/roster/evidence/[id].get')).default)
   const server = createServer(h3.toNodeListener(h3.createApp().use(router)))
   await new Promise<void>((resolve,reject) => { server.once('error',reject);server.listen(0,'127.0.0.1',resolve) })
@@ -335,11 +312,9 @@ it("reads actual H3 routes and MCP handlers through the same serialized DTO whil
   const trace:unknown[]=[];closes.push(() => writeFileSync(join(f.dir,'h3-reads.json'),JSON.stringify(trace,null,2)))
   const get=async(path:string,token?:string) => {const response=await fetch(`http://127.0.0.1:${address.port}${path}`,{headers:token?{authorization:'Bearer '+token}:{}});const body=await response.json();trace.push({path,tokenPresent:!!token,status:response.status,body});return {status:response.status,body}}
   const expected=[minimal(1,1,'2021旧名'),minimal(2,2,'2024新名')]
-  const detail=await get('/api/roster/enterprises/' + await f.ownerId()),query=await get('/api/roster/current-enterprises?titleCode=specialized_sme'),source=await get('/api/roster/correspondences/events/2')
-  expect([detail.status,query.status,source.status]).toEqual([200,200,200])
-  expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected);expect(factsOf(source.body.source)).toEqual([expected[1]])
-  const { dispatchRecordCorrespondenceMcp }=await import('../../../layers/sme-roster/server/utils/mcp-record-correspondence')
-  expect(await dispatchRecordCorrespondenceMcp('source',{kind:'event',id:2})).toEqual(source.body)
+  const detail=await get('/api/roster/enterprises/' + await f.ownerId()),query=await get('/api/roster/current-enterprises?titleCode=specialized_sme')
+  expect([detail.status,query.status]).toEqual([200,200])
+  expect(factsOf(detail.body)).toEqual(expected);expect(factsOf(query.body.rows[0])).toEqual(expected)
   const detailTool=(await import('../../../layers/sme-roster/server/mcp/tools/get_enterprise_detail')).default
   const currentTool=(await import('../../../layers/sme-roster/server/mcp/tools/list_current_qualified_enterprises')).default
   // Direct tool handlers, not the real MCP transport or native admission.

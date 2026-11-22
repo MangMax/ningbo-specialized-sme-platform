@@ -20,11 +20,9 @@ const owners = {
     "roster/imports",
     "roster/official-evidence",
     "roster/event-correction",
-    "roster/source-completeness",
-    "roster/curation"
+    "roster/source-completeness"
   ],
   "任务 · 后台任务": [
-    "tasks/candidates",
     "tasks/center",
     "tasks/context",
     "tasks/details",
@@ -95,8 +93,7 @@ const owners = {
   ],
   "平台 · 观察、指纹与补录": [
     "platform/fingerprints",
-    "platform/observations",
-    "platform/reconciliation"
+    "platform/observations"
   ],
   "名录 · 资格与认定读取": [
     "roster/current-qualification",
@@ -128,7 +125,6 @@ const owners = {
     "roster/comparison",
     "roster/correspondence",
     "roster/event-correspondence",
-    "roster/annual-correspondence",
     "roster/decisions"
   ],
   "文件 · 存储、OCR识别、解析与预览": [

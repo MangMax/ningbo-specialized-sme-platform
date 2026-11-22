@@ -1,7 +1,4 @@
 import { createHash } from 'node:crypto'
-import { runningPostgresJobRunner } from '../../../core/server/utils/postgres-jobs'
-import { CANDIDATE_JOB_KIND } from './jobs/candidate-discovery-contract'
-import { isJobId } from '../../../core/lib/job'
 import { appLog, type LogContext } from '../../../core/lib/logging'
 import { desc, DrizzleQueryError, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
@@ -45,13 +42,11 @@ export async function lockPostgresRosterImportBatch(tx: Tx, key: string) {
 }
 
 export function committedPostgresImportResult(batch: PostgresImportBatch, action: PostgresImportAction) {
-  const storedIds = (batch.summary as { candidateTaskIds?: unknown } | null)?.candidateTaskIds
-  const candidateTaskIds = Array.isArray(storedIds) ? storedIds.filter(isJobId) : []
   return action === 'preflight' ? { batchId: batch.id, status: 'preflight' as const, preflight: {
     add: 0, update: 0, remove: 0, review: 0, conflicts: [], evidenceRepoints: 0, batchStatus: 'committed' as const,
   } } : { batchId: batch.id, status: 'committed' as const, summary: readSummaryOf(batch.summary) ?? zeroSummary,
     items: publicRosterImportItems(batch.items ?? [], batch.id), error: null,
-    ...(candidateTaskIds.length ? { candidateTaskIds } : {}) }
+  }
 }
 
 function conflict(message: string): never {
@@ -94,7 +89,7 @@ export async function executePostgresExportItems(tx: Tx, batch: PostgresImportBa
 }
 
 export type NativeImportExecution = { preflight: RosterImportPreflight; summary?: never; items?: never; error?: never }
-  | { preflight: RosterImportPreflight; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null; candidateTaskIds?: string[]; queuedCandidateTaskIds?: string[]; replayUpdate?: number }
+  | { preflight: RosterImportPreflight; summary: RosterImportSummary; items: RosterImportItemResult[]; error: string | null; replayUpdate?: number }
 
 export async function executePostgresRosterImport(db: NodePgDatabase, action: PostgresImportAction | 'replay', request: RosterImportRequest,
   execute: (tx: Tx,batch: PostgresImportBatch) => Promise<NativeImportExecution>, context?: LogContext) {
@@ -147,8 +142,7 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
     logReplay(attempt.originalReceiptId)
     return committedPostgresImportResult(attempt.batch, action === 'preflight' ? 'preflight' : 'commit')
   }
-  const run = (remember: (jobs: readonly { id: string; kind: string }[]) => void) => runPostgresImportTransaction(db, async tx => {
-    remember([])
+  const { result, replayed } = await runPostgresImportTransaction(db, async tx => {
     const batch = (await lockPostgresRosterImportBatch(tx, key))!
     if (batch.status === 'committed' && action !== 'replay') {
       const replay = committedPostgresImportResult(batch, action)
@@ -173,21 +167,17 @@ export async function executePostgresRosterImport(db: NodePgDatabase, action: Po
     const { items, summary, error } = result
     const publicItems = publicRosterImportItems(items, batch.id)
     const status = error === null ? 'committed' as const : 'failed' as const
-    const tasks = result.candidateTaskIds?.length ? { candidateTaskIds: result.candidateTaskIds } : {}
     await tx.update(importBatch).set({
-      status, itemResults: JSON.stringify(items), summary: JSON.stringify({ ...summary, ...tasks }), error,
+      status, itemResults: JSON.stringify(items), summary: JSON.stringify(summary), error,
       committedAt: status === 'committed' ? at : null, preflightResult: JSON.stringify(result.preflight),
     }).where(eq(importBatch.id, batch.id))
     await tx.update(importReceipt).set({
       status, summary: JSON.stringify(summary), itemResults: JSON.stringify(redact(publicItems)), completedAt: at,
     }).where(eq(importReceipt.id, receiptId))
-    remember((result.queuedCandidateTaskIds ?? []).map(id => ({ id, kind: CANDIDATE_JOB_KIND })))
     if (action === 'replay') return { result: { batchId: batch.id, status: error === null ? 'replayed' as const : 'failed' as const,
       update: result.replayUpdate ?? 0, evidenceRepointed: summary.evidenceRepointed, items: publicItems, error }, replayed: false }
-    return { result: { batchId: batch.id, status, summary, items: publicItems, error, ...tasks }, replayed: false }
-  })
-  const runner = action === 'commit' && request.payload.platformQueries?.length ? runningPostgresJobRunner(db) : undefined
-  const { result, replayed } = await (runner ? runner.trackSubmission(run, context) : run(() => {})).catch(async error => {
+    return { result: { batchId: batch.id, status, summary, items: publicItems, error }, replayed: false }
+  }).catch(async error => {
     await db.update(importReceipt).set({ status: 'failed', completedAt: new Date().toISOString() })
       .where(eq(importReceipt.id, receiptId))
     throw error

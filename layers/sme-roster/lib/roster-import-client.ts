@@ -523,7 +523,6 @@ export interface RosterImportCommitResponse {
   /** Saved in existing batch/receipt JSON and returned here once, including on replay. */
   qualificationReadback?: RosterImportAfterQualificationReadback
   /** #214: durable candidate-task IDs for archived query scopes; does not imply candidate completion. */
-  candidateTaskIds?: string[]
   batchId: number
   status: 'committed' | 'failed'
   summary: RosterImportSummary

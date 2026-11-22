@@ -1,7 +1,5 @@
 import { sql, type SQLWrapper } from 'drizzle-orm'
 
-export const EVENT_ARCHIVE_RULE_VERSION = 'event-archive-212-v1'
-
 /** Same whitespace set as domain.normalizeUscc, evaluated before the bounded select. */
 export function normalizedUscc(column: SQLWrapper) {
   let value = sql`upper(coalesce(${column}, ''))`

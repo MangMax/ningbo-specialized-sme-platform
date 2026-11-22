@@ -40,7 +40,6 @@ export async function executePostgresImportSteps(
     evidenceRepoints: 0, conflicts: [], batchStatus: batch.status }
   const summary: RosterImportSummary = { ...emptySummary }
   const items: RosterImportItemResult[] = []
-  const candidateTaskIds: string[] = [], queuedCandidateTaskIds: string[] = []
   try {
     return await tx.transaction(async nested => {
       for (const step of steps) {
@@ -69,11 +68,9 @@ export async function executePostgresImportSteps(
         for (const key of ['written','skipped','evidenceRepointed'] as const) summary[key] += phase.summary[key]
         if (phase.summary.canonicalProjection) summary.canonicalProjection = phase.summary.canonicalProjection
         if (phase.summary.platformFields) summary.platformFields = phase.summary.platformFields
-        candidateTaskIds.push(...phase.candidateTaskIds ?? [])
-        queuedCandidateTaskIds.push(...phase.queuedCandidateTaskIds ?? [])
       }
       if (action === 'preflight') throw new RollbackImport({ preflight })
-      return { preflight, items, summary, error: null, candidateTaskIds, queuedCandidateTaskIds }
+      return { preflight, items, summary, error: null }
     })
   } catch (error) {
     if (error instanceof RollbackImport) return error.result
@@ -189,7 +186,7 @@ export function createPostgresImportSteps(action: PostgresImportAction, request:
   })
   if (platformQueries?.length) steps.push({
     writeForPreflight: Boolean(platformQueries?.length && (aliases?.length || differences?.length || merges?.length)),
-    execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request,undefined,action==='commit'),
+    execute: (tx,batch,operation) => executePostgresPlatformItems(tx,batch,operation,request),
   })
   if (Array.isArray(aliases) && aliases.length) steps.push({
     execute: (tx,batch,operation) => executePostgresAliasItems(tx,batch,operation,aliases),

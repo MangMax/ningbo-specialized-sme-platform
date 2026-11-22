@@ -94,6 +94,10 @@ afterAll(async () => {
 
 it('discovers module and subgroup filters in development OpenAPI and lists all startup JobSpecs', async () => {
   const contract = await readDevelopmentDiscovery()
+  const retiredRoutes = /^\/api\/(?:comparison(?:\/|$)|roster\/(?:record-comparison|correspondences|annual-correspondence-tasks|differences\/refresh|events\/\{id\}\/annual-))/
+  expect(Object.keys(contract.paths).filter(path => retiredRoutes.test(path))).toEqual([])
+  expect(contract.paths['/api/export'].get).toBeDefined()
+  expect(contract.paths['/api/roster/current-enterprises'].get).toBeDefined()
   const parameters = contract.paths['/api/task-center'].get.parameters
   expect(parameters).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'tab', in: 'query', schema: { type: 'string', default: 'all' } }),
@@ -102,9 +106,16 @@ it('discovers module and subgroup filters in development OpenAPI and lists all s
   expect(contract.paths['/api/jobs/kinds'].get.responses['200']).toBeDefined()
   const { kinds } = await read('/api/jobs/kinds', false)
   expect(kinds.map((entry: { kind: string }) => entry.kind)).toEqual([
-    'current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates',
-    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup', 'roster_task_history_cleanup',
+    'current-roster-export', 'difference-snapshot',
+    'lead-lists-version-export', 'ocr', 'platform-query-batch', 'render-pages', 'roster_export_cleanup',
   ])
+  const retiredKinds = ['event-archive-candidates', 'event-annual-correspondence', 'reconcile', 'roster_task_history_cleanup']
+  const { items } = await read('/api/scheduled-tasks')
+  expect(items.map((item: { id: string }) => item.id)).not.toContain('roster_task_history_cleanup')
+  for (const kind of retiredKinds) {
+    const response = await request('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ kind }) })
+    expect(response.status, kind).toBe(400)
+  }
   const snapshot = await request('/api/jobs', { method: 'POST', headers, body: JSON.stringify({ kind: 'difference-snapshot' }) })
   expect(snapshot.status).toBe(400)
   expect(await snapshot.text()).toContain('dedicated difference-snapshots endpoint')

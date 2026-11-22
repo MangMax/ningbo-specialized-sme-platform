@@ -149,10 +149,8 @@ export async function supplementPostgresAnnouncement(db: NodePgDatabase, id: num
         const publicItems = publicRosterImportItems(items, batchId!)
         await recordSupplementReceipt(nested, { batchId: batchId!, requestHash, status: 'committed',
           summary, items: redactor(publicItems), startedAt, completedAt })
-        const candidateTaskIds = extra?.summary ? extra.candidateTaskIds : undefined
         const receipt: SupplementAnnouncementResponse = { batchId: batchId!, status: 'supplemented', summary, items: publicItems, error: null,
-          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()],
-          ...(candidateTaskIds?.length ? { candidateTaskIds } : {}) }
+          qualificationReadback: readback, intakeId: id, sourceIds, owners: [...owners.values()] }
         await nested.update(rosterAnnouncementIntake).set({
           supplementDigest: decision, reviewedRequest: JSON.stringify(input), receipt: JSON.stringify(receipt),
         }).where(eq(rosterAnnouncementIntake.id, id))

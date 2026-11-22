@@ -349,21 +349,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     }
     const imported = await http('/api/roster/import/commit', snapshot)
     expect(imported.body).toMatchObject({ status: 'committed' })
-    const { id: exportRowId } = (await firstRow<{ id: number }>('SELECT id::int FROM platform_export_row ORDER BY id DESC LIMIT 1'))!
-    const decision = {
-      idempotencyKey: 'correspondence-history', sourceIdentity: 'history-test.xlsx',
-      actor: { type: 'agent', id: 'tester' }, basis: '测试审计依据', ruleId: 'manual-review', ruleVersion: '1',
-      operations: [{ action: 'create', status: 'candidate', edge: {
-        type: 'event_export_context', eventId: event.id, exportRowId, role: 'current_snapshot_context',
-      } }],
-    }
-    const preview = await http('/api/roster/correspondences/preflight', decision)
-    expect(preview.status, JSON.stringify(preview.body)).toBe(200)
-    const { planHash } = z.object({ planHash: z.string() }).parse(preview.body)
-    const saved = await http('/api/roster/correspondences/commit', { request: decision, planHash })
-    expect(saved.status).toBe(200)
-    const { correspondenceIds: [correspondenceId] } = z.object({ correspondenceIds: z.array(z.number()).length(1) }).parse(saved.body)
-
     const firstOwner = (await firstRow<{ id: number }>('SELECT r.enterprise_id::int AS id FROM record_event e JOIN record r ON r.id=e.record_id WHERE e.id=$1', event.id))!
     const scope = { enterpriseId: firstOwner.id, titleCode: 'specialized_sme', direction: 'missing_in_miit' }
     const legacyDecision = { ...scope, action: 'replace', expectedCurrentId: null, idempotencyKey: 'native-decision-read',
@@ -464,14 +449,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       expect(await response.json()).toEqual(legacy.body)
     }
 
-    for (const query of ['view=summary&pageSize=2', 'view=full&showCurated=true&pageSize=4', 'view=summary&enterpriseId=' + firstOwner.id]) {
-      const path = '/api/comparison?' + query
-      const original = await http(path)
-      const native = await app.request(path)
-      expect(original.status, JSON.stringify(original.body)).toBe(200)
-      expect(native.status, await native.clone().text()).toBe(200)
-      expect(await native.json()).toEqual(original.body)
-    }
     const batch = (await firstRow<{ id: number; item_results: string }>(
       "SELECT id::int,item_results FROM import_batch WHERE id=$1 AND status='committed'", seeded.merged!.batchId))!
     const items = JSON.parse(batch.item_results)
@@ -492,23 +469,14 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       ['/items', 'list_roster_import_items', { projection: 'snapshot', receiptId, source: 'redacted_receipt', itemIndex, oldRecordId }],
       ['/items', 'list_roster_import_items', { projection: 'qualification', batchId: grantBatchId, source: 'private_batch', itemIndex: grantIndex }],
     ] as const
-    const historyCalls = [
-      [`/api/roster/correspondences/${correspondenceId}/audit?pageSize=1`, 'get_record_correspondence_audit', { id: correspondenceId!, pageSize: 1 }],
-      ['/api/roster/correspondences/batches/' + decision.idempotencyKey, 'get_record_correspondence_batch', { idempotencyKey: decision.idempotencyKey }],
-    ] as const
-    for (const [path, name, args] of [...calls.map(([suffix, name, args]) =>
-      ['/api/roster/import/receipts' + suffix + '?' + query(args), name, args] as const), ...historyCalls]) {
+    for (const [path, name, args] of calls.map(([suffix, name, args]) =>
+      ['/api/roster/import/receipts' + suffix + '?' + query(args), name, args] as const)) {
       const expected = await http(path)
       expect(expected.status, path).toBe(200)
       const response = await app.request(path)
       const body = await response.json()
       expect(response.status, JSON.stringify({ path, body })).toBe(200)
       expect(body, path).toEqual(expected.body)
-      if (name === 'get_record_correspondence_audit') {
-        expect(body).toMatchObject({ rows: [{ toStatus: 'candidate', actorId: 'tester', evidence: expect.any(Object) }], total: 1, page: 1, pageSize: 1 })
-        expect(JSON.stringify(body)).not.toContain('synthetic-private-history-value')
-      }
-      if (name === 'get_record_correspondence_batch') expect(body).toEqual(saved.body)
       const remote = await app.request('/mcp', {
         method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream',
           'mcp-protocol-version': '2025-06-18', authorization: 'Bearer ' + mcpToken },
@@ -518,15 +486,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
       const text = raw.startsWith('event:') ? raw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : raw
       expect(JSON.parse(JSON.parse(text).result.content[0].text), name).toEqual(expected.body)
     }
-    const batchPath = '/api/roster/correspondences/batches/' + decision.idempotencyKey
-    const unauthorized = await app.request(batchPath, { headers: {} })
-    expect(unauthorized.status).toBe(401)
-    expect(await unauthorized.json()).toEqual((await http(batchPath, undefined, null)).body)
-    const missing = await app.request('/api/roster/correspondences/batches/' + snapshot.idempotencyKey)
-    expect(missing.status).toBe(404)
-    const invalidAudit = await app.request(`/api/roster/correspondences/${correspondenceId}/audit?pageSize=201`)
-    expect(invalidAudit.status).toBe(400)
-
     const bounded = '/api/roster/import/receipts/items?' + query({ ...selector, projection: 'snapshot', maxBytes: 1 })
     const expected = await http(bounded)
     const response = await app.request(bounded)

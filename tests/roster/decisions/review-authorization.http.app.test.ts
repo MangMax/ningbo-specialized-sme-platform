@@ -6,7 +6,7 @@ const f=qualificationExportFixture()
 beforeAll(()=>{ vi.stubEnv('NUXT_MCP_TOKEN', f.token); return f.start() },60000)
 afterAll(async()=>{ try { await f.close() } finally { vi.unstubAllEnvs() } })
 it('protects difference_snapshot at HTTP and SDK boundaries',async ()=>{
- const name='difference_snapshot'
+  const name = 'difference_snapshot'
  for(const auth of [undefined,'Bearer incorrect']){
   const response=await fetch(f.url('/mcp'),{method:'POST',headers:{'content-type':'application/json',accept:'application/json, text/event-stream',...(auth?{authorization:auth}:{})},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{}}})})
   expect(response.status).toBe(401)

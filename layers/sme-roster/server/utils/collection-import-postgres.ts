@@ -1,6 +1,6 @@
 import { enterprise } from '../../../../db/postgresql/enterprise-tables'
 import { platformBusinessObservation, platformCollection } from '../../../../db/postgresql/platform-tables'
-import { and, DrizzleQueryError, eq, max, sql } from 'drizzle-orm'
+import { and, DrizzleQueryError, eq, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { RELATION_DECLARE_KIND_ORDER } from '../../lib/labels'
 import { normalizeUscc } from '../../lib/domain'
@@ -11,10 +11,7 @@ import { normalizePlatformRelation } from '../../lib/platform/normalization'
 import { writePostgresCollectionHeader } from '../../lib/platform/postgres-collection-write'
 import { writePostgresObservation } from '../../lib/platform/postgres-observation-write'
 import { executePostgresRosterImport, type NativeImportExecution, type PostgresImportAction, type PostgresImportBatch } from './roster-export-import-postgres'
-import { stagePostgresJob } from '../../../core/server/utils/job-runner-postgres'
 import { prunePostgresPlatformCaptures } from './platform-capture-retention-postgres'
-import { EVENT_ARCHIVE_RULE_VERSION } from './event-archive-discovery-model'
-import { CANDIDATE_JOB_KIND, candidateJobParams } from './jobs/candidate-discovery-contract'
 import type { PlatformProjectionResult } from '../../lib/platform/business-record'
 import { PlatformProjectionError } from '../../lib/platform/projection-error'
 import { applyProjectionPreview, businessProjectionPreview, planPlatformObservation, recognizedProjectionPreview } from './platform-business-record'
@@ -188,7 +185,7 @@ export function commitPostgresPlatformCollection(db: NodePgDatabase, request: Ro
 }
 
 export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportBatch,action: PostgresImportAction,
-  request: RosterImportRequest, checkpoint?: (tx: Tx)=>Promise<void>, stageCandidateJobs = true): Promise<NativeImportExecution> {
+  request: RosterImportRequest, checkpoint?: (tx: Tx)=>Promise<void>): Promise<NativeImportExecution> {
   const queries = Array.isArray(request.payload.platformQueries) ? request.payload.platformQueries : []
   // Drizzle has no transaction-scoped PostgreSQL advisory lock API.
   if (action === 'commit') await tx.execute(sql`SELECT pg_advisory_xact_lock(21785,0)`)
@@ -249,19 +246,6 @@ export async function executePostgresPlatformItems(tx: Tx,batch: PostgresImportB
       error:'批次执行阶段有项失败（已整批回滚，未写入任何数据）'}
   }
   const summary = archiveSummary(items,plans.some(plan=>plan.kind==='reference'),request.sourceKind==='platform_archive')
-  const candidateTaskIds = [], queuedCandidateTaskIds = []
-  if (checkpoint) await checkpoint(tx)
-  else if (stageCandidateJobs && process.env.NUXT_DB_READONLY !== '1') {
-    for (const item of items.filter(item=>item.kind==='platform_query' && item.detail?.reuseExisting !== true)) {
-      const queryId = Number(item.ref.slice('query:'.length))
-      const [row] = await tx.select({ last: max(platformBusinessObservation.publicId) }).from(platformCollection)
-        .innerJoin(platformBusinessObservation, eq(platformBusinessObservation.collectionId, platformCollection.id))
-        .where(eq(platformCollection.publicId, queryId))
-      const clientRequestId = 'archive:'+queryId+':'+(row?.last ?? 0)+':'+EVENT_ARCHIVE_RULE_VERSION
-      const { row: job, inserted } = await stagePostgresJob(tx,{kind:CANDIDATE_JOB_KIND,params:candidateJobParams.parse({queryId,clientRequestId})})
-      candidateTaskIds.push(job.id)
-      if (inserted) queuedCandidateTaskIds.push(job.id)
-    }
-  }
-  return {preflight,items,summary,error:null,candidateTaskIds,queuedCandidateTaskIds}
+  await checkpoint?.(tx)
+  return {preflight,items,summary,error:null}
 }

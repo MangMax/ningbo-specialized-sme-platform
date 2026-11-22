@@ -313,19 +313,6 @@ it('accepts exactly the built application route templates and no other spelling'
   expect(actual).toContain('/api/platform/declarations/:recordId')
 })
 
-it('records new annual and candidate HTTP templates without concrete event or task identities', async () => {
-  for (const [path, template] of [
-    ['/api/roster/events/987654321/annual-process', '/api/roster/events/:id/annual-process'],
-    ['/api/roster/annual-correspondence-tasks/not-a-job', '/api/roster/annual-correspondence-tasks/:id'],
-  ]) {
-    const response = await call(path!)
-    expect([400, 404]).toContain(response.status)
-    const rows = await waitLog(response.requestId)
-    expect(rows.find(row => row.source === 'http')).toMatchObject({ httpMethod: 'GET', httpRoute: template, statusCode: response.status })
-    expect(JSON.stringify(rows)).not.toMatch(/987654321|not-a-job/)
-  }
-})
-
 it('records the requested file id on a real delete failure', async () => {
   const response = await call('/api/files/987654321', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: '{}' })
   expect([400, 404, 409]).toContain(response.status)

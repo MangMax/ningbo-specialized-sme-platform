@@ -164,13 +164,12 @@ describe('任务种类注册表', () => {
   it('启动登记完整任务目录，可重复调用且保留已登记的 spec', () => {
     registerJobSpecs()
     const kinds = jobSpecs()
-    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'event-annual-correspondence', 'event-archive-candidates', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'reconcile', 'render-pages', 'roster_export_cleanup', 'roster_task_history_cleanup'])
-    for (const k of ['render-pages', 'ocr', 'reconcile']) {
+    expect(kinds.map((s) => s.kind)).toEqual(['current-roster-export', 'difference-snapshot', 'lead-lists-version-export', 'ocr', 'platform-query-batch', 'render-pages', 'roster_export_cleanup'])
+    for (const k of ['render-pages', 'ocr']) {
       expect(getJobSpec(k)!.status).toBe('ready')
       expect(getJobSpec(k)!.postgres?.run).toBeTypeOf('function')
     }
     // 「怎么拼 params」是给代理看的,不能只报名字。
-    expect(getJobSpec('reconcile')!.paramsHint).toMatch(/titles/)
     expect(getJobSpec('difference-snapshot')!.parse({})).toMatchObject({ ok: false, message: expect.stringContaining('dedicated') })
     expect(() => registerJobSpecs()).not.toThrow()
     clearJobSpecs()
@@ -315,8 +314,6 @@ describe('Nitro 内建 OpenAPI 的暴露面', () => {
       'records.get.ts',
       'enterprises/[id].get.ts',
       'export.get.ts',
-      'comparison.get.ts',
-      'comparison/curated.patch.ts',
       'files/index.get.ts',
       'files/[id].patch.ts',
       'files/[id].delete.ts',

@@ -3,8 +3,6 @@ import { operationLogContext } from '../../../core/server/utils/operation-log-co
 
 const contextTools = new Set([
   'preflight_roster_batch', 'save_roster_batch',
-  'submit_event_archive_candidate_task', 'retry_event_archive_candidate_task', 'cancel_event_archive_candidate_task',
-  'submit_event_annual_correspondence_task', 'retry_event_annual_correspondence_task', 'cancel_event_annual_correspondence_task',
 ])
 
 export default defineNitroPlugin(app => {

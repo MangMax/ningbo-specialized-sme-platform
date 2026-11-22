@@ -1,7 +1,7 @@
 /**
  * 查询串里**多值参数**的解析规则 —— 纯函数,可单测。
  *
- * 口径(与 `/api/records`、`/api/files`、`/api/export`、`/api/comparison` 现有四处一致):
+ * 口径(与 `/api/records`、`/api/files`、`/api/export` 现有三处一致):
  *
  *   - `title=a,b`(**逗号分隔**)与 `title=a&title=b`(**重复参数**)都认;
  *   - 每项去掉两端空白,**空项剔除**;

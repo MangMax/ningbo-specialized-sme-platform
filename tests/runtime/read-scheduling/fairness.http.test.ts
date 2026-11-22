@@ -22,14 +22,13 @@ beforeAll(async () => {
   vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: 'synthetic-fairness', filesDir: dir, curatedPath: join(dir, 'curated.json'), reconcilePath: join(dir, 'reconcile.json') }))
   const handler = (await import('../../../layers/sme-roster/server/api/roster/differences.get')).default
   const recognitions = (await import('../../../layers/sme-roster/server/api/roster/recognitions.get')).default
-  const comparison = (await import('../../../layers/sme-roster/server/api/comparison.get')).default
   const usccGet = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.get')).default
   const usccPost = (await import('../../../layers/sme-roster/server/api/roster/uscc-research.post')).default
   const commit = (await import('../../../layers/sme-roster/server/api/roster/import/commit.post')).default
   const supplement = (await import('../../../layers/sme-roster/server/api/roster/import/intake/[id]/supplement.post')).default
   const imports = h3.createRouter().post('/api/roster/import/commit', commit).post('/api/roster/import/intake/:id/supplement', supplement)
   const app = createApp().use('/api/roster/differences', handler)
-    .use('/api/roster/recognitions', recognitions).use('/api/comparison', comparison)
+    .use('/api/roster/recognitions', recognitions)
     .use('/api/roster/uscc-research', defineEventHandler(event => event.method === 'POST' ? usccPost(event) : usccGet(event))).use(imports)
   server = createServer(toNodeListener(app))
   await new Promise<void>(r => server!.listen(0, '127.0.0.1', r))
@@ -77,21 +76,14 @@ it('keeps literal nonempty results and separate universes during mixed public re
     return response.json()
   }
   const tool = (await import('../../../layers/sme-roster/server/mcp/tools/list_differences')).default as unknown as { handler(input: object): Promise<unknown> }
-  const [recognitions, summary, full, get, post, mcp] = await Promise.all([
-    read('/api/roster/recognitions?pageSize=20'), read('/api/comparison?view=summary&pageSize=20'),
-    read('/api/comparison?pageSize=20'), read('/api/roster/uscc-research?pageSize=20'),
+  const [recognitions, get, post, mcp] = await Promise.all([
+    read('/api/roster/recognitions?pageSize=20'), read('/api/roster/uscc-research?pageSize=20'),
     read('/api/roster/uscc-research', { pageSize: 20 }), tool.handler({ pageSize: 20 }),
   ])
   expect(recognitions.counts).toMatchObject({ titlePairs: 2, enterprises: 2 })
   expect(recognitions.rows.map((row: any) => [row.name, row.titleCode, row.firstYear])).toEqual([
     ['公平合成乙', 'specialized_sme', 2022], ['公平合成甲', 'specialized_sme', 2022],
   ])
-  expect(summary).toMatchObject({ view: 'summary', total: 2 })
-  expect(summary.rows.map((row: any) => [row.name, row.direction, row.evidenceIncluded])).toEqual([
-    ['公平合成乙', 'missing_in_miit', false], ['公平合成甲', 'missing_in_miit', false],
-  ])
-  expect(full.total).toBe(2)
-  expect(full.rows.map((row: any) => row.name)).toEqual(['公平合成乙', '公平合成甲'])
   expect(get).toMatchObject({ checklist: { counts: { total: 2 } }, plan: { counts: { targets: 2, filled: 0 }, ready: [] } })
   expect(post).toEqual(get)
   expect(mcp).toEqual({ rows: [], counts: {} })
@@ -104,7 +96,7 @@ it('keeps literal nonempty results and separate universes during mixed public re
 })
 
 it('preserves each scheduled route validation and the import authentication boundary', async () => {
-  for (const path of ['/api/roster/recognitions?title=invalid', '/api/comparison?view=invalid', '/api/roster/uscc-research?title=invalid']) {
+  for (const path of ['/api/roster/recognitions?title=invalid', '/api/roster/uscc-research?title=invalid']) {
     const response = await fetch(base + path)
     expect(response.status).toBe(400)
     expect((await response.json()).statusMessage).toBeTruthy()

@@ -127,7 +127,6 @@
 
 ### 旧数据只读背景
 
-`GET /api/roster/record-comparison` / `list_record_comparison` 仅用于查阅旧事件对应和历史 scoped 观察，不能作为新任务队列或写回入口。旧解释、回执及版本审计只读，不执行追加解释、旧解释复核或预检提交旧决定流程。新任务使用冻结快照和当前判断，判断表与迁移查证仍适用。
 
 `queryBusList` 可作为独立 `recognized_list` 通过统一预检/提交转存，保留每个原批次分段、时间及分页/行对应。核对读回查询/行 ID 后才算入库完成。来源、条件、时间或结束证明缺失继续待处理，不能改标 `business_list` / `apply_list`。见[归档转存](../../../../layers/sme-roster/lib/platform/recognized-evidence.ts)。采集、证据入库、代理判断分别统计完成量和阻塞。
 
@@ -144,11 +143,9 @@
 
 ## 默认待核、代理判断与覆盖写回
 
-1. 从企业列表读取待核企业。需要重算时调用 `POST /api/roster/differences/refresh`，可选 `enterpriseIds`；通过 GET 同路径读取逐称号的比较结果。该结果复用现有比较逻辑，不等于代理已确认的结论。
+1. 从企业列表和当前有效名单确认企业、称号和待核范围。
 2. 按用户指定范围读取三张业务表、正式事件及企业详情，使用上面的判断表逐案调查。能证明无差异时提交 `confirmed_no_diff`；能确定原因时提交 `confirmed_reason`。无法判断则保留待核并说明已查范围与缺口。
 3. 写回读取 `GET /api/roster/decision-lifecycle/current` / `get_current_difference_decision` 的 `versionId`，按 `POST /api/roster/decision-lifecycle/commands` / `save_difference_decision` 的完整命令追加决定，再读回该版本；具体字段见[多事实解释](enterprise-facts.md#一个解释引用多个已确认事实)。普通差异命令不套用迁入资格的旧专用预检接口。判断由代理和人工执行，不绑定采集任务、不创建独立候选队列。新采集记录不自动确认原因或无差异。
-
-历史结论和来源保留。业务输入变化后刷新回待核；相同业务输入再次采集或刷新，已有判断保持。
 
 ## 主体事实写回与多事实解释
 

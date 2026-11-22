@@ -187,77 +187,6 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(response.body.error).toMatchObject({ code: -32602, data: { code: 'invalid_request' } })
   })
 
-  it('preserves the public legacy PATCH payload output and note omission semantics without creating a decision', async () => {
-    const target = await insertEnterprise({ name: '旧标注兼容企业', nameNorm: '旧标注兼容企业', usccNorm: 'LEGACY-COMPAT-102' })
-    await db.insert(record).values({ enterpriseId: target.id, titleCode: 'innovative_sme', source: 'jxj' })
-    const body = { uscc: target.usccNorm, nameNorm: target.nameNorm, titleCode: 'innovative_sme', direction: 'missing_in_miit', curated: true }
-    const patch = (input: unknown) => fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
-    const read = async () => json(await fetch(service.baseUrl + '/api/comparison?showCurated=true&title=innovative_sme'))
-    const first = await patch({ ...body, note: '原标注说明' })
-    expect(first.status).toBe(200)
-    expect(await json(first)).toEqual({ curated: true })
-    expect((await read()).rows.find((r: any) => r.enterpriseId === target.id)).toMatchObject({ curated: true, note: '原标注说明' })
-    const bytes = readFileSync(curatedPath, 'utf8')
-    expect(await json(await patch(body))).toEqual({ curated: true })
-    expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
-    expect(await json(await patch({ ...body, note: '' }))).toEqual({ curated: true })
-    expect((await read()).rows.find((r: any) => r.enterpriseId === target.id).note).toBe('')
-    expect(await json(await patch({ ...body, curated: false }))).toEqual({ curated: false })
-    expect((await read()).rows.find((r: any) => r.enterpriseId === target.id)).toMatchObject({ curated: false })
-    expect((await read()).rows.find((r: any) => r.enterpriseId === target.id).note).toBeUndefined()
-    const current = await json(await fetch(api('current?enterpriseId=' + target.id + '&titleCode=innovative_sme&direction=missing_in_miit')))
-    expect(current).toEqual({ enterpriseId: target.id, titleCode: 'innovative_sme', direction: 'missing_in_miit', versionId: null, current: null })
-    expect((await json(await fetch(api('history?enterpriseId=' + target.id + '&titleCode=innovative_sme&direction=missing_in_miit')))).total).toBe(0)
-    const invalid = await patch({ ...body, curated: 'true' })
-    expect(invalid.status).toBe(400)
-    // Unknown exact identifiers keep the baseline JSON-only annotation behavior.
-    expect(await json(await patch({ ...body, uscc: 'NO-SUCH-EXACT-102', note: '仅旧标注' }))).toEqual({ curated: true })
-  })
-  it('rejects ambiguous legacy identities without selecting or adopting an enterprise', async () => {
-    const first = await insertEnterprise({ name: '旧标注同名甲', nameNorm: '旧标注同名', usccNorm: 'EXACT-AMBIGUOUS-102' })
-    const second = await insertEnterprise({ name: '旧标注同名乙', nameNorm: '旧标注同名' })
-    const bytes = readFileSync(curatedPath, 'utf8')
-    const response = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nameNorm: '旧标注同名', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true }) })
-    expect(response.status).toBe(409)
-    expect(await json(response)).toMatchObject({ error: { code: 'ambiguous_enterprise' } })
-    expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
-    for (const id of [first.id, second.id]) expect((await json(await fetch(api('current?enterpriseId=' + id + '&titleCode=specialized_sme&direction=missing_in_miit')))).versionId).toBeNull()
-    const exact = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uscc: first.usccNorm, nameNorm: '旧标注同名', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true }) })
-    expect(exact.status).toBe(200)
-    expect(await json(exact)).toEqual({ curated: true })
-  })
-
-
-  it('blocks only the explicitly adopted legacy coordinate even after withdrawal and preserves both stores on conflict', async () => {
-    const target = await insertEnterprise({ name: '标注接管边界企业', nameNorm: '标注接管边界企业', usccNorm: 'ADOPT-COMPAT-102' })
-    const historical = await insertDecision({ enterpriseId: target.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', reasonNote: '未接管的正式旧解释', recordedAt: '2026-10-01T00:00:00Z' })
-    const legacy = { uscc: target.usccNorm, nameNorm: target.nameNorm, titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true, note: '原标注保留' }
-    const patch = (body: unknown) => fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-    expect(await json(await patch(legacy))).toEqual({ curated: true })
-    expect((await json(await fetch(api(String(historical.id))))).reasonNote).toBe('未接管的正式旧解释')
-    const adoptedResponse = await post({ ...request('compat-explicit-adopt', historical.id), enterpriseId: target.id, decision: { status: 'needs_review', measureCode: 'manual_review', verificationStatus: 'pending' } })
-    expect(adoptedResponse.status).toBe(200)
-    const adopted = await json(adoptedResponse)
-    const currentUrl = api('current?enterpriseId=' + target.id + '&titleCode=specialized_sme&direction=missing_in_miit')
-    const before = await json(await fetch(currentUrl))
-    const bytes = readFileSync(curatedPath, 'utf8')
-    for (const body of [legacy, { ...legacy, curated: false }, { ...legacy, note: '' }, { ...legacy, uscc: target.usccNorm!.toLowerCase() }, { nameNorm: target.nameNorm, titleCode: legacy.titleCode, direction: legacy.direction, curated: true }]) {
-      const response = await patch(body)
-      expect(response.status).toBe(409)
-      expect(await json(response)).toMatchObject({ error: { code: 'decision_lifecycle_required' }, replacement: '/api/roster/decision-lifecycle/commands' })
-      expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
-      expect(await json(await fetch(currentUrl))).toEqual(before)
-    }
-    const { decision, ...metadata } = request('compat-explicit-withdraw', adopted.versionId)
-    const withdrawn = await json(await post({ ...metadata, enterpriseId: target.id, action: 'withdraw' }))
-    expect(withdrawn.action).toBe('withdraw')
-    expect((await patch({ ...legacy, curated: false })).status).toBe(409)
-    expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
-    expect(await json(await fetch(currentUrl))).toMatchObject({ versionId: withdrawn.versionId, current: null })
-    // Adoption is scoped to enterprise × title × direction, rather than the whole enterprise.
-    expect(await json(await patch({ ...legacy, direction: 'extra_in_miit' }))).toEqual({ curated: true })
-    expect(await json(await patch({ ...legacy, titleCode: 'innovative_sme' }))).toEqual({ curated: true })
-  })
   it('appends a version with explicit actor basis rule and business time and reads it by stable ID', async () => {
     const response = await post(request('first'))
     expect(response.status).toBe(200)
@@ -571,9 +500,6 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(value(mcpList).rows).toHaveLength(1)
     expect(JSON.stringify(value(mcpList))).not.toContain('LARGE_RAW_UNRELATED')
     expect((await json(await fetch(api('current?' + scope)))).current.status).toBe('needs_review')
-    const legacyBounded = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uscc: 'UNRELATED-LEGACY-102', titleCode: 'little_giant', direction: 'extra_in_miit', curated: true }) })
-    expect(legacyBounded.status).toBe(200)
-    expect(await json(legacyBounded)).toEqual({ curated: true })
     await db.execute(sql`ANALYZE difference_reason`)
     const plan = await db.execute(sql`EXPLAIN (COSTS OFF) SELECT id FROM difference_reason
      WHERE enterprise_id=${other.id} AND title_code='specialized_sme' AND direction='extra_in_miit'
