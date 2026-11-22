@@ -101,7 +101,7 @@ export async function listPostgresCorrespondences(db: Db, filter: Correspondence
 }
 
 export async function readPostgresCorrespondenceSelection(db: Db, where: SQL | undefined, paging?: CorrespondencePaging) {
-  const { observationId: _observationId, targetIdentity: _targetIdentity, provenance: _provenance, ...columns } = getTableColumns(edge)
+  const { observationId: _observationId, targetIdentity: _targetIdentity, provenance: _provenance, platformEvidenceReboundRevision: _rebound, ...columns } = getTableColumns(edge)
   const query = db.select({
     ...columns,
     relationId: relation.publicId,

@@ -13,6 +13,7 @@ import type { EnterpriseFactRevision } from '../enterprise-fact-model'
 import { currentPlatformObservation, isCurrentPlatformCollection } from '../../../lib/platform/current-observation-postgres'
 import { readPostgresDifferenceObservations } from '../../../lib/platform/difference-sources-postgres'
 import { readPostgresCollectionScopes } from '../../../lib/roster/query-coverage-postgres'
+import { lockPostgresCurrentCapture } from '../platform-capture-retention-postgres'
 import { postgresRosterRow } from '../../../lib/roster/postgres-rows'
 import { checkDecisionFact102, checkDecisionHead102, checkDecisionPriorTime102, checkDecisionQuery102, checkDecisionRelation102, decisionContent102, DecisionError102, decisionReceipt102, decisionRequestHash102, decisionValues102, internalDecisionCommand102, parse102, qualificationCommit102, qualificationPlanHash, qualificationPlanRule, qualificationPreflight102, type DecisionCommand102 } from '../decision-lifecycle/contract'
 import { readPostgresDecisionHead102, requirePostgresDecisionEnterprise } from './postgres-reads'
@@ -35,7 +36,7 @@ async function readObservationPin(tx: Tx, id: number) {
   return observation
 }
 
-async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins: boolean) {
+async function prepareDecision(tx: Tx, command: DecisionCommand102, qualification?: 'preflight' | 'commit') {
   const owner = await requirePostgresDecisionEnterprise(tx, command.enterpriseId)
   const enterprise = { id: owner.id, usccNorm: owner.usccNorm, nameNorm: owner.nameNorm }
   const previous = await readPostgresDecisionHead102(tx, command)
@@ -53,6 +54,9 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
     return fact
   })
   const relation = d.evidenceRelationId ? (await readPostgresDifferenceObservations(tx, [d.evidenceRelationId])).get(d.evidenceRelationId) : null
+  if (qualification === 'commit' && d.evidenceRelationId && !relation) {
+    throw new DecisionError102(409, 'stale_plan', 'Qualification plan changed; preflight again')
+  }
   checkDecisionRelation102(enterprise, d, relation)
   const queryId = d.evidenceQueryId ?? relation?.queryId
   const c = platformCollection
@@ -67,13 +71,13 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
       errorCode: c.errorCode, errorMessage: c.errorMessage, maxRequests: c.maxRequests, maxRows: c.maxRows,
       maxDurationMs: c.maxDurationMs, pageSize: c.pageSize,
     },
-  }).from(c).where(and(eq(c.publicId, queryId), relation ? undefined : isCurrentPlatformCollection(tx))))[0] : null
+  }).from(c).where(and(eq(c.publicId, queryId), relation ? undefined : isCurrentPlatformCollection(tx, c, 'evidence'))))[0] : null
   const collection = targetQuery?.collection
   const needsPages = relation && collection?.rdjb.includes(',')
-  const sourceScope = collection && (capturePins || needsPages) ? (await readPostgresCollectionScopes(tx, [collection])).get(collection.id)! : null
+  const sourceScope = collection && (qualification || needsPages) ? (await readPostgresCollectionScopes(tx, [collection])).get(collection.id)! : null
   checkDecisionQuery102(command, enterprise, queryId, targetQuery, relation, () => sourceScope!.pages)
   checkDecisionPriorTime102(command, previous)
-  if (!capturePins) return { previous, d, targetQuery, relation, pins: null }
+  if (!qualification) return { previous, d, targetQuery, relation, pins: null }
   const observation = relation ? await readObservationPin(tx, relation.observationId) : null
   const v = alias(platformBusinessRecordVersion, 'p'), assignmentTable = alias(platformObservationAssignment, 'p')
   const version = observation?.versionId ? (await tx.select({
@@ -92,7 +96,7 @@ async function prepareDecision(tx: Tx, command: DecisionCommand102, capturePins:
 export async function preflightPostgresQualification102(db: NodePgDatabase, input: unknown) {
   const command = parse102(qualificationPreflight102, input)
   return db.transaction(async tx => {
-    const { pins } = await prepareDecision(tx, command, true)
+    const { pins } = await prepareDecision(tx, command, 'preflight')
     return { command, planHash: qualificationPlanHash(command, pins), planRuleVersion: qualificationPlanRule,
       qualification: command.decision!.currentQualification!, movedIn: command.decision!.movedIn ?? null,
       facts: pins!.facts, source: pins!.relation, latestKnownSourceVersion: pins!.sourceVersions[0] ?? null }
@@ -103,7 +107,7 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
   const command = parse102(internalDecisionCommand102, input)
   const hash = decisionRequestHash102(command, planHash)
   return db.transaction(async tx => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock_shared(21785,0)`)
+    await lockPostgresCurrentCapture(tx)
     await lockPostgresDecisionOwnership102(tx)
     const receipt = evidenceReviewReceipt114
     const [review] = await tx.select({ hash: receipt.requestHash, response: sql<Record<string, unknown>>`${receipt.response}::json` })
@@ -122,7 +126,7 @@ export function savePostgresDecision102(db: NodePgDatabase, input: DecisionComma
     }
     await tx.select({ id: enterpriseTable.id }).from(enterpriseTable).where(eq(enterpriseTable.id, command.enterpriseId)).for('update')
     if (command.reviewedEvidence || command.action === 'maintain') throw new DecisionError102(422, 'invalid_request', 'Automatic evidence review has been retired')
-    const { previous, d, targetQuery, relation, pins } = await prepareDecision(tx, command, !!planHash)
+    const { previous, d, targetQuery, relation, pins } = await prepareDecision(tx, command, planHash ? 'commit' : undefined)
     if (planHash && qualificationPlanHash(command, pins) !== planHash) throw new DecisionError102(409, 'stale_plan', 'Qualification plan changed; preflight again')
     const value = decisionValues102(command, previous, d, hash)
     const [row] = await tx.insert(reason).values({

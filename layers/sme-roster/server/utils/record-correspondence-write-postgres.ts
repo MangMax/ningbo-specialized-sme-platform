@@ -7,6 +7,7 @@ import { platformBusinessObservation } from '../../../../db/postgresql/platform-
 import { recordCorrespondence, recordCorrespondenceAudit } from '../../../../db/postgresql/qualification-tables'
 import { buildRecordCorrespondencePlan, correspondenceEdgeKey, correspondenceHash, CorrespondenceError, recordCorrespondenceMutations, requestedCorrespondenceSources, type CorrespondencePlan, type CorrespondenceReceipt, type CorrespondenceRequest, type StoredCorrespondence } from './record-correspondence-model'
 import { observePostgresCorrespondences } from './record-correspondence-postgres'
+import { lockPostgresCurrentCapture } from './platform-capture-retention-postgres'
 import { postgresCorrespondenceProvenance } from './record-correspondence-postgres-refs'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
@@ -54,7 +55,7 @@ async function loadPlan(tx: Tx, request: CorrespondenceRequest, lock: boolean) {
   const ids = request.operations.flatMap(op => 'correspondenceId' in op ? [op.correspondenceId] : [])
   const keys = request.operations.flatMap(op => 'edge' in op ? [correspondenceEdgeKey(op.edge)] : [])
   const edge = alias(recordCorrespondence, 'edge'), relation = platformBusinessObservation
-  const { provenance: _provenance, targetIdentity, observationId: _observationId, ...columns } = getTableColumns(edge)
+  const { provenance: _provenance, targetIdentity, observationId: _observationId, platformEvidenceReboundRevision: _rebound, ...columns } = getTableColumns(edge)
   const query = tx.select({
     ...columns, relationId: relation.publicId,
     targetIdentity: sql<StoredCorrespondence['targetIdentity']>`${targetIdentity}::json`,
@@ -94,10 +95,14 @@ async function preflightInTransaction(tx: Tx, request: CorrespondenceRequest) {
 }
 
 export function commitPostgresCorrespondences(db: NodePgDatabase, request: CorrespondenceRequest, planHash: string) {
-  return runPostgresCorrespondenceTransaction(db, tx => commitInTransaction(tx, request, planHash))
+  return runPostgresCorrespondenceTransaction(db, async tx => {
+    await lockPostgresCurrentCapture(tx)
+    return commitInTransaction(tx, request, planHash)
+  })
 }
 
 export async function commitPostgresCorrespondenceDecision(tx: Tx, request: CorrespondenceRequest) {
+  await lockPostgresCurrentCapture(tx)
   const { planHash } = await preflightInTransaction(tx, request)
   return commitInTransaction(tx, request, planHash)
 }
@@ -125,6 +130,7 @@ async function commitInTransaction(tx: Tx, request: CorrespondenceRequest, planH
         ...changes,
         targetIdentity: targetIdentity === undefined ? undefined : JSON.stringify(targetIdentity),
         provenance: null,
+        platformEvidenceReboundRevision: changes.sourceFingerprint === undefined ? undefined : null,
       }).where(and(
         eq(edge.id, id), eq(edge.revision, mutation.row.revision),
         mutation.candidateOnly ? eq(edge.status, 'candidate') : undefined,

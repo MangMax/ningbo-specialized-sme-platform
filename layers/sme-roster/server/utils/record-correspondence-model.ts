@@ -43,7 +43,7 @@ export interface CorrespondencePlan { batchId: number; batchStatus: 'preflight' 
 
 export interface CorrespondenceReceipt { batchId: number; planHash: string; impact: CorrespondenceImpact; correspondenceIds: number[] }
 
-export type StoredCorrespondence = Omit<typeof RecordCorrespondenceTable.$inferSelect, 'observationId' | 'targetIdentity' | 'provenance'> & {
+export type StoredCorrespondence = Omit<typeof RecordCorrespondenceTable.$inferSelect, 'observationId' | 'targetIdentity' | 'provenance' | 'platformEvidenceReboundRevision'> & {
   relationId: number | null
   targetIdentity: Record<string, unknown>
   provenance: Record<string, unknown>

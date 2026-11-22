@@ -26,7 +26,7 @@ it('rejects typed row count and projection mismatches without relaxing raw respo
 })
 
 
-it('archives changed typed rows once per version for each source and replays the same import receipt', async () => {
+it('retains the two distinct captures for each source and replays the same import receipt', async () => {
  const db = openCase()
  for (const source of ['queryList', 'businessList', 'queryBusList'] as const) {
   for (const revision of [0, 1, 2]) {
@@ -50,7 +50,7 @@ it('archives changed typed rows once per version for each source and replays the
    GROUP BY c.interface ORDER BY c.interface
  `)
  expect(rows).toEqual(['apply_list', 'business_list', 'recognized_list'].map(interfaceName => ({
-  interface: interfaceName, observations: 3, records: 1, versions: 2,
+  interface: interfaceName, observations: 2, records: 1, versions: 2,
  })))
  const content = await db.$client.query('SELECT business_fields FROM platform_business_record_version ORDER BY id')
  expect(content.rows).toHaveLength(6)

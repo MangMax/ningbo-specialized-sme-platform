@@ -55,7 +55,7 @@ async function findCollection(tx: Tx, aliasId: number, requireCurrent = false) {
     id: platformCollection.publicId, nativeId: platformCollection.id, interface: platformCollection.interface,
     queryKey: platformCollection.queryKey, rdjb: platformCollection.rdjb,
   }).from(platformCollection)
-    .where(and(eq(platformCollection.publicId, aliasId), requireCurrent ? isCurrentPlatformCollection(tx) : undefined))
+    .where(and(eq(platformCollection.publicId, aliasId), requireCurrent ? isCurrentPlatformCollection(tx, platformCollection, 'evidence') : undefined))
   return collection
 }
 

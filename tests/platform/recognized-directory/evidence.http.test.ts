@@ -551,7 +551,7 @@ it('keeps one distinct rollback capture and protects manual deletion with API an
   const [record] = await db.select({ id: platformBusinessRecord.id }).from(platformBusinessRecord)
     .where(eq(platformBusinessRecord.platformKey, key))
   const recordId = record!.id
-  const readCaptures = () => db.select({ time: platformCollection.queriedAt, id: platformBusinessObservation.publicId })
+  const readCaptures = () => db.select({ time: platformCollection.queriedAt, id: platformBusinessObservation.publicId, queryId: platformCollection.publicId })
     .from(platformBusinessObservation).innerJoin(platformCollection, eq(platformCollection.id, platformBusinessObservation.collectionId))
     .where(eq(platformBusinessObservation.recordId, recordId)).orderBy(platformCollection.queriedAt)
   const before = await readCaptures()
@@ -577,11 +577,12 @@ it('keeps one distinct rollback capture and protects manual deletion with API an
   expect(await readCaptures()).toEqual(before.slice(1))
   const [storedDecision] = await db.select().from(differenceReason).where(eq(differenceReason.id, decision!.id))
   expect(storedDecision).toMatchObject({
-    evidenceRelationId: null, retiredEvidenceRelationPublicId: before[0]!.id, evidenceQueryId: previous!.collectionId,
+    evidenceRelationId: null, originalEvidenceRelationPublicId: before[0]!.id,
+    evidenceQueryId: null, originalEvidenceQueryPublicId: before[0]!.queryId,
     retiredEvidenceValidity: 'premise_invalid', retiredEvidenceReviewed: false,
   })
   const history = await historyPostgresDecision102(db, { id: decision!.id, page: 1, pageSize: 20 })
-  expect(history.rows).toEqual(expect.arrayContaining([expect.objectContaining({ id: decision!.id, evidenceRelationId: before[0]!.id })]))
+  expect(history.rows).toEqual(expect.arrayContaining([expect.objectContaining({ id: decision!.id, evidenceRelationId: before[0]!.id, evidenceQueryId: before[0]!.queryId })]))
   expect(await (await remove()).json()).toEqual({ removed: 0 })
   expect(await db.select().from(platformBusinessRecordVersion).where(eq(platformBusinessRecordVersion.recordId, recordId))).toHaveLength(1)
 })

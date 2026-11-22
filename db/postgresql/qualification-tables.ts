@@ -9,6 +9,7 @@ export const recordCorrespondence = businessSchema.table('record_correspondence'
   eventId: bigint('event_id', { mode: 'number' }),
   predecessorEventId: bigint('predecessor_event_id', { mode: 'number' }),
   observationId: bigint('observation_id', { mode: 'number' }),
+  platformEvidenceReboundRevision: bigint('platform_evidence_rebound_revision', { mode: 'number' }),
   exportRowId: bigint('export_row_id', { mode: 'number' }),
   enterpriseId: bigint('enterprise_id', { mode: 'number' }),
   titleCode: text('title_code').notNull(),

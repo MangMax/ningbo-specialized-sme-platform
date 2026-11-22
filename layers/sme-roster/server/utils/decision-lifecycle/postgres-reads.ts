@@ -20,6 +20,8 @@ const publicIdOf = {
     .where(eq(platformBusinessObservation.id, p.evidenceRelationId)),
 }
 
+const originalPublicId = { evidenceQueryId: p.originalEvidenceQueryPublicId, evidenceRelationId: p.originalEvidenceRelationPublicId }
+
 // Field order is part of persisted qualification assessment hashes.
 const differencePublicFieldOrder = [
   'id', 'enterpriseId', 'titleCode', 'direction', 'status', 'reasonCode', 'reasonNote', 'measureCode', 'measureNote', 'evidenceQueryId', 'evidenceRelationId', 'movedInCity', 'movedInTitleCode', 'movedInYear', 'movedInBatch', 'factReferences', 'currentQualification', 'verificationStatus', 'recordedAt', 'lifecycleAction', 'previousId', 'actor', 'basis', 'ruleVersion', 'effectiveAt', 'idempotencyKey', 'requestHash', 'createdAt'
@@ -28,9 +30,9 @@ const differencePublicFieldOrder = [
 export function postgresDifferenceRow(keys = differencePublicFieldOrder, historical = false) {
   const fields = keys.map(key => {
     let value: SQL
-    if (historical && key === 'evidenceRelationId') value = sql`coalesce((${publicIdOf.evidenceRelationId}), ${p.retiredEvidenceRelationPublicId})`
-    else if (key === 'evidenceQueryId' || key === 'evidenceRelationId') value = sql`(${publicIdOf[key]})`
-    else {
+    if (key === 'evidenceQueryId' || key === 'evidenceRelationId') {
+      value = historical ? sql`coalesce(${originalPublicId[key]}, (${publicIdOf[key]}))` : sql`(${publicIdOf[key]})`
+    } else {
       const field = key as keyof typeof decisionColumns
       value = sql`${decisionColumns[field]}`
       if (jsonFields.has(field)) value = sql`(${value})::json`

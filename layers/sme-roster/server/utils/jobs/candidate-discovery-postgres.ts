@@ -9,7 +9,7 @@ import {
 } from '../../../../../db/postgresql/platform-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import type { LogContext } from '../../../../core/lib/logging'
-import { isCurrentPlatformCollection, isCurrentPlatformObservation } from '../../../lib/platform/current-observation-postgres'
+import { isCurrentPlatformCollection, isCurrentPlatformCaptureRow } from '../../../lib/platform/current-observation-postgres'
 import { ANNUAL_CORRESPONDENCE_KIND } from '../../../lib/roster/annual-correspondence'
 import { type PostgresJobContext, stagePostgresJob } from '../../../../core/server/utils/job-runner-postgres'
 import { getPostgresJob, reopenPostgresJob } from '../../../../core/server/utils/job-store-postgres'
@@ -34,7 +34,7 @@ function affectedByQuery(db: NodePgDatabase, queryId: number) {
   const matchingObservation = db.select({ id: observation.id }).from(observation)
     .innerJoin(original, and(eq(original.observationId, observation.id), eq(original.revision, 1)))
     .crossJoinLateral(latest)
-    .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformObservation(db), or(isNull(latest.enterpriseId), eq(latest.enterpriseId, enterprise.id)),
+    .where(and(eq(observation.collectionId, collection.id), isCurrentPlatformCaptureRow(db), or(isNull(latest.enterpriseId), eq(latest.enterpriseId, enterprise.id)),
       or(and(ne(raw, ''), eq(raw, canonical)), and(eq(latest.enterpriseId, enterprise.id), eq(latest.status, 'confirmed'), eq(raw, '')))))
   const namedAlias = db.select({ id: enterpriseAlias.id }).from(enterpriseAlias).where(and(
     eq(enterpriseAlias.enterpriseId, enterprise.id), eq(enterpriseAlias.verificationStatus, 'confirmed'),

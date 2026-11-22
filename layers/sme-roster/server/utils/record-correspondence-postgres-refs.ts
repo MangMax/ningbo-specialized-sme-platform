@@ -67,7 +67,7 @@ function eventMatches(id: SQL, predecessor = false) {
     ) END`
 }
 
-function relationMatches(db: Db, assignment: { enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }) {
+function relationMatches(db: Db, assignment: { revision: SQLWrapper; enterpriseId: SQL; matchBasis: SQL; verificationStatus: SQL }, reboundRevision: SQLWrapper) {
   const o = alias(platformBusinessObservation, 'o')
   const c = alias(platformCollection, 'c')
   const first = alias(platformObservationAssignment, 'first_assignment')
@@ -84,15 +84,18 @@ function relationMatches(db: Db, assignment: { enterpriseId: SQL; matchBasis: SQ
   }
   const sourceValue = (key: typeof platformSourceFields[number]) =>
     sql`coalesce(${o.sourceValues}->${key}::text, to_jsonb(${inherited[key]}))`
+  const coordinates = { id: sql`${o.publicId}`, queryId: sql`${c.publicId}`, sequenceNo: sql`${o.sequenceNo}`, createdAt: sql`${o.sourceCreatedAt}` }
   const columns = {
-    id: sql`${o.publicId}`, queryId: sql`${c.publicId}`, sequenceNo: sql`${o.sequenceNo}`,
     relationKey: sql`${o.sourceRelationKey}`, usccRaw: sql`${first.usccRaw}`, nameRaw: sql`${first.nameRaw}`,
-    aliasNameRaw: sql`${first.aliasNameRaw}`, createdAt: sql`${o.sourceCreatedAt}`, ...assignment,
+    aliasNameRaw: sql`${first.aliasNameRaw}`, enterpriseId: assignment.enterpriseId,
   }
-  const fields = [
-    ...Object.entries(columns).map(([key, column]) => jsonEqual(refValue('relation', key), textJson(column))),
+  const fields = Object.entries(columns).map(([key, column]) => jsonEqual(refValue('relation', key), textJson(column)))
+  const savedFacts = [
+    jsonEqual(refValue('relation', 'matchBasis'), textJson(assignment.matchBasis)),
+    jsonEqual(refValue('relation', 'verificationStatus'), textJson(assignment.verificationStatus)),
     ...platformSourceFields.map(key => jsonEqual(refValue('relation', key), sourceValue(key))),
   ]
+  const position = Object.entries(coordinates).map(([key, column]) => jsonEqual(refValue('relation', key), textJson(column)))
   const query = Object.entries(sourceQueryFields).map(([key, column]) => {
     if (key === 'rawResponse') {
       const saved = sql`coalesce(${refValue('query', 'rawResponseSha256')} #>> '{}', CASE
@@ -115,7 +118,8 @@ function relationMatches(db: Db, assignment: { enterpriseId: SQL; matchBasis: SQ
     .leftJoin(a, eq(a.versionId, o.versionId))
     .leftJoin(b, eq(b.versionId, o.versionId))
     .leftJoin(r, eq(r.versionId, o.versionId))
-    .where(and(eq(o.id, sql`p.observation_id`), isCurrentPlatformCaptureRow(db, o), isNotNull(o.sourceValues), ...fields, ...query,
+    .where(and(eq(o.id, sql`p.observation_id`), isCurrentPlatformCaptureRow(db, o), isNotNull(o.sourceValues), ...fields,
+      or(eq(reboundRevision, assignment.revision), and(...position, ...savedFacts, ...query)),
       sql`(${comparisonStatus} ? 'base64' AND NOT (${comparisonStatus} ? 'storage')) IS NOT TRUE`))
   return sql`CASE WHEN p.observation_id IS NULL THEN p.type = 'event_export_context' AND
     ${jsonEqual(refValue('relation'), NULL_JSON)} AND ${jsonEqual(refValue('query'), NULL_JSON)}
@@ -151,7 +155,7 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
     id: edge.id, type: edge.type, role: edge.role, status: edge.status, eventId: edge.eventId,
     predecessorEventId: edge.predecessorEventId, observationId: edge.observationId, exportRowId: edge.exportRowId,
     enterpriseId: edge.enterpriseId, titleCode: edge.titleCode, revision: edge.revision,
-    relation: sql`${relation.publicId}`.as('relation_id'),
+    relation: sql`${relation.publicId}`.as('relation_id'), reboundRevision: edge.platformEvidenceReboundRevision,
     provenance: sql`CASE WHEN ${explicitValidity ? sql`true` : eq(edge.status, 'confirmed')} THEN ${postgresCorrespondenceProvenance(db, edge)}::jsonb END`.as('provenance_json'),
   }).from(edge).leftJoin(relation, eq(relation.id, edge.observationId))
     .where(and(where, witnessTitle === undefined ? undefined : and(eq(edge.titleCode, witnessTitle),
@@ -160,14 +164,15 @@ export async function readPostgresCorrespondenceRefs(db: Db, ids: readonly numbe
   const p = new QueryBuilder().$with('p').as(selected)
   const a = platformObservationAssignment
   const target = alias(enterprise, 'target')
-  const assignment = db.select({ enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
+  const assignment = db.select({ revision: a.revision, enterpriseId: a.enterpriseId, matchBasis: a.matchBasis, verificationStatus: a.verificationStatus })
     .from(a).where(eq(a.observationId, p.observationId)).orderBy(desc(a.revision)).limit(1).as('assignment')
   const validate = explicitValidity ? sql`true` : eq(p.status, 'confirmed')
   const relationMatch = relationMatches(db, {
+    revision: assignment.revision,
     enterpriseId: sql`${assignment.enterpriseId}`,
     matchBasis: sql`${assignment.matchBasis}`,
     verificationStatus: sql`${assignment.verificationStatus}`,
-  })
+  }, p.reboundRevision)
   const projected = db.select({
     ref: sql`json_build_object('id',${p.id},'type',${p.type},'role',${p.role},'status',${p.status},'eventId',${p.eventId},
       'predecessorEventId',${p.predecessorEventId},'relationId',p.relation_id,'exportRowId',${p.exportRowId},
