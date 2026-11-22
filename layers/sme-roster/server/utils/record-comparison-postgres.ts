@@ -19,11 +19,10 @@ import type { StoredFileContentIdentity } from '../../../core/server/utils/file-
 import type { RecordComparisonInput } from '../../lib/roster/record-comparison'
 import { postgresRosterRow } from '../../lib/roster/postgres-rows'
 import { postgresOfficialSourceDirectory } from './official-source-directory-postgres'
-import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
+import { isSelectablePostgresComparisonQuery, readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
 import { compareRecordInputs, comparisonBefore, validatedComparisonInput, type ComparisonRead, type FormalEvent, type SelectedRecordComparison } from './record-comparison-model'
-import { isCurrentPlatformCollection } from '../../lib/platform/current-observation-postgres'
 import { postgresCollectionConditionValues, projectPostgresComparisonConditions, projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 
@@ -57,7 +56,7 @@ async function readQueryFacts(db: Reader, ids: number[]): Promise<QueryFacts[]> 
   const rows = await db.select({
     id: c.publicId, collection: sql<QueryFacts['collection']>`${postgresRosterRow(platformCollection,'c')}`,
     conditions: postgresCollectionConditionValues(c.conditionFacts), unfinished: c.unfinishedPositions,
-  }).from(c).where(and(eq(c.publicId, sql`ANY(${numbers(ids)})`), isCurrentPlatformCollection(db, c))).orderBy(c.publicId)
+  }).from(c).where(and(eq(c.publicId, sql`ANY(${numbers(ids)})`), isSelectablePostgresComparisonQuery(db, c))).orderBy(c.publicId)
   const coordinates = numbers(rows.map(row => row.collection.id))
   const page = alias(platformCollectionPage, 'p')
   const pages = Map.groupBy((await db.select({

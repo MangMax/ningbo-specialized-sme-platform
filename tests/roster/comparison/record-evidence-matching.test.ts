@@ -64,6 +64,44 @@ describe('record comparison public read service', () => {
     const other = await f.makeEnterprise('Other', '91330211255994471Y'), otherEvent = await f.makeEvent(other.id, 'award', 2024, 1)
     const scoped = await readPostgresRecordComparison(f.db, f.input([query.id]))
     expect(scoped.rows.find(row => row.event.id === otherEvent.id)?.classification).toBe('unresolved')
+    const failed = await f.makeQuery('recognized_list', e.usccNorm!, 'specialized_sme', 'failed')
+    const retry = await readPostgresRecordComparison(f.db, f.input([query.id, failed.id]))
+    expect(retry.rows).toMatchObject([
+      { event: { id: official.id }, classification: 'official_without_correspondence' },
+      { event: { id: otherEvent.id }, classification: 'unresolved' },
+    ])
+    expect(retry.coverage).toMatchObject([
+      { queryId: query.id, status: 'no_record', titleCoverage: [{ complete: true }] },
+      { queryId: failed.id, status: 'failed', titleCoverage: [{ complete: false }] },
+    ])
+  })
+  it('preserves capture metadata without drawing official-event conclusions from rollback rows', async () => {
+    const f = await fixture(), e = await f.makeEnterprise('Cross-scope', '91330211255994470X')
+    const official = await f.makeEvent(e.id, 'award', 2024, 1)
+    const unrelated = await f.makeEvent(e.id, 'award', 2024, 1, null, 'innovative_sme')
+    const original = await f.makeQuery('recognized_list', e.usccNorm!, 'specialized_sme', 'success', null, [{
+      sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, matchBasis: 'uscc', verificationStatus: 'confirmed',
+      rawFields: { id: 'cross-scope-record', rdjb: '2' },
+    }])
+    const before = await readPostgresRecordComparison(f.db, f.input([original.id]))
+    expect(before.rows).toMatchObject([
+      { event: { id: official.id }, classification: 'official_without_correspondence' },
+      { event: { id: unrelated.id }, classification: 'unresolved' },
+    ])
+    const current = await f.makeQuery('recognized_list', e.usccNorm!, 'little_giant', 'success', null, [{
+      sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, matchBasis: 'uscc', verificationStatus: 'confirmed',
+      rawFields: { id: 'cross-scope-record', rdjb: '3' },
+    }])
+    const after = await readPostgresRecordComparison(f.db, f.input([original.id, current.id]))
+    expect(after.rows).toMatchObject([
+      { event: { id: official.id }, classification: 'unresolved' },
+      { event: { id: unrelated.id }, classification: 'unresolved' },
+    ])
+    expect(after.platformWithoutOfficial.rows.map(row => row.relation.id)).toEqual([current.relations[0]!.id])
+    expect(after.coverage).toMatchObject([
+      { queryId: original.id, status: 'success', titleCoverage: [{ rdjb: '2', complete: false, pageCount: 1 }] },
+      { queryId: current.id, status: 'success', titleCoverage: [{ rdjb: '3', complete: true, pageCount: 1 }] },
+    ])
   })
   it('export snapshot context does not turn complete historical absence into unresolved', async () => {
     const f = await fixture(), e = await f.makeEnterprise('Context', '91330211255994477E'), event = await f.makeEvent(e.id, 'award', 2024, 1)
@@ -138,17 +176,45 @@ describe('record comparison public read service', () => {
     await f.db.update(schema.recordEvent).set({ decidedYear: null })
     expect((await readPostgresRecordComparison(f.db, f.input([q.id]))).rows[0]).toMatchObject({ classification: 'unresolved', event: { decidedYear: null } })
   })
-  it('case 4 preserves two titles, two batches, duplicate business keys, and unlinked rows at original grain before pagination', async () => {
+  it('preserves official batches and every verified row across pages and titles in the current capture', async () => {
     const f = await fixture(), e = await f.makeEnterprise('D', '91330211255994460S')
     const a = await f.makeEvent(e.id, 'award', 2021, 1), b = await f.makeEvent(e.id, 'award', 2024, 2), c = await f.makeEvent(e.id, 'award', 2024, 1, null, 'little_giant')
-    const q = await f.makeQuery('business_list', e.usccNorm!, undefined, undefined, undefined, Array.from({ length: 6 }, (_, i) => ({ sequenceNo: i + 1, relationKey: 'DUP', enterpriseId: e.id, usccRaw: e.usccNorm, status: i === 0 ? '终审通过' : '待审核', declareKind: 'apply', year: i === 0 ? 2021 : 2024 }))), rows = q.relations
-    const apply = await f.makeQuery('apply_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '待审核', declareKind: 'apply', year: 2025, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }, { sequenceNo: 2, enterpriseId: e.id, usccRaw: e.usccNorm, status: '待审核', declareKind: 'apply', year: 2025, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }]), x = apply.relations[0]!, y = apply.relations[1]!
+    const queriedAt = '2026-10-18T00:00:00Z'
+    const dataRows = Array.from({ length: 6 }, (_, i) => ({
+      id: 'DUP', rdjb: i < 4 ? '2' : '3', tyshxydm: e.usccNorm!, qymc: e.name,
+      cszt: i === 0 ? '终审通过' : '待审核', sblx: 'apply', year: i === 0 ? '2021' : '2024',
+    }))
+    const q = await f.makeQuery('business_list', e.usccNorm!, undefined, 'success', {
+      source: 'businessList', status: 'success', effectiveConditions: { uscc: e.usccNorm!, combination: 'and' },
+      titleScope: { mode: 'selected', rdjb: ['1', '2', '3'] }, queriedAt, completedAt: queriedAt,
+      rows: dataRows, dataRows, pages: [
+        { source: 'businessList', rdjb: '1', page: 1, maxPage: 1, status: 'success', fetchedCount: 0, declaredTotal: 0, error: null },
+        { source: 'businessList', rdjb: '2', page: 1, maxPage: 2, status: 'success', fetchedCount: 2, declaredTotal: 4, error: null },
+        { source: 'businessList', rdjb: '2', page: 2, maxPage: 2, status: 'success', fetchedCount: 2, declaredTotal: 4, error: null },
+        { source: 'businessList', rdjb: '3', page: 1, maxPage: 1, status: 'success', fetchedCount: 2, declaredTotal: 2, error: null },
+      ], fetchedCount: 6, declaredTotal: 6, completeness: 'complete', fullRange: true, unfinished: [], error: null,
+      limits: { pageSize: 2, maxRequests: 4, maxRows: 6, maxDurationMs: 1000 },
+    }, dataRows.map((_, i) => ({ sequenceNo: i + 1, enterpriseId: e.id, matchBasis: 'uscc', verificationStatus: 'confirmed' })))
+    const rows = q.relations
+    const apply = await f.makeQuery('apply_list', e.usccNorm!, undefined, undefined, undefined, [1, 2].map(sequenceNo => ({
+      sequenceNo, enterpriseId: e.id, usccRaw: e.usccNorm, status: '待审核', declareKind: 'apply', year: 2025,
+      matchBasis: 'uscc', verificationStatus: 'confirmed',
+    })))
     await f.save('case4', [{ action: 'create', status: 'confirmed', edge: { type: 'event_process', eventId: a.id, relationId: rows[0]!.id, role: 'supports_award' } }])
     const out = await readPostgresRecordComparison(f.db, { ...f.input([q.id, apply.id]), pageSize: 1 })
     expect(out.total).toBe(3)
-    expect(out.rows).toHaveLength(1)
-    expect(out.counts).toMatchObject({ distinctEvents: 3, distinctPlatformRows: 8, distinctEnterpriseTitles: 2, historical_aligned: 1, unresolved: 2, unresolvedPlatformRows: 7 })
-    expect([b.id, c.id, x.id, y.id]).toHaveLength(4)
+    expect(out.rows).toMatchObject([{ event: { id: a.id }, platformRows: [{ id: rows[0]!.id, status: '终审通过', sourceRdjb: '2', sourcePage: 1 }] }])
+    expect(out.counts).toMatchObject({ distinctEvents: 3, distinctPlatformRows: 8, distinctEnterpriseTitles: 2, historical_aligned: 1, official_without_correspondence: 2, unresolvedPlatformRows: 7 })
+    expect(out.platformWithoutOfficial.rows.map(row => row.relation.id)).toEqual([...rows.slice(1), ...apply.relations].map(row => row.id))
+    expect(out.platformWithoutOfficial.rows.slice(0, 5).map(({ relation }) => [relation.sourceRdjb, relation.sourcePage])).toEqual([
+      ['2', 1], ['2', 2], ['2', 2], ['3', 1], ['3', 1],
+    ])
+    const unpaged = await readPostgresRecordComparison(f.db, f.input([q.id, apply.id]))
+    expect(unpaged.rows).toMatchObject([
+      { event: { id: a.id }, classification: 'historical_aligned' },
+      { event: { id: b.id }, classification: 'official_without_correspondence' },
+      { event: { id: c.id }, classification: 'official_without_correspondence' },
+    ])
   })
   it('case 5 shows two positive same-USCC same-title rows while version qualification remains unknown', async () => {
     const f = await fixture(), e = await f.makeEnterprise('E', '91330211255994461T'), q = await f.makeQuery('recognized_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '在册', declareKind: null, year: null, rawFields: { region: 'A' }, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }])

@@ -83,7 +83,7 @@ function relationTitle(relation: Relation, query: Query): string | null {
   return (source ? RDJB_TITLE_CODES[source] : null) ?? query.titleCode ?? RDJB_TITLE_CODES[rowTitle] ?? null
 }
 
-function queryCoverage(query: Query) {
+function queryCoverage(query: Query, currentTitles: ReadonlySet<string> | undefined) {
   const facts = query.comparisonFacts
   const present = facts.evidencePresent
   const completeness = present ? facts.collection.completeness : 'unknown'
@@ -97,23 +97,31 @@ function queryCoverage(query: Query) {
   if (query.status === 'partial' || query.status === 'failed') reasons.push('incomplete_or_continuation')
   if (present && (completeness !== 'complete' || !fullRange || unfinished.length)) reasons.push('incomplete_or_continuation')
   const selected = present ? facts.scopes : query.rdjb.split(',').filter(Boolean)
+  const unavailableTitles = new Set(allPages
+    .filter(page => page.rdjb !== null && page.fetchedCount > 0 && !currentTitles?.has(page.rdjb))
+    .map(page => page.rdjb))
+  if (unavailableTitles.size) reasons.push('no_current_rows_for_positive_scope')
   const titleCoverage = selected.map(rdjb => {
     const pages = allPages.filter(page => page.rdjb === rdjb)
-    const complete = Boolean(present && completeness === 'complete' && fullRange && !unfinished.some(position => position.rdjb === rdjb) && pages.length && pages.every(page => page.status === 'success') && pages[0]?.page === 1 && (pages.at(-1)?.maxPage != null ? pages.at(-1)?.page === pages.at(-1)?.maxPage : pages.at(-1)?.declaredTotal != null ? pages.reduce((count, page) => count + page.fetchedCount, 0) === pages.at(-1)?.declaredTotal : pages.at(-1)?.fetchedCount === 0))
+    const lastPage = pages.at(-1)
+    const reachedEnd = lastPage?.maxPage != null ? lastPage.page === lastPage.maxPage
+      : lastPage?.declaredTotal != null ? pages.reduce((count, page) => count + page.fetchedCount, 0) === lastPage.declaredTotal
+        : lastPage?.fetchedCount === 0
+    const complete = present && completeness === 'complete' && fullRange && !unavailableTitles.has(rdjb) &&
+      !unfinished.some(position => position.rdjb === rdjb) && pages[0]?.page === 1 &&
+      pages.every(page => page.status === 'success') && reachedEnd
     return { rdjb, titleCode: RDJB_TITLE_CODES[rdjb] ?? null, complete, pageCount: pages.length, unfinished: unfinished.filter(position => position.rdjb === rdjb).map(position => position.page) }
   })
   return { queryId: query.id, interface: query.interface, status: query.status, queriedAt: query.queriedAt, rdjb: query.rdjb, titleCode: query.titleCode, effectiveConditions: conditions, completeness, fullRange, titleCoverage, reasons }
 }
 
-function consistentScope(query: Query, title: string) {
-  const coverage = queryCoverage(query)
+function consistentScope(coverage: ReturnType<typeof queryCoverage>, title: string) {
   const titleUnit = coverage.titleCoverage.find(unit => unit.titleCode === title)
   const conditions = coverage.effectiveConditions
   return Boolean(titleUnit?.complete && conditions?.combination === 'and' && !conditions.name && !conditions.uscc && !conditions.sqsj && !conditions.rddqrq && !conditions.whpcyear && !conditions.whpc && !conditions.szq)
 }
 
-function exactQueryCoverage(query: Query, title: string, uscc: string | null) {
-  const coverage = queryCoverage(query)
+function exactQueryCoverage(coverage: ReturnType<typeof queryCoverage>, title: string, uscc: string | null) {
   const conditions = coverage.effectiveConditions
   return Boolean(coverage.titleCoverage.some(unit => unit.titleCode === title && unit.complete) && conditions?.combination === 'and' &&
     (!conditions.uscc || normalizeUscc(conditions.uscc) === normalizeUscc(uscc)) &&
@@ -217,10 +225,20 @@ export function* compareRecordInputs(source: SelectedRecordComparison) {
   const laterByOwner = groupBy(later, edge => `${edge.enterpriseId}:${edge.titleCode}`)
   const laterByRelation = groupBy(later, edge => edge.relationId)
   const linkedRelationIds = new Set(selectedEdges.filter(edge => edge.eventId != null && edge.status === 'confirmed' && historicalEdge(edge)).map(edge => edge.relationId))
+  const currentTitleScopes = new Map<number, Set<string>>()
+  for (const { query, relation } of relations) {
+    const { sourceRdjb } = comparisonPosition(query, relation.sequenceNo)
+    if (sourceRdjb == null) continue
+    let titles = currentTitleScopes.get(query.id)
+    if (!titles) currentTitleScopes.set(query.id, titles = new Set())
+    titles.add(sourceRdjb)
+  }
+  const coverage = queries.map(query => queryCoverage(query, currentTitleScopes.get(query.id)))
+  const coverageByQuery = new Map(coverage.map(item => [item.queryId, item]))
   const coverageCache = new Map<string, boolean>()
   const covers = (title: string, uscc: string | null) => {
     const key = JSON.stringify([title, uscc])
-    if (!coverageCache.has(key)) coverageCache.set(key, queries.some(query => (query.interface === 'business_list' || query.interface === 'recognized_list') && exactQueryCoverage(query, title, uscc)))
+    if (!coverageCache.has(key)) coverageCache.set(key, coverage.some(item => (item.interface === 'business_list' || item.interface === 'recognized_list') && exactQueryCoverage(item, title, uscc)))
     return coverageCache.get(key)!
   }
   const analyzeEvent = ({ event, record, uscc, inSelectedSource }: FormalEvent) => {
@@ -280,7 +298,7 @@ export function* compareRecordInputs(source: SelectedRecordComparison) {
     const uscc = normalizeUscc(relation.usccRaw)
     const matches = uscc && title ? (exportsByIdentity.get(JSON.stringify([title, uscc])) ?? []) : []
     const reasons = [...equivalenceUnknown]
-    if (!consistentScope(query, title ?? '')) reasons.push('query_conditions_or_completeness_not_comparable')
+    if (!consistentScope(coverageByQuery.get(query.id)!, title ?? '')) reasons.push('query_conditions_or_completeness_not_comparable')
     if (!uscc || !title) reasons.push('row_identity_or_title_unknown')
     return {
       recognized: publicRelation(relation, query), exportRows: matches.map(item => publicExport(item.row, item.batch)),
@@ -314,7 +332,7 @@ export function* compareRecordInputs(source: SelectedRecordComparison) {
     grain: { rows: 'official_event_id', platform: 'relation_id', export: 'batch_id_source_row_no', later: 'enterprise_id_title_code_relation_id' },
     counts,
     sourceSet: { queryIds: source.input.queryIds, exportBatchIds: source.input.exportBatchIds, officialSourceDocumentIds: source.input.officialSourceDocumentIds, asOf: source.input.asOf ?? null },
-    coverage: queries.map(queryCoverage),
+    coverage,
     officialCoverage: { qualification: 'unknown' as const, reasons: [officialCoverageUnknown], selectedDocumentIds: documents.map(row => row.id) },
     currentSourceConsistency: {
       qualification: 'not_comparable' as const,

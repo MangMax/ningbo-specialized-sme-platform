@@ -55,7 +55,13 @@ async function seed() {
       sourceRefId: 0, createdAt: '2026-10-16T00:00:00.000Z',
       verificationStatus: 'pending',
     })
-  await seedPostgresPlatformQuery(db, { ...{ interface: 'business_list', queryKey: USCC, rdjb: '3', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success' }, rawResponse: 'Explicit synthetic comparison source', relations: [{ sequenceNo: 1, relationKey: 'SQ1', enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司' }] })
+  await seedPostgresPlatformQuery(db, {
+    interface: 'business_list', queryKey: USCC, rdjb: '2', queriedAt: '2026-10-15T17:11:21.514Z', status: 'success',
+    rawResponse: 'Explicit synthetic comparison source', relations: [{ sequenceNo: 1, relationKey: 'SQ1',
+      enterpriseId: withEvidence, usccRaw: USCC, nameRaw: '宁波上航测绘有限公司',
+      rawFields: { id: 'SQ1', qymc: '宁波上航测绘有限公司', tyshxydm: USCC, rdjb: '2' },
+    }],
+  })
   await db.insert(schema.differenceReason)
     .values({
       enterpriseId: withEvidence,

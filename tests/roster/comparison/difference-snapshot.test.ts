@@ -291,7 +291,7 @@ describe('PostgreSQL snapshot public handlers', () => {
     expect(facts.every(({ fields }) => fields?.qymc === 'fixture provider' && !('blank' in fields) && !('unknown' in fields))).toBe(true)
   }, 30_000)
 
-  it('reads identical display fields after moving repeated observations to one version payload', async () => {
+  it('reads identical current display fields after moving repeated capture rows to one version payload', async () => {
     const name = '共享版本合成企业'
     const shared = { id: 'shared-version', qymc: name, accepted: true, blank: '', nested: { offline: true } }
     const versionless = { qymc: name, count: 9 }
@@ -302,7 +302,8 @@ describe('PostgreSQL snapshot public handlers', () => {
           interface: 'apply_list', queryKey: 'name:' + name, queriedAt: '2026-06-' + day + 'T00:00:00Z',
           status: 'success', rawResponse: '{}', relations: [
             { sequenceNo: 1, relationKey: shared.id, nameRaw: name, rawFields: shared },
-            { sequenceNo: 2, nameRaw: name, rawFields: versionless },
+            { sequenceNo: 2, relationKey: shared.id, nameRaw: name, rawFields: shared },
+            { sequenceNo: 3, nameRaw: name, rawFields: versionless },
           ],
         }] },
       }, async () => {})
@@ -310,9 +311,9 @@ describe('PostgreSQL snapshot public handlers', () => {
     }
     const listing = async () => (await readPostgresPlatformQueries(db, { page: 1, pageSize: 10, view: 'full' }))
       .rows.map(row => row.relations.map(relation => relation.rawFields))
-    const expected = [[{ id: shared.id, qymc: name, accepted: true }, versionless]]
+    const verified = { id: shared.id, qymc: name, accepted: true }
     const before = await listing()
-    expect(before).toEqual([...expected, ...expected])
+    expect(before).toEqual([[verified, verified, versionless], []])
     const target = '--dbname=' + process.env.NUXT_POSTGRES_DIRECTORY_URL!
     const sql = (statement: string) => fixture.psql([target, '-At', '-c', statement]).trim()
     expect(sql(`

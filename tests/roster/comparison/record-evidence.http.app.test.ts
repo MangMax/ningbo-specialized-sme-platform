@@ -23,10 +23,16 @@ async function seed() {
   await db.insert(schema.recordEvidence).values({ recordEventId: event.id, sourceFile: doc.path, page: 3 })
   const native = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: enterprise.usccNorm!, rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_RAW_RESPONSE', relations: [{ sequenceNo: 1, enterpriseId: enterprise.id, usccRaw: enterprise.usccNorm, status: '待审核', verificationStatus: 'confirmed', matchBasis: 'uscc', rawFields: { secret: 'PRIVATE_RAW_FIELDS' } }] })
   const query = { id: native.queryId }
-  const grouped = await seedPostgresPlatformQuery(db, { interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme', queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_GROUP_RAW', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, relationKey: sequenceNo === 3 ? 'OTHER' : 'SAME', rawFields: { id: sequenceNo === 3 ? 'OTHER' : 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } })) })
+  const groupSource = { interface: 'business_list', queryKey: 'canonical-fixture', rdjb: '2', titleCode: 'specialized_sme' } as const
+  const previous = await seedPostgresPlatformQuery(db, { ...groupSource, queriedAt: '2026-10-17T00:00:00Z', status: 'success', rawResponse: 'PRIVATE_PREVIOUS',
+    relations: [{ sequenceNo: 1, relationKey: 'SAME', rawFields: { id: 'SAME', privateBody: 'PRIVATE_PREVIOUS' } }],
+  })
+  const grouped = await seedPostgresPlatformQuery(db, { ...groupSource, queriedAt: '2026-10-18T00:00:00Z', status: 'partial', rawResponse: 'PRIVATE_GROUP_RAW', relations: [1, 2, 3].map(sequenceNo => ({ sequenceNo, relationKey: sequenceNo === 3 ? 'OTHER' : 'SAME', rawFields: { id: sequenceNo === 3 ? 'OTHER' : 'SAME', privateBody: 'PRIVATE_GROUP_RAW' } })) })
+  const failed = await seedPostgresPlatformQuery(db, { ...groupSource, queriedAt: '2026-10-19T00:00:00Z', status: 'failed', rawResponse: 'PRIVATE_FAILED', relations: [] })
   const groupQuery = { id: grouped.queryId }
   const groupedRelations = grouped.relationIds.map(id => ({ id }))
-  return { doc, enterprise, event, query, groupQuery, groupedRelations, sourceQuery: `queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}` }
+  return { doc, enterprise, event, query, groupQuery, groupedRelations, previousId: previous.queryId, failedId: failed.queryId,
+    sourceQuery: `queryIds=${query.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}` }
 }
 let seeded: Awaited<ReturnType<typeof seed>>
 let developmentSpec: any
@@ -98,7 +104,7 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect(response.headers.get('cache-control')).toContain('no-store')
     const body = await response.json()
     expect(body.selection).toBe('explicit')
-    expect(body.counts).toMatchObject({ official_document: 1, query: 2, export_batch: 0 })
+    expect(body.counts).toMatchObject({ official_document: 1, query: 3, export_batch: 0 })
     expect(body.rows).toMatchObject([{ kind: 'official_document', id: doc.id, label: 'Synthetic' }, {
       kind: 'query',
       id: query.id,
@@ -115,7 +121,21 @@ describe('record comparison HTTP adapters on isolated PostgreSQL', () => {
     expect((await fetch(`${url}?ids=${query.id}`)).status).toBe(400)
     expect((await fetch(`${url}?kind=query&ids=1x`)).status).toBe(400)
   })
-  it('pages canonical business groups independently while retaining every original observation and validates bounds', async () => {
+  it('keeps verified current rows selectable after a failed attempt and excludes the rollback capture', async () => {
+    const { doc, event, groupQuery, groupedRelations, previousId, failedId } = seeded
+    const sourceUrl = `${app.url('')}/api/roster/record-comparison/sources?kind=query&ids=${previousId},${groupQuery.id},${failedId}`
+    const sourceResponse = await fetch(sourceUrl)
+    expect(sourceResponse.status).toBe(200)
+    expect(await sourceResponse.json()).toMatchObject({ total: 2, rows: [{ id: groupQuery.id, status: 'partial' }, { id: failedId, status: 'failed' }] })
+    const url = `${app.url('')}/api/roster/record-comparison?exportBatchIds=&officialSourceDocumentIds=${doc.id}`
+    const current = await fetch(`${url}&queryIds=${groupQuery.id},${failedId}`)
+    expect(current.status).toBe(200)
+    const output = await current.json()
+    expect(output.rows).toMatchObject([{ event: { id: event.id } }])
+    expect(output.platformWithoutOfficial.rows.map((row: { relation: { id: number } }) => row.relation.id)).toEqual(groupedRelations.map(row => row.id))
+    expect((await fetch(`${url}&queryIds=${previousId}`)).status).toBe(400)
+  })
+  it('pages canonical business groups independently while retaining current observations and validates bounds', async () => {
     const { doc, groupQuery, groupedRelations } = seeded
     const url = `${app.url('')}/api/roster/record-comparison?queryIds=${groupQuery.id}&exportBatchIds=&officialSourceDocumentIds=${doc.id}`
     const body = await (await fetch(`${url}&businessPageSize=1`)).json()
