@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, isNotNull, isNull, or, sql, type SQLWrapper } from 'drizzle-orm'
+import { and, desc, eq, exists, gt, inArray, isNotNull, isNull, or, sql, type SQLWrapper } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import {
@@ -31,7 +31,7 @@ type ObservationCoordinate = {
 function isCurrentUnkeyedObservation(db: Reader, row: ObservationCoordinate) {
   const source = alias(collection, 'unkeyed_collection')
   return exists(db.select({ id: source.id }).from(source)
-    .where(and(eq(source.id, row.collectionId), isCurrentPlatformCollection(db, source, true))))
+    .where(and(eq(source.id, row.collectionId), isCurrentPlatformCollection(db, source, 'rows'))))
 }
 
 export function isCurrentPlatformObservation(db: Reader, row: ObservationCoordinate = observation) {
@@ -49,14 +49,15 @@ export function isCurrentPlatformCaptureRow(db: Reader, row: ObservationCoordina
 
 type ScopeCoordinate = CaptureTime & Record<'id' | 'interface' | 'queryKey' | 'rdjb' | 'conditionFacts' | 'fullRange', SQLWrapper>
 
-export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, hasRows = false) {
+export function isCurrentPlatformCollection(db: Reader, row: ScopeCoordinate = collection, eligibility?: 'rows' | 'evidence') {
   const source = alias(collection, 'scoped_collection')
   // Drizzle does not expose null-safe equality.
   const current = db.select({ id: source.id }).from(source).where(and(
     eq(source.interface, row.interface), eq(source.queryKey, row.queryKey), eq(source.rdjb, row.rdjb),
     sql`${source.conditionFacts} IS NOT DISTINCT FROM ${row.conditionFacts}`,
     sql`${source.fullRange} IS NOT DISTINCT FROM ${row.fullRange}`,
-    hasRows ? exists(db.select({ id: observation.id }).from(observation).where(eq(observation.collectionId, source.id))) : undefined,
+    eligibility === 'rows' ? exists(db.select({ id: observation.id }).from(observation).where(eq(observation.collectionId, source.id))) : undefined,
+    eligibility === 'evidence' ? or(inArray(source.status, ['success', 'no_record']), and(eq(source.status, 'partial'), gt(source.fetchedCount, 0))) : undefined,
   )).orderBy(desc(platformCaptureTime(source)), desc(source.publicId)).limit(1)
   return eq(row.id, current)
 }

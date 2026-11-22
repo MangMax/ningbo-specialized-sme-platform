@@ -196,17 +196,18 @@ it('latest retry updates both transports and repeated evidence leaves the origin
   const again = await mcp('get_enterprise_detail', { enterpriseId: e.id })
   expect(assessment(again)).toMatchObject({ assessment: 'queried_unjudged', queryCoverage: { status: 'complete' }, currentDecision: { versionId: null, current: null }, explanationValidity: { status: 'not_applicable' } })
 })
-it('coverage caps related attempts and excludes unrelated large archive bodies on differences and MCP reads', async () => {
+it('coverage shows only the latest attempt per scope without exposing archive bodies', async () => {
   const e = await company(), other = await company()
   await query(other, { rawResponse: 'PRIVATE_UNRELATED_109'.repeat(100000) })
-  for (let n = 0; n < 51; n++) await query(e)
+  for (let n = 0; n < 50; n++) await query(e)
+  const latest = await query(e)
   const rows = (await get(`/api/roster/differences?q=${encodeURIComponent(e.name)}`)).rows
-  expect(rows[0].queryCoverage).toMatchObject({ status: 'partial', truncated: true })
-  expect(rows[0].queryCoverage.sources).toHaveLength(50)
+  expect(rows[0].queryCoverage).toMatchObject({ status: 'complete', truncated: false, sources: [{ queryId: latest.id }] })
+  expect(rows[0].queryCoverage.sources).toHaveLength(1)
   expect(JSON.stringify(rows)).not.toContain('PRIVATE_')
   const d = await retainedDifference({ ...scope(e), direction: 'missing_in_miit', status: 'not_queried', recordedAt: '2026-10-19' })
   const tool = await mcp('list_differences', { title: 'specialized_sme', pageSize: 200 })
-  expect(tool.rows.find((r: any) => r.enterpriseId === e.id)).toMatchObject({ currentDecision: { versionId: d.id }, queryCoverage: { truncated: true } })
+  expect(tool.rows.find((r: any) => r.enterpriseId === e.id)).toMatchObject({ currentDecision: { versionId: d.id }, queryCoverage: { truncated: false } })
   expect(JSON.stringify(tool)).not.toContain('PRIVATE_')
 }, 30_000)
 it('another title decision and successful query do not invalidate the unqueried title explanation', async () => {

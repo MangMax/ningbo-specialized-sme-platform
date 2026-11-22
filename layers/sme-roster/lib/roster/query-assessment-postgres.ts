@@ -16,7 +16,7 @@ export async function readPostgresQueryAssessments(db: Parameters<typeof readPos
   const currentEvidence = await readPostgresDifferenceObservations(db, relationIds)
   const queryIds = decisions.flatMap(({ current }) => current?.evidenceRelationId == null && current?.evidenceQueryId != null ? [current.evidenceQueryId] : [])
   const currentQueries = queryIds.length ? new Set((await db.select({ id: platformCollection.publicId }).from(platformCollection)
-    .where(and(inArray(platformCollection.publicId, [...new Set(queryIds)]), isCurrentPlatformCollection(db)))).map(row => row.id)) : new Set<number>()
+    .where(and(inArray(platformCollection.publicId, [...new Set(queryIds)]), isCurrentPlatformCollection(db, platformCollection, 'evidence')))).map(row => row.id)) : new Set<number>()
   const currentIds = decisions.flatMap(item => item.current ? [item.current.id] : [])
   const historical = currentIds.length ? await db.select({
     id: differenceReason.id, validity: differenceReason.retiredEvidenceValidity, reviewed: differenceReason.retiredEvidenceReviewed,

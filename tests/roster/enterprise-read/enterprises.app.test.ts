@@ -364,6 +364,7 @@ beforeAll(async () => {
 
   const q3 = (await query('business_list', REGRESSION_USCC, '3', 'success', '2026-10-15T17:11:21.514Z', null, REGRESSION_RELATIONS.map((r, index) => ({ sequenceNo: index + 1,
       relationKey: r.relationKey,
+      rawFields: { id: r.relationKey, qymc: r.name, tyshxydm: REGRESSION_USCC },
       enterpriseId: e7289,
       usccRaw: REGRESSION_USCC,
       nameRaw: r.name,
@@ -378,7 +379,7 @@ beforeAll(async () => {
   // `rdjb=1` / `rdjb=2` 返回 0 行:请求成功、会话有效 ⇒ **无记录**,不是失败。
   await query('business_list', REGRESSION_USCC, '1', 'no_record', '2026-10-15T17:11:21.514Z')
   await query('business_list', REGRESSION_USCC, '2', 'no_record', '2026-10-15T17:11:21.514Z')
-  const qApply = await query('apply_list', REGRESSION_USCC, '', 'success', '2026-10-15T17:11:21.514Z', null, [{ sequenceNo: 1, ...{ relationKey: 'SQ332025060392166', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘股份有限公司', year: 2025 } }, { sequenceNo: 2, ...{ relationKey: 'SQ332022062212391', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘有限公司', year: 2022 } }])
+  const qApply = await query('apply_list', REGRESSION_USCC, '', 'success', '2026-10-15T17:11:21.514Z', null, [{ sequenceNo: 1, ...{ relationKey: 'SQ332025060392166', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘股份有限公司', rawFields: { id: 'SQ332025060392166', qymc: '宁波上航测绘股份有限公司', tyshxydm: REGRESSION_USCC }, year: 2025 } }, { sequenceNo: 2, ...{ relationKey: 'SQ332022062212391', enterpriseId: e7289, usccRaw: REGRESSION_USCC, nameRaw: '宁波上航测绘有限公司', rawFields: { id: 'SQ332022062212391', qymc: '宁波上航测绘有限公司', tyshxydm: REGRESSION_USCC }, year: 2022 } }])
 
   // —— 归并走**真实 HTTP API**(不是测试自己改库) ——
   api = await startPostgresImportHttp(dir, TOKEN)

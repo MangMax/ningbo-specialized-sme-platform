@@ -102,24 +102,27 @@ it('identical full raw reuses a content version across stored synonyms while cha
     input('content-second', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: raw }]),
     input('content-changed', 'apply_list', [{ sequenceNo: 1, relationKey: raw.id, declareKind: '申请', rawFields: { ...raw, sblx: 'apply' } }]),
   ]
-  for (const request of requests) {
+  for (const [index, request] of requests.entries()) {
     request.sourceKind = 'platform_archive'
     expect((await client.preflight(request)).preflight.conflicts).toEqual([])
     expect((await client.commit(request)).status).toBe('committed')
+    if (index === 1) {
+      const [versionCount] = (await pool!.query<{ count: string }>(
+        'SELECT count(*) FROM platform_business_record_version v JOIN platform_business_record r ON r.id = v.record_id WHERE r.platform_key = $1', [raw.id],
+      )).rows
+      expect(Number(versionCount!.count)).toBe(1)
+    }
   }
   const versions = async () => (await pool!.query<{ record_id: string; version_id: string }>(
     'SELECT o.record_id, o.version_id FROM platform_business_observation o JOIN platform_business_record r ON r.id = o.record_id WHERE r.platform_key = $1 ORDER BY o.id', [raw.id],
   )).rows
   const before = await versions()
-  expect(before).toHaveLength(3)
+  expect(before).toHaveLength(2)
   expect(Number(before[0]!.version_id)).toBeGreaterThan(0)
-  expect(before[0]).toEqual(before[1])
-  expect(before[2]!.record_id).toBe(before[0]!.record_id)
-  expect(before[2]!.version_id).not.toBe(before[0]!.version_id)
-  for (const label of ['content-first', 'content-second', 'content-changed']) {
-    const archived = (await read(label)).rows[0], row = archived.relations[0]
-    expect(row).toMatchObject({ declareKind: 'apply', normalizationConflicts: [] })
-  }
+  expect(before[1]!.record_id).toBe(before[0]!.record_id)
+  expect(before[1]!.version_id).not.toBe(before[0]!.version_id)
+  for (const label of ['content-first', 'content-second']) expect((await read(label)).rows[0].relations).toEqual([])
+  expect((await read('content-changed')).rows[0].relations).toEqual([expect.objectContaining({ declareKind: 'apply', normalizationConflicts: [] })])
   expect(await versions()).toEqual(before)
 })
 
