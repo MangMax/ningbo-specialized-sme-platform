@@ -1,6 +1,6 @@
 /** HTTP submission validates methods, authorization and the shared import envelope. */
 import { readApiToken, resolveApiAuth, unauthorizedApiMessage } from '../../../core/server/utils/api-auth'
-import { hasOfficialFactInput, validateImportRequest, validateNativeImportRequest } from './roster-import-model'
+import { hasOfficialFactInput, validateNativeImportRequest } from './roster-import-model'
 import { runPostgresMixedImport } from './roster-mixed-import-postgres'
 import { ImportReceiptError } from './import-receipt-model'
 import { appLog, type LogContext } from '../../../core/lib/logging'
@@ -48,17 +48,7 @@ export function authorizeRosterWrite(
 
 export type ImportContext = { apiToken: string | null | undefined; filesDir?: string; logContext?: LogContext }
 
-export function handlePostgresRosterImportRequest(action: RosterImportAction, request: RosterHttpRequest, deps: ImportContext) {
-  return handleImportSubmission(action, request, deps, input => runPostgresMixedImport(action, input, deps.filesDir, deps.logContext), validateNativeImportRequest)
-}
-
-export async function handleImportSubmission(
-  action: RosterImportAction,
-  request: RosterHttpRequest,
-  deps: ImportContext,
-  perform: (input: Parameters<typeof runPostgresMixedImport>[1]) => Promise<unknown>,
-  validate = validateImportRequest,
-): Promise<RosterHttpResponse> {
+export async function handlePostgresRosterImportRequest(action: RosterImportAction, request: RosterHttpRequest, deps: ImportContext): Promise<RosterHttpResponse> {
   if (request.method !== 'POST') {
     return json(405, { message: `本端点是 POST：/api/roster/import/${action}` })
   }
@@ -69,17 +59,15 @@ export async function handleImportSubmission(
     return { status: auth.status, headers: auth.headers, body: auth.body }
   }
 
-  const validated = validate(request.body)
+  const validated = validateNativeImportRequest(request.body)
   if (!validated.ok) {
     appLog({ module: 'sme-roster', source: 'import', operation: `import.submission.${action}`, outcome: 'denied', errorCode: 'invalid_import_request' }, deps.logContext)
     return json(validated.status, { message: validated.message })
   }
   if (action === 'replay' && hasOfficialFactInput(validated.value)) return json(400, { message: 'Replay cannot capture, append or correct official facts' })
-  if (action === 'replay' && validated.value.payload.platformRecordObservations) return json(400, { message: 'Historical projection uses preflight/commit with its original idempotency key; replay only converges announcement evidence' })
-  if (action === 'replay' && validated.value.payload.platformLegacyProvenance) return json(400, { message: 'Legacy provenance uses preflight/commit with its original idempotency key' })
 
   try {
-    return json(200, await perform(validated.value))
+    return json(200, await runPostgresMixedImport(action, validated.value, deps.filesDir, deps.logContext))
   } catch (error) {
     logImportFailure(`import.submission.${action}`, error, deps.logContext)
     if (!(error instanceof ImportReceiptError)) throw error

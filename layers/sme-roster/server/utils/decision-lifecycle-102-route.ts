@@ -2,7 +2,6 @@ import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { getHeader, getQuery, getRouterParam, readBody, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { z } from 'zod'
 import { readApiToken, resolveApiAuth } from '../../../core/server/utils/api-auth'
-import { legacyPreviewInput102, previewPostgresLegacyDecision102 } from './decision-legacy-preview-102'
 import { decisionHistory102, decisionCommand102, decisionScope102, DecisionError102, parse102 } from './decision-lifecycle-102/contract'
 import { currentPostgresDecisions102, historyPostgresDecision102, readPostgresDecision102 } from './decision-lifecycle-102/postgres-reads'
 import { savePostgresDecision102, preflightPostgresQualification102, commitPostgresQualification102 } from './decision-lifecycle-102/postgres-writes'
@@ -14,16 +13,15 @@ function numericQuery(query: Record<string, unknown>) {
     ['id','enterpriseId','page','pageSize'].includes(key) && typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value,
   ]))
 }
-export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'history' | 'legacy-preview' | 'qualification-preflight' | 'qualification-commit') {
+export function decisionRoute102(action: 'commands' | 'get' | 'current' | 'history' | 'qualification-preflight' | 'qualification-commit') {
   return semanticRouteHandler(`maintenance.decision.${action}`, async (event: H3Event) => {
     setHeader(event, 'cache-control', 'no-store')
     try {
-      if (action === 'get' || action === 'current' || action === 'history' || action === 'legacy-preview') {
+      if (action === 'get' || action === 'current' || action === 'history') {
         const postgres = usePostgresRosterDb()
         const query = numericQuery(getQuery(event))
         return await postgres.transaction(async tx => {
           const output = await postgresDecisionOutput102(tx)
-          if (action==='legacy-preview') return output(await previewPostgresLegacyDecision102(tx,useRuntimeConfig().curatedPath,parse102(legacyPreviewInput102,query)))
           if (action === 'history') return output(await historyPostgresDecision102(tx, parse102(decisionHistory102, query)))
           if (action === 'get') {
             const id = parse102(z.number().int().positive().max(Number.MAX_SAFE_INTEGER), numericQuery({ id: getRouterParam(event, 'id') }).id)

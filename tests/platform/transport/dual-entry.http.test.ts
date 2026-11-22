@@ -120,7 +120,7 @@ it('structured readback and reference reuse preserve all three sources across re
     const reuse = await post('commit', request('598-reference-reuse', { platformQueries: referenced }))
     expect(reuse).toMatchObject({ status: 'committed', summary: { written: 0 } })
     const { rows: ids } = await db.execute<{ id: string }>(sql`SELECT public_id id FROM platform_business_observation ORDER BY public_id`)
-    const repair = request('598-maintenance', { platformRecordObservations: ids.map(({ id }) => ({ relationId: Number(id) })) })
+    const repair = { ...request('598-maintenance', {}), payload: { platformRecordObservations: ids.map(({ id }) => ({ relationId: Number(id) })) } }
     await post('preflight', repair, 400)
     await post('commit', repair, 400)
     await check()

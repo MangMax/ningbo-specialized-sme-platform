@@ -2,12 +2,11 @@
 import type * as schema from '../../../../db/postgresql/platform-tables'
 import type { PlatformInterface } from '../labels'
 import type { PlatformNormalizationConflict } from './normalization'
-import type { LegacyProvenanceDisplay } from './legacy-provenance'
 export { MAX_FULL_QUERY_BYTES, MAX_FULL_PAGE_BYTES } from './evidence-contract'
 
 export interface PlatformQueryFilter {
   queryId?: number
-  /** Explicit opt-in: metadata/counts only; use exact evidence reads for payloads. */
+  /** Use summary for metadata and counts without observations. */
   view?: 'full' | 'summary'
   interface?: PlatformInterface
   queryKey?: string
@@ -84,7 +83,6 @@ export interface PlatformQueryRow {
     failureReason: string | null
     rawResponse?: string | null
     collectionEvidence?: PlatformCollectionCoverage | null
-    legacyProvenance?: LegacyProvenanceDisplay
     createdAt: string
     relationCount: number
   }

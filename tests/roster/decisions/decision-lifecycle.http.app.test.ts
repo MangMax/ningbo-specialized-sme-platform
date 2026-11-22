@@ -213,7 +213,7 @@ describe('ticket 102 public decision lifecycle', () => {
     const bytes = readFileSync(curatedPath, 'utf8')
     const response = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nameNorm: '旧标注同名', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true }) })
     expect(response.status).toBe(409)
-    expect(await json(response)).toMatchObject({ error: { code: 'ambiguous_enterprise' }, preview: '/api/roster/decision-lifecycle/legacy-preview' })
+    expect(await json(response)).toMatchObject({ error: { code: 'ambiguous_enterprise' } })
     expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
     for (const id of [first.id, second.id]) expect((await json(await fetch(api('current?enterpriseId=' + id + '&titleCode=specialized_sme&direction=missing_in_miit')))).versionId).toBeNull()
     const exact = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ uscc: first.usccNorm, nameNorm: '旧标注同名', titleCode: 'specialized_sme', direction: 'missing_in_miit', curated: true }) })
@@ -238,7 +238,7 @@ describe('ticket 102 public decision lifecycle', () => {
     for (const body of [legacy, { ...legacy, curated: false }, { ...legacy, note: '' }, { ...legacy, uscc: target.usccNorm!.toLowerCase() }, { nameNorm: target.nameNorm, titleCode: legacy.titleCode, direction: legacy.direction, curated: true }]) {
       const response = await patch(body)
       expect(response.status).toBe(409)
-      expect(await json(response)).toMatchObject({ error: { code: 'decision_lifecycle_required' }, replacement: '/api/roster/decision-lifecycle/commands', preview: '/api/roster/decision-lifecycle/legacy-preview' })
+      expect(await json(response)).toMatchObject({ error: { code: 'decision_lifecycle_required' }, replacement: '/api/roster/decision-lifecycle/commands' })
       expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
       expect(await json(await fetch(currentUrl))).toEqual(before)
     }
@@ -352,31 +352,6 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(JSON.stringify(originalSource)).not.toContain('SYNTHETIC_RAW_UNCHANGED')
   })
 
-  it('previews exact legacy mappings and conflicts without promoting reviewed annotations or modifying either store', async () => {
-    const duplicate1 = await insertEnterprise({ name: '同名甲', nameNorm: '同名' })
-    await insertEnterprise({ name: '同名乙', nameNorm: '同名' })
-    const unknown = JSON.stringify(['MISSING', 'specialized_sme', 'missing_in_miit'])
-    const ambiguous = JSON.stringify(['name:同名', 'specialized_sme', 'missing_in_miit'])
-    const legacy = { [legacyKey]: { note: '已看过/不算差异', at: '2026-10-18T00:00:00Z' }, [unknown]: { at: '2026-10-18' }, [ambiguous]: { at: '2026-10-18' }, malformed: { note: '旧格式待核', at: '2026-10-18' } }
-    writeFileSync(curatedPath, JSON.stringify(legacy))
-    const bytes = readFileSync(curatedPath, 'utf8')
-    const current = await json(await fetch(api('current?' + scope)))
-    const response = await fetch(api('legacy-preview?pageSize=2'))
-    expect(response.headers.get('cache-control')).toContain('no-store')
-    const first = await json(response)
-    expect(first).toMatchObject({ total: 4, pageSize: 2, migrationApplied: false })
-    const rows = [...first.rows, ...(await json(await fetch(api('legacy-preview?page=2&pageSize=2')))).rows]
-    expect(rows.find((r: any) => r.legacyKey === legacyKey)).toMatchObject({ enterpriseId: enterprise.id, equivalentToConfirmedNoDiff: false, currentVersionId: current.versionId, currentStatus: 'needs_review', conflicts: expect.arrayContaining(['legacy_not_equivalent', 'formal_decision_exists']) })
-    expect(rows.find((r: any) => r.legacyKey === unknown)).toMatchObject({ enterpriseId: null, conflicts: expect.arrayContaining(['enterprise_not_found']) })
-    expect(rows.find((r: any) => r.legacyKey === ambiguous)).toMatchObject({ enterpriseId: null, conflicts: expect.arrayContaining(['ambiguous_enterprise']), candidates: expect.arrayContaining([expect.objectContaining({ id: duplicate1.id })]) })
-    expect(rows.find((r: any) => r.legacyKey === 'malformed').conflicts).toContain('invalid_legacy_key')
-    expect(value(await rpc('preview_legacy_difference_decisions', { page: 1, pageSize: 2 }))).toEqual(first)
-    const legacyPatch = await fetch(service.baseUrl + '/api/comparison/curated', { method: 'PATCH', headers: { 'content-type': 'application/json', authorization: 'Bearer synthetic-api-token' }, body: JSON.stringify({ uscc: enterprise.usccNorm, titleCode: coordinate.titleCode, direction: coordinate.direction, curated: false }) })
-    expect(legacyPatch.status).toBe(409)
-    expect(await json(legacyPatch)).toMatchObject({ error: { code: 'decision_lifecycle_required' }, replacement: '/api/roster/decision-lifecycle/commands' })
-    expect(readFileSync(curatedPath, 'utf8')).toBe(bytes)
-    expect(await json(await fetch(api('current?' + scope)))).toEqual(current)
-  })
   it('keeps legacy imports readable but requires lifecycle commands after explicit adoption', async () => {
     const other = await insertEnterprise({ name: '旧决定企业', nameNorm: '旧决定企业', usccNorm: 'LEGACY102' })
     const original = await insertDecision({ enterpriseId: other.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', recordedAt: '2099-01-01T00:00:00Z', reasonNote: '不可删除的旧原因' })
@@ -421,13 +396,18 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(commandSchema.required).toEqual(expect.arrayContaining(['action','expectedCurrentId','actor','basis','ruleVersion','effectiveAt','idempotencyKey']))
     expect(commandSchema.properties.action.enum).toEqual(['replace','withdraw','maintain'])
     expect(commandSchema.properties.reviewedEvidence).toMatchObject({ type: 'object', additionalProperties: false, required: ['latestRevisionId','projectionReady'], properties: { latestRevisionId: { type: 'integer', minimum: 0 }, projectionReady: { type: 'boolean', enum: [true] } } })
-    for (const path of ['current','history','legacy-preview','{id}']) expect(spec.paths['/api/roster/decision-lifecycle/' + path].get).toBeTruthy()
+    for (const path of ['current','history','{id}']) expect(spec.paths['/api/roster/decision-lifecycle/' + path].get).toBeTruthy()
     const listResponse = await fetch(service.baseUrl + '/mcp', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) })
     const listRaw = await listResponse.text()
     const list = JSON.parse(listRaw.startsWith('event:') ? listRaw.split('\n').find(line => line.startsWith('data: '))!.slice(6) : listRaw)
     const names = list.result.tools.map((t: any) => t.name)
-    expect(names).toEqual(expect.arrayContaining(['get_difference_decision','get_current_difference_decision','list_difference_decision_history','preview_legacy_difference_decisions']))
+    expect(names).toEqual(expect.arrayContaining(['get_difference_decision','get_current_difference_decision','list_difference_decision_history']))
     expect(names).not.toContain('save_difference_decision')
+    expect(names).not.toContain('preview_legacy_difference_decisions')
+    expect(spec.paths['/api/roster/decision-lifecycle/legacy-preview']).toBeUndefined()
+    const retiredPreview = await fetch(api('legacy-preview'))
+    expect(retiredPreview.status).toBe(400)
+    expect(await json(retiredPreview)).toMatchObject({ error: { code: 'invalid_request' } })
     for (const retired of ['list_evidence_impacts', 'get_evidence_impact', 'preview_evidence_impacts',
       'list_evidence_impact_sources', 'list_evidence_revision_events', 'process_evidence_impacts', 'release_evidence_rule']) {
       expect(names).not.toContain(retired)
@@ -558,7 +538,7 @@ describe('ticket 102 public decision lifecycle', () => {
     expect(await json(await post(command))).toEqual(originalReceipt)
   })
 
-  it('bounds scoped history and legacy preview while unrelated large raw evidence is never materialized', async () => {
+  it('bounds scoped history while unrelated large raw evidence is never materialized', async () => {
     const other = await insertEnterprise({ name: '性能夹具企业', nameNorm: '性能夹具企业' })
     const hugeReason = '原始历史长说明'.repeat(2000)
     await db.insert(differenceReason).values(Array.from({ length: 200 }, (_, n): typeof differenceReason.$inferInsert => ({
@@ -594,15 +574,6 @@ describe('ticket 102 public decision lifecycle', () => {
      ORDER BY recorded_at DESC,id DESC LIMIT 50 OFFSET 50`)
     expect(JSON.stringify(plan.rows)).toContain('Index Only Scan Backward using difference_reason_impact_head_113_idx')
     expect(JSON.stringify(plan.rows)).not.toContain('Sort')
-    const previousFile = readFileSync(curatedPath, 'utf8')
-    try {
-      writeFileSync(curatedPath, ' '.repeat(2 * 1024 * 1024 + 1))
-      expect((await fetch(api('legacy-preview'))).status).toBe(413)
-      writeFileSync(curatedPath, JSON.stringify(Object.fromEntries(Array.from({ length: 50 }, (_,i) => ['bad-key-' + String(i).padStart(4,'0') + 'x'.repeat(6000), { at: '2026' }]))))
-      expect((await fetch(api('legacy-preview?pageSize=50'))).status).toBe(413)
-      writeFileSync(curatedPath, '{broken')
-      expect((await fetch(api('legacy-preview'))).status).toBe(422)
-    } finally { writeFileSync(curatedPath, previousFile) }
   })
 
 })

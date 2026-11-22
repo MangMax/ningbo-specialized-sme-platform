@@ -127,7 +127,7 @@ it('waits for concurrent lifecycle adoption and rejects the legacy file change',
     expect(rejected.status).toBe(409)
     expect(await rejected.json()).toMatchObject({
       error: { code: 'decision_lifecycle_required' },
-      replacement: '/api/roster/decision-lifecycle/commands', preview: '/api/roster/decision-lifecycle/legacy-preview',
+      replacement: '/api/roster/decision-lifecycle/commands',
     })
     expect(readFileSync(path, 'utf8')).toBe(before)
   } finally {

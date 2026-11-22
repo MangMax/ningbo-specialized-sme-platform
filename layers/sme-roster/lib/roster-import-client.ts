@@ -366,10 +366,6 @@ export interface RosterImportPayload {
   announcement?: RosterImportAnnouncement
   aliases?: RosterImportAlias[]
   platformQueries?: RosterImportPlatformQuery[]
-  /** @internal Offline SQLite upgrade fixture input. */
-  platformRecordObservations?: { relationId: number }[]
-  /** @internal Offline SQLite upgrade fixture pagination input. */
-  platformLegacyProvenance?: import('./platform/legacy-provenance').LegacyPlatformProvenanceInput[]
   exportSnapshot?: RosterImportExportSnapshot
   differences?: RosterImportDifference[]
   /** 归并与回填（RL-11 增量扩展，见 `RosterImportMerge`）。 */

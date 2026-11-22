@@ -1,6 +1,5 @@
 import type { record as RecordTable, recordEvent as RecordEventTable, recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
 import type { platformCollection as PlatformCollectionTable, platformCollectionPage as PlatformCollectionPageTable, platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
-import type { differenceReason as DifferenceReasonTable } from '../../../../db/postgresql/roster-selection-tables'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLES } from '../../lib/labels'
 import type { PlatformBusinessMetadata } from '../../lib/platform/business-record'
@@ -203,7 +202,7 @@ export type ComparisonRead =
 
 export type ReadResult = FormalCount | Iterable<FormalEvent> | PageEvidence[] | undefined
 
-export function* compareRecordInputs(source: SelectedRecordComparison, paginate = true) {
+export function* compareRecordInputs(source: SelectedRecordComparison) {
   const { queries, batches, documents, relations, exports, edges } = source
   const relationMap = new Map(relations.map(item => [item.relation.id, item]))
   const exportMap = new Map(exports.map(item => [item.row.id, item]))
@@ -257,16 +256,14 @@ export function* compareRecordInputs(source: SelectedRecordComparison, paginate 
     classificationCounts[row.decision.classification]++
     if (row.followups.length) laterProcessAffectedEvents++
     if ((source.input.enterpriseId == null || row.record.enterpriseId === source.input.enterpriseId) && (!source.input.titleCode || row.record.titleCode === source.input.titleCode) && (!source.input.classification || row.decision.classification === source.input.classification)) {
-      if (!paginate || total >= (source.input.page - 1) * source.input.pageSize && total < source.input.page * source.input.pageSize) pageEvents.push(row)
+      if (total >= (source.input.page - 1) * source.input.pageSize && total < source.input.page * source.input.pageSize) pageEvents.push(row)
       total++
     }
   }
   // Counts need light global facts, but only the emitted page needs complete
-  // evidence. The legacy preview consumes classifications and identities only;
-  // its complete candidate scan must not hydrate unused attachment text.
+  // evidence.
   const rows: ReturnType<typeof buildRow>[] = []
-  if (!paginate) for (const row of pageEvents) rows.push(buildRow(row, []))
-  else for (let offset = 0; offset < pageEvents.length; offset += 128) {
+  for (let offset = 0; offset < pageEvents.length; offset += 128) {
     const page = pageEvents.slice(offset, offset + 128)
     const evidenceResult: ReadResult = yield { type: 'evidence', ids: page.map(row => row.event.id) } as const
     const evidence = evidenceResult as PageEvidence[]
@@ -369,28 +366,6 @@ export function* compareRecordInputs(source: SelectedRecordComparison, paginate 
     grain: 'known_record_with_verified_versions_and_unknown_content_or_isolated_unknown_identity' as const,
   } } }
 
-}
-
-type Reason = typeof DifferenceReasonTable.$inferSelect
-
-type LegacyImpactReason = Pick<Reason, 'id' | 'enterpriseId' | 'titleCode' | 'direction' | 'status' | 'reasonCode' | 'measureCode' | 'verificationStatus' | 'recordedAt'> & {
-  evidenceQueryId: number | null
-  evidenceRelationId: number | null
-}
-
-export function projectLegacyComparisonImpact(source: SelectedRecordComparison,
-  comparison: ReturnType<typeof compareRecordInputs> extends Generator<unknown, infer Result, any> ? Result : never, owners: ReadonlyMap<number, string | null>,
-  { legacyRows, total, pageReasons }: { legacyRows: number; total: number; pageReasons: LegacyImpactReason[] },
-) {
-  const { input } = source
-  const relationsByOwner = groupBy(source.relations, item => `${item.relation.enterpriseId}:${relationTitle(item.relation, item.query)}`)
-  const comparisonByOwner = groupBy(comparison.rows, row => `${row.record.enterpriseId}:${row.record.titleCode}`)
-  const legacy = pageReasons.map(item => {
-    const related = comparisonByOwner.get(`${item.enterpriseId}:${item.titleCode}`) ?? []
-    return { id: item.id, original: { enterpriseId: item.enterpriseId, titleCode: item.titleCode, direction: item.direction, status: item.status, reasonCode: item.reasonCode, measureCode: item.measureCode, evidenceQueryId: item.evidenceQueryId, evidenceRelationId: item.evidenceRelationId, verificationStatus: item.verificationStatus, recordedAt: item.recordedAt }, disposition: 'legacy_pending_review' as const, possibleCategories: unique(related.map(row => row.classification)), possibleEventIds: related.map(row => row.event.id) }
-  })
-  const proposedCandidates = comparison.rows.flatMap(row => (relationsByOwner.get(`${row.record.enterpriseId}:${row.record.titleCode}`) ?? []).filter(({ relation, query }) => normalizeUscc(relation.usccRaw) && normalizeUscc(relation.usccRaw) === normalizeUscc(row.record.usccRaw ?? owners.get(row.record.enterpriseId)) && relationTitle(relation, query) === row.record.titleCode && (query.interface === 'recognized_list' ? row.event.eventType === 'award' && row.event.year != null && relation.year === row.event.year : row.event.year != null && (row.event.eventType === 'review' ? row.event.decidedYear != null && relation.year === row.event.decidedYear && relation.declareKind === 'review' : relation.year === row.event.year && relation.declareKind === 'apply')) && !row.correspondences.some(edge => edge.relationId === relation.id) && !comparison.historicalDecisionUnavailable.some(edge => edge.eventId === row.event.id && edge.relationId === relation.id)).map(({ relation, query }) => ({ eventId: row.event.id, relationId: relation.id, queryId: query.id, type: query.interface === 'recognized_list' ? 'event_recognized' : 'event_process', status: 'candidate' as const, qualification: 'requires_explicit_review' as const, reasons: ['batch_and_fact_require_review'] })))
-  return { rows: legacy, total, page: input.page, pageSize: input.pageSize, grain: 'difference_reason_id', counts: { legacyRows, possibleAlignedEvents: comparison.counts.historical_aligned, possibleConflictEvents: comparison.counts.historical_conflict, unresolvedEvents: comparison.counts.unresolved, proposedCandidateEdges: proposedCandidates.length, potentialCandidateAuditWrites: proposedCandidates.length, plannedAuditWrites: 0 }, proposedCandidates, unresolved: comparison.rows.filter(row => row.classification === 'unresolved').map(row => ({ eventId: row.event.id, reasons: row.reasons })), dataIssues: [...comparison.coverage.filter(item => item.reasons.length).map(item => ({ queryId: item.queryId, eventId: null, reasons: item.reasons })), ...comparison.rows.filter(row => row.classification === 'unresolved' && row.reasons.some(reason => reason !== 'official_coverage_unproved')).map(row => ({ queryId: null, eventId: row.event.id, reasons: row.reasons }))], modelIssues: [...comparison.officialCoverage.reasons, ...comparison.currentSourceConsistency.reasons], sourceSet: comparison.sourceSet, note: 'Read-only candidate and impact preview; no legacy decision or correspondence is changed.' }
 }
 
 export interface SourceEnterpriseLink {

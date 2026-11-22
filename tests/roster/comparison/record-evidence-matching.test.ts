@@ -4,7 +4,7 @@ import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/
 import type { RosterImportPlatformQuery, RosterImportRelation } from '../../../layers/sme-roster/lib/roster-import-client'
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { readPostgresRecordComparison, previewPostgresRecordCorrespondenceImpact } from '../../../layers/sme-roster/server/utils/record-comparison-postgres'
+import { readPostgresRecordComparison } from '../../../layers/sme-roster/server/utils/record-comparison-postgres'
 import { commitPostgresCorrespondences, preflightPostgresCorrespondences } from '../../../layers/sme-roster/server/utils/record-correspondence-write-postgres'
 import type { CorrespondenceOperation } from '../../../layers/sme-roster/server/utils/record-correspondence-model'
 import * as schema from '../fixtures/postgres-tables'
@@ -111,7 +111,6 @@ describe('record comparison public read service', () => {
     expect(row.event.reviewOutcome).toBe('failed')
     expect(row.laterProcesses[0]?.relation.id).toBe(next.id)
     expect((await readPostgresRecordComparison(f.db, f.input([q.id]))).laterProcessPlatformRows).toMatchObject([{ relation: { id: next.id }, correspondences: [{ type: 'later_process' }] }])
-    expect((await previewPostgresRecordCorrespondenceImpact(f.db, f.input([q.id]))).proposedCandidates.some(item => item.relationId === next.id)).toBe(false)
   })
   it('independent later process remains visible without a predecessor event', async () => {
     const f = await fixture(), e = await f.makeEnterprise('Standalone', '91330211255994479G')
@@ -138,18 +137,6 @@ describe('record comparison public read service', () => {
     expect(row.platformRows.map(item => item.id)).toEqual([oldYear.id, decided.id, unknown.id])
     await f.db.update(schema.recordEvent).set({ decidedYear: null })
     expect((await readPostgresRecordComparison(f.db, f.input([q.id]))).rows[0]).toMatchObject({ classification: 'unresolved', event: { decidedYear: null } })
-  })
-  it('review preview proposes the review process year, never the original award year or later application', async () => {
-    const f = await fixture(), e = await f.makeEnterprise('Preview review', '91330211255994476D'), review = await f.makeEvent(e.id, 'review', 2021, 1, 'failed')
-    const q = await f.makeQuery('business_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '未通过', declareKind: 'review', year: 2021, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }, { sequenceNo: 2, enterpriseId: e.id, usccRaw: e.usccNorm, status: '未通过', declareKind: 'review', year: 2024, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }, { sequenceNo: 3, enterpriseId: e.id, usccRaw: e.usccNorm, status: '待审核', declareKind: 'apply', year: 2025, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }])
-    const originalYear = q.relations[0]!
-    const decisionYear = q.relations[1]!
-    const laterApply = q.relations[2]!
-    expect((await previewPostgresRecordCorrespondenceImpact(f.db, f.input([q.id]))).proposedCandidates.map(item => item.relationId)).toEqual([decisionYear.id])
-    await f.db.update(schema.recordEvent).set({ decidedYear: null })
-    expect((await previewPostgresRecordCorrespondenceImpact(f.db, f.input([q.id]))).proposedCandidates).toEqual([])
-    expect([originalYear.id, laterApply.id]).toHaveLength(2)
-    expect(review.year).toBe(2021)
   })
   it('case 4 preserves two titles, two batches, duplicate business keys, and unlinked rows at original grain before pagination', async () => {
     const f = await fixture(), e = await f.makeEnterprise('D', '91330211255994460S')
@@ -194,7 +181,6 @@ describe('record comparison public read service', () => {
     expect(out.rows[0]?.reasons).toContain('official_event_year_unknown')
     expect(out.counts).toMatchObject({ distinctPlatformRows: 1, unresolvedPlatformRows: 1, platformWithoutOfficialRows: 0 })
     expect(out.platformWithoutOfficial).toMatchObject({ total: 1, rows: [{ relation: { id: candidate.id, enterpriseId: null, verificationStatus: 'pending' }, qualification: 'unresolved' }] })
-    expect((await previewPostgresRecordCorrespondenceImpact(f.db, f.input([q.id]))).dataIssues).toContainEqual(expect.objectContaining({ eventId: event.id, reasons: expect.arrayContaining(['official_event_year_unknown']) }))
     expect(candidate.enterpriseId).toBeNull()
   })
   it('pending business and apply rows remain visible at their original relation grain', async () => {
@@ -232,7 +218,6 @@ describe('record comparison public read service', () => {
     expect(JSON.stringify(asOf)).not.toContain('2026-10-18T02:00:00Z')
     expect(JSON.stringify(asOf)).not.toContain('"status":"rejected"')
     expect(JSON.stringify(asOf)).not.toContain('"status":"unlinked"')
-    expect((await previewPostgresRecordCorrespondenceImpact(f.db, { ...f.input([q.id]), asOf: '2026-10-18T09:00:00+08:00' })).proposedCandidates).toEqual([])
   })
   it('equivalent asOf instants both reject a next-UTC-day export source', async () => {
     const f = await fixture(), e = await f.makeEnterprise('Export cutoff', '91330211255994480H')
@@ -258,22 +243,5 @@ describe('record comparison public read service', () => {
     expect(offsetSourceSet.exportBatchIds).toEqual(utcSourceSet.exportBatchIds)
     expect(offset.exportBatches).toMatchObject([{ id: batch.id, collectedOn: '2026-10-18' }])
     expect(offset.currentSourceConsistency.exportObservations).toMatchObject([{ exportRow: { id: exported.id, batchId: batch.id } }])
-  })
-  it('legacy preview preserves originals and global counts across pages without writing', async () => {
-    const f = await fixture(), e = await f.makeEnterprise('L', '91330211255994464W'), event = await f.makeEvent(e.id, 'award', 2024, 1), q = await f.makeQuery('business_list', e.usccNorm!, undefined, undefined, undefined, [{ sequenceNo: 1, enterpriseId: e.id, usccRaw: e.usccNorm, status: '终审通过', declareKind: 'apply', year: 2024, rawFields: undefined, matchBasis: e.id ? 'uscc' : 'none', verificationStatus: e.id ? 'confirmed' : 'pending' }])
-    const relation = q.relations[0]!
-    const old = singlePostgresFixtureRow(await f.db.insert(schema.differenceReason).values({ enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'confirmed_reason', reasonCode: 'platform_stale', measureCode: 'manual_review', createdAt: '2025-01-01T00:00:00Z', recordedAt: '2025-01-01T00:00:00Z' }).returning())
-    await f.db.insert(schema.differenceReason).values({ enterpriseId: e.id, titleCode: 'specialized_sme', direction: 'missing_in_miit', status: 'needs_review', createdAt: '2025-02-01T00:00:00Z', recordedAt: '2025-02-01T00:00:00Z' })
-    const before = await f.db.select().from(schema.differenceReason)
-    const out = await previewPostgresRecordCorrespondenceImpact(f.db, { ...f.input([q.id]), page: 2, pageSize: 1 })
-    expect(out.total).toBe(2)
-    expect(out.counts.legacyRows).toBe(2)
-    expect(out.rows[0]?.disposition).toBe('legacy_pending_review')
-    expect(out.rows[0]?.possibleEventIds).toEqual([event.id])
-    expect(out.proposedCandidates).toMatchObject([{ eventId: event.id, relationId: relation.id, status: 'candidate', qualification: 'requires_explicit_review' }])
-    expect(out.counts.proposedCandidateEdges).toBe(1)
-    expect(out.modelIssues).toContain('official_source_completeness_not_persisted')
-    expect(await f.db.select().from(schema.differenceReason)).toEqual(before)
-    expect(old.status).toBe('confirmed_reason')
   })
 })

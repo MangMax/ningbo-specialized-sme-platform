@@ -11,7 +11,6 @@ import {
   platformExportBatch, platformExportRow,
 } from '../../../../db/postgresql/platform-tables'
 import { platformQueryTitleScope } from '../../../../db/postgresql/platform-query-scope-tables'
-import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import type { recordEvidence as RecordEvidenceTable } from '../../../../db/postgresql/ledger-tables'
 import type { platformCollectionPage as PlatformCollectionPageTable, platformExportBatch as PlatformExportBatchTable, platformExportRow as PlatformExportRowTable } from '../../../../db/postgresql/platform-tables'
@@ -23,7 +22,7 @@ import { postgresOfficialSourceDirectory } from './official-source-directory-pos
 import { readPostgresComparisonIdentities } from './record-comparison-catalog-postgres'
 import { readPostgresObservationComparisonFacts } from './record-correspondence-target-postgres'
 import { readPostgresCorrespondenceSelection } from './record-correspondence-postgres'
-import { compareRecordInputs, comparisonBefore, projectLegacyComparisonImpact, validatedComparisonInput, type ComparisonRead, type FormalEvent, type SelectedRecordComparison } from './record-comparison-model'
+import { compareRecordInputs, comparisonBefore, validatedComparisonInput, type ComparisonRead, type FormalEvent, type SelectedRecordComparison } from './record-comparison-model'
 import { postgresCollectionConditionValues, projectPostgresComparisonConditions, projectPostgresUnfinishedPositions } from '../../lib/platform/postgres-collection-scope'
 import { readPostgresPlatformBusinessMetadata } from './platform-business-record-postgres'
 
@@ -146,8 +145,8 @@ async function readFormalEvents(db: Reader, input: RecordComparisonInput, reques
       eq(r.source, 'jxj'), inArray(e.eventType, ['award', 'review']))).orderBy(e.id) satisfies PromiseLike<FormalEvent[]>
 }
 
-async function runComparison(tx: Reader, source: SelectedRecordComparison, signal?: AbortSignal, paginate = true) {
-  const steps = compareRecordInputs(source, paginate)
+async function runComparison(tx: Reader, source: SelectedRecordComparison, signal?: AbortSignal) {
+  const steps = compareRecordInputs(source)
   let step = steps.next()
   try {
     while (!step.done) {
@@ -182,36 +181,5 @@ export function readPostgresRecordComparison(db: NodePgDatabase, raw: RecordComp
   return db.transaction(async tx => {
     const source = await selectComparison(tx, input)
     return runComparison(tx, source, signal)
-  }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
-}
-
-export function previewPostgresRecordCorrespondenceImpact(db: NodePgDatabase, raw: RecordComparisonInput, signal?: AbortSignal) {
-  const input = validatedComparisonInput(raw)
-  return db.transaction(async tx => {
-    const source = await selectComparison(tx, input)
-    const comparison = await runComparison(tx, source, signal, false)
-    const d = differenceReason, q = platformCollection, a = platformBusinessObservation
-    const reasonIds = input.asOf ? (await tx.select({ id: d.id, recordedAt: d.recordedAt }).from(d))
-      .filter(row => comparisonBefore(row.recordedAt, input.asOf)).map(row => row.id) : null
-    const cutoff = reasonIds ? eq(d.id, sql`ANY(${numbers(reasonIds)})`) : sql`true`
-    const where = and(cutoff, input.enterpriseId === undefined ? undefined : eq(d.enterpriseId, input.enterpriseId),
-      input.titleCode === undefined ? undefined : eq(d.titleCode, input.titleCode))
-    const [counts] = await tx.select({
-      legacyRows: sql<number>`count(*) FILTER (WHERE ${cutoff})::float8`,
-      total: sql<number>`count(*) FILTER (WHERE ${where})::float8`,
-    }).from(d)
-    const pageReasons = await tx.select({
-      id: d.id, enterpriseId: d.enterpriseId, titleCode: d.titleCode, direction: d.direction, status: d.status,
-      reasonCode: d.reasonCode, measureCode: d.measureCode, evidenceQueryId: q.publicId, evidenceRelationId: a.publicId,
-      verificationStatus: d.verificationStatus, recordedAt: d.recordedAt,
-    }).from(d).leftJoin(q, eq(q.id, d.evidenceQueryId))
-      .leftJoin(a, eq(a.id, d.evidenceRelationId)).where(where).orderBy(d.id)
-      .limit(input.pageSize).offset(Math.min(Number.MAX_SAFE_INTEGER, (input.page - 1) * input.pageSize))
-    const owners = await tx.selectDistinct({ id: enterprise.id, uscc: enterprise.usccNorm })
-      .from(enterprise).innerJoin(record, eq(record.enterpriseId, enterprise.id)).where(and(
-        eq(record.source, 'jxj'), input.enterpriseId === undefined ? undefined : eq(enterprise.id, input.enterpriseId),
-        input.titleCode === undefined ? undefined : eq(record.titleCode, input.titleCode),
-      ))
-    return projectLegacyComparisonImpact(source, comparison, new Map(owners.map(row => [row.id, row.uscc])), { ...counts!, pageReasons })
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }

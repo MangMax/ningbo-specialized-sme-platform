@@ -1,8 +1,6 @@
-import { legacyPreviewInput102 } from './decision-legacy-preview-102'
 import { z } from 'zod'
 import { decisionCommand102, decisionHistory102, decisionScope102 } from './decision-lifecycle-102/contract'
 const contracts = {
-  preview_legacy_difference_decisions: legacyPreviewInput102,
   save_difference_decision: decisionCommand102,
   get_difference_decision: z.strictObject({ id: z.number().int().positive() }),
   get_current_difference_decision: decisionScope102,

@@ -440,27 +440,6 @@ it.runIf(!!pgBin)('restores import receipts and exact immutable projections with
     const mcpDetail = await nativeTool('get_enterprise_detail',{enterpriseId:firstOwner.id})
     expect(mcpDetail.isError).toBe(false)
     expect(comparable(mcpDetail.body)).toEqual(comparable(rosterNative))
-    const curatedPath = join(pgDir,'curated.json')
-    const legacyCuratedPath = join(dir,'curated.json')
-    const legacyKey = JSON.stringify([event.uscc,scope.titleCode,scope.direction])
-    const annotations = JSON.stringify({[legacyKey]:{note:'合成旧标注',by:'核对人员'},invalid:{note:'旧键待核'}})
-    writeFileSync(curatedPath,annotations)
-    writeFileSync(legacyCuratedPath,annotations)
-    try {
-      const previewPath = '/api/roster/decision-lifecycle/legacy-preview'
-      const legacy = await http(previewPath)
-      const native = await app.request(previewPath)
-      expect(legacy.status).toBe(200)
-      expect(native.status).toBe(200)
-      expect(await native.json()).toEqual(legacy.body)
-      expect(await nativeTool('preview_legacy_difference_decisions',{})).toEqual({body:legacy.body,isError:false})
-      expect(legacy.body).toMatchObject({total:2,rows:expect.arrayContaining([
-        expect.objectContaining({legacyKey,enterpriseId:firstOwner.id,conflicts:expect.arrayContaining(['formal_withdrawal_exists'])}),
-      ])})
-    } finally {
-      rmSync(curatedPath,{force:true})
-      rmSync(legacyCuratedPath,{force:true})
-    }
     for (const [path, name, args] of decisionReads) {
       const source = await http(path), native = await app.request(path)
       expect(source.status, JSON.stringify(source.body)).toBe(200)

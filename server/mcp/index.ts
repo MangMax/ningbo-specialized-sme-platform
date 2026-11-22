@@ -86,7 +86,7 @@ export default defineMcpHandler({
     '运行日志：list_runtime_logs/get_runtime_log/get_runtime_log_policy/set_runtime_log_policy/clear_runtime_logs 均需MCP token；只影响独立运行日志，不能代替业务审计。',
     '',
     '差异决定维护：save_difference_decision 显式替代/撤回，必填 expectedCurrentId、actor、basis、ruleVersion、effectiveAt 与幂等键。',
-    'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史；preview_legacy_difference_decisions 只读映射/冲突，旧标注不等于 confirmed_no_diff。',
+    'get_current_difference_decision / get_difference_decision / list_difference_decision_history 读当前及稳定 ID 历史。',
     '旧 comparison/curated PATCH 对未接管坐标保持兼容；已接管坐标返回409 decision_lifecycle_required；旧标注不等同正式决定，生产迁移需另授权。',
     '',
     '典型流程:',

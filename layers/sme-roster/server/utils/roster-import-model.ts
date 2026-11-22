@@ -10,7 +10,6 @@ import { usccFormatVerdict } from '../../lib/roster/uscc-research'
 import { PLATFORM_INTERFACE_VALUES, TITLE_ORDER } from '../../lib/labels'
 import type { RosterImportAnnouncement, RosterImportEvidence, RosterImportEvent, RosterImportExportSnapshot, RosterImportItemResult, RosterImportPayload, RosterImportRequest, RosterImportSummary } from '../../lib/roster-import-client'
 import type { OfficialCoordinate } from './official-evidence-claim-model'
-import { legacyPlatformProvenanceItemsSchema } from '../../lib/platform/legacy-provenance'
 
 // ---------------------------------------------------------------------------
 // 校验用的取值集
@@ -83,21 +82,6 @@ export type ValidateResult =
   | { ok: false; status: number; message: string }
 
 export function validateNativeImportRequest(raw: unknown): ValidateResult {
-  return validateImportRequest(raw, (payload, sourceKind) => {
-    const retired = retiredPlatformImportField(payload)
-    if (retired) return retired + ' 已停用，历史平台原始资料请通过离线归档处理'
-    if (sourceKind === 'platform_archive' && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) {
-      return 'platform_archive requires platformQueries'
-    }
-    return null
-  })
-}
-
-export function retiredPlatformImportField(payload: object) {
-  return ['platformRecordObservations', 'platformLegacyProvenance'].find(field => Object.hasOwn(payload, field))
-}
-
-export function validateImportRequest(raw: unknown, validatePayload = validatePlatformProjectionPayload): ValidateResult {
   if (!isObject(raw)) return { ok: false, status: 400, message: '请求体必须是 JSON 对象' }
 
   const idempotencyKey = optionalString(raw.idempotencyKey)
@@ -119,8 +103,11 @@ export function validateImportRequest(raw: unknown, validatePayload = validatePl
   if (!isObject(raw.payload)) {
     return { ok: false, status: 400, message: '缺少 payload（写入载荷）或它不是对象' }
   }
-  const projectionError = validatePayload(raw.payload, sourceKind)
-  if (projectionError) return { ok: false, status: 400, message: projectionError }
+  const retired = retiredPlatformImportField(raw.payload)
+  if (retired) return { ok: false, status: 400, message: retired + ' 已停用，历史平台原始资料请通过离线归档处理' }
+  if (sourceKind === 'platform_archive' && (!Array.isArray(raw.payload.platformQueries) || !raw.payload.platformQueries.length)) {
+    return { ok: false, status: 400, message: 'platform_archive requires platformQueries' }
+  }
 
   return {
     ok: true,
@@ -134,26 +121,8 @@ export function validateImportRequest(raw: unknown, validatePayload = validatePl
   }
 }
 
-/** Strict additive field validation: malformed/empty projection commands cannot silently succeed. */
-export function validatePlatformProjectionPayload(payload: Record<string, unknown>, sourceKind: string): string | null {
-  if (Object.hasOwn(payload, 'platformLegacyProvenance')) {
-    if (sourceKind !== 'platform_archive') return 'platformLegacyProvenance requires sourceKind=platform_archive'
-    const parsed = legacyPlatformProvenanceItemsSchema.safeParse(payload.platformLegacyProvenance)
-    if (!parsed.success) return `platformLegacyProvenance: ${parsed.error.issues.map(issue => issue.message).join('; ')}`
-  }
-  if (Object.hasOwn(payload, 'platformRecordObservations')) {
-    const rows = payload.platformRecordObservations
-    if (sourceKind !== 'platform_archive') return 'platformRecordObservations requires sourceKind=platform_archive'
-    if (!Array.isArray(rows) || rows.length < 1 || rows.length > 100) return 'platformRecordObservations must contain 1..100 observations'
-    const seen = new Set<number>()
-    for (const row of rows) {
-      if (!isObject(row) || Object.keys(row).length !== 1 || !Number.isSafeInteger(row.relationId) || (row.relationId as number) < 1) return 'platformRecordObservations items require only a positive safe integer relationId'
-      if (seen.has(row.relationId as number)) return 'platformRecordObservations relationId must be unique per request'
-      seen.add(row.relationId as number)
-    }
-  }
-  if (sourceKind === 'platform_archive' && !Object.hasOwn(payload, 'platformLegacyProvenance') && !Object.hasOwn(payload, 'platformRecordObservations') && (!Array.isArray(payload.platformQueries) || !payload.platformQueries.length)) return 'platform_archive requires platformQueries, platformRecordObservations or platformLegacyProvenance'
-  return null
+export function retiredPlatformImportField(payload: object) {
+  return ['platformRecordObservations', 'platformLegacyProvenance'].find(field => Object.hasOwn(payload, field))
 }
 
 /** 归一后的自然键（`queriedAt` 可空 = 要求 `(interface, queryKey, rdjb)` 唯一）。 */

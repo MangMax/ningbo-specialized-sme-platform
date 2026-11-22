@@ -1,3 +1,0 @@
-import { decisionRoute102 } from '../../../utils/decision-lifecycle-102-route'
-defineRouteMeta({ openAPI: { tags: ['差异决定'], summary: '旧标注映射与冲突只读预览', description: '旧“已看过/不算差异”不等同 confirmed_no_diff。按精确统代/name_norm 查候选；歧义不选企业；不迁移、不判因。旧 JSON 最多 2MiB/10000 键，pageSize<=50。', parameters: [{ name: 'legacyKey', in: 'query', schema: { type: 'string' } }, { name: 'page', in: 'query', schema: { type: 'integer', default: 1 } }, { name: 'pageSize', in: 'query', schema: { type: 'integer', default: 50, maximum: 50 } }], responses: { 200: { description: '映射、冲突、当前决定与分页；migrationApplied=false' }, 413: { description: '旧资料超过预览上限' }, 422: { description: '旧资料格式错误' } } } })
-export default decisionRoute102('legacy-preview')

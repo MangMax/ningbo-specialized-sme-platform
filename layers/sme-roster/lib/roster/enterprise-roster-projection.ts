@@ -5,7 +5,6 @@ import type { PlatformStoredRelation } from '../platform/read'
 import type { PublishedPresentation } from './correspondence-view'
 import type { QueryAssessment } from './query-assessment'
 import { sourcePositionForSequence } from '../platform/recognized-evidence'
-import { legacySourcePositionForSequence,type LegacyProvenanceDisplay } from '../platform/legacy-provenance'
 import { type PlatformNormalizationConflict } from '../platform/normalization'
 import type { readPostgresPlatformDetailFacts } from '../../server/utils/platform-business-detail-postgres'
 import type { publicVersion102 } from '../../server/utils/decision-lifecycle-102/contract'
@@ -638,7 +637,6 @@ interface LegacyRosterDifferenceRow {
 }
 
 export interface RosterPlatformQueryRow {
-  legacyProvenance?: LegacyProvenanceDisplay
   id: number
   interface: string
   queryKey: string
@@ -820,7 +818,6 @@ export function projectEnterpriseDifferenceUniverse(snap: Pick<Snapshot, 'differ
 }
 
 export type RosterDetailArchive = Pick<Snapshot, 'queries' | 'relations'> & {
-  platformLegacyById?: Map<number, LegacyProvenanceDisplay>
   platformPositionsById?: Map<number, { sourceRdjb: string | null | undefined; sourcePage: number | null | undefined }>
 }
 export type RosterDetailHistory = Pick<Snapshot, 'enterprises' | 'aliases' | 'records' | 'eventsByRecord' | 'recordsByEnterprise' | 'evidence' | 'exportRows' | 'exportBatches'>
@@ -847,7 +844,6 @@ export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][nu
   const relationCounts = new Map<number, number>()
   for (const relation of relations) relationCounts.set(relation.queryId, (relationCounts.get(relation.queryId) ?? 0) + 1)
   const queriesById = new Map(includedQueries.map(q => [q.id, q]))
-  const legacyById = archive.platformLegacyById ?? new Map()
   const queries = includedQueries
     .sort((a, b) => (a.queriedAt < b.queriedAt ? -1 : a.queriedAt > b.queriedAt ? 1 : 0) || a.id - b.id)
     .map((q): RosterPlatformQueryRow => ({
@@ -857,18 +853,17 @@ export function selectRosterDetailArchive(enterprise: Snapshot['enterprises'][nu
       rdjb: q.rdjb,
       queriedAt: q.queriedAt,
       collectionEvidence: q.collectionEvidence,
-      ...(legacyById.has(q.id) ? { legacyProvenance: legacyById.get(q.id)! } : {}),
       titleCode: q.titleCode,
       status: q.status,
       failureReason: q.failureReason,
       relationCount: relationCounts.get(q.id) ?? 0,
     }))
-  return { queries, relations, queriesById, legacyById, recognizedQueryIds, platformPositionsById: archive.platformPositionsById }
+  return { queries, relations, queriesById, recognizedQueryIds, platformPositionsById: archive.platformPositionsById }
 }
 
 export function projectRosterDetailRelations(archive: ReturnType<typeof selectRosterDetailArchive>,
   platformFacts: Awaited<ReturnType<typeof readPostgresPlatformDetailFacts>>) {
-  const { queriesById, legacyById, recognizedQueryIds, relations, platformPositionsById } = archive
+  const { queriesById, recognizedQueryIds, relations, platformPositionsById } = archive
   return relations.map((r): RosterPlatformRelationRow => {
     const fact = platformFacts.get(r.id)
     if (!fact?.archiveProcessFacts) throw new Error(`missing_archive_process_facts:${r.id}`)
@@ -876,9 +871,7 @@ export function projectRosterDetailRelations(archive: ReturnType<typeof selectRo
       normalizationConflicts: fact.normalizationConflicts,
       ...(recognizedQueryIds.has(r.queryId) ? { enterpriseId:r.enterpriseId } : {}),
       id:r.id, queryId:r.queryId, sequenceNo:r.sequenceNo, relationKey:r.relationKey, rawFields:r.rawFields,
-      ...(platformPositionsById?.get(r.id) ?? (legacyById.has(r.queryId)
-        ? legacySourcePositionForSequence(legacyById.get(r.queryId)!.collection,r.sequenceNo)
-        : sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence,r.sequenceNo))),
+      ...(platformPositionsById?.get(r.id) ?? sourcePositionForSequence(queriesById.get(r.queryId)?.collectionEvidence,r.sequenceNo)),
       usccRaw:r.usccRaw, nameRaw:r.nameRaw, ...fact.archiveProcessFacts,
       matchBasis:r.matchBasis, verificationStatus:r.verificationStatus,
     }

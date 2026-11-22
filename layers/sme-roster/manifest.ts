@@ -109,8 +109,6 @@ export default defineAppModule({
     'preflight_roster_batch',
     'preflight_roster_evidence_corrections',
     'preflight_title_cycle_disposition',
-    'preview_legacy_difference_decisions',
-    'preview_record_correspondence_impact',
     'query_platform',
     'query_records',
     'refresh_enterprise_differences',
