@@ -3,7 +3,7 @@
 修订后，用[原生值比较脚本](../scripts/compare-workbook-values.py)只读比较保存的两份XLSX。按稳定企业标识对齐，行重排不算数据变化；值、原生单元格类型和Python读取类型分别比较。工具不计算公式，不从预览科学计数判断原生代码是否丢失，也不裁定资格或解释成员变化。后者使用[成员及原因对账](report-reconciliation.md)。
 
 ```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/compare-workbook-values.py \
+uv run .agents/skills/roster-workbook-delivery/scripts/compare-workbook-values.py \
   --before /绝对路径/修订前.xlsx --after /绝对路径/修订后.xlsx \
   --contract /绝对路径/修改约定.json --output /绝对路径/新回执.json
 ```
@@ -37,9 +37,3 @@ uv run .agents/skills/roster-ingestion-pipeline/scripts/compare-workbook-values.
 退出0表示声明范围已覆盖且变化均在约定内；1表示越界差异；2表示未覆盖、身份异常或输入/输出错误。正常比较JSON分别给出differences、permittedChanges、identityIssues、uncovered、实际约定、runId和输入前后SHA-256。输入/读取错误回执至少给出runId、status=error和error，不代表已完成比较或哈希核对。日期时间用ISO文本、时长用days/seconds/microseconds对象保留精度，原生类型另列；序列化失败也输出JSON错误并退出2。缺映射是输入错误，不作通过。未映射工作表一律未覆盖，空表也须显式排除。rendering明确为未评估，不能把原生值通过当成实际可读性验收。
 
 输出不得覆盖任一输入（含硬/软链接），也不覆盖旧回执；每次用新路径，暂存后原子创建。只消费与本次stdout runId、状态、哈希一致的回执。业务工作簿和回执保存在Git外。
-
-```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/test_694_workbook_values.py
-```
-
-该独立CLI样例在临时目录生成小型XLSX，覆盖文本代码、数字类型替代、截断、值变化、重排、身份歧义、允许边界和冻结筛选变化；运行结束自动清理。真实文件另按本次修订约定执行，不把样例通过外推为真实交付通过。

@@ -3,7 +3,7 @@
 生成或修订业务工作簿后，用[只读检查脚本](../scripts/check-workbook-layout.py)核对**最终保存文件**。先从本次任务确定基准工作簿、必备工作表/字段及版式约定；本工具不替代理选择最新版模板，不从文件名或上次偏好猜要求。
 
 ```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/check-workbook-layout.py \
+uv run .agents/skills/roster-workbook-delivery/scripts/check-workbook-layout.py \
   --workbook /绝对路径/最终名单.xlsx \
   --contract /绝对路径/本次版式约定.json \
   --output /绝对路径/格式检查回执.json
@@ -50,9 +50,3 @@ JSON顶层必须有非空 `sheets` 对象，以实际工作表名为键。每张
 JSON报告包含逐项位置、实际值、期望值、失败数及文件哈希。遇到失败或未覆盖，应先定位原因；报告通过只证明输入约定对应的静态属性，不证明三年资格、来源判断、字体在用户机器的安装情况或长历史的实际可读性。矩形之外的内容不在本次证明范围，完整交付应声明覆盖全部业务行列的范围。
 
 内容或版式变化后仍需查看最终文件中最长、多行内容；本工具不会自动修复、删减历史、修改行高或变更业务数据。
-
-独立CLI反例可运行：
-
-```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/test_693_workbook_layout.py
-```

@@ -3,7 +3,7 @@
 规则、源数据或人工修订改变成员后，用[只读对账脚本](../scripts/reconcile-roster-reports.py)比较冻结输入，说明新增、移除、保留及同标识名称变化。主张来自输入，工具不生成业务原因，不把删行当作已解决。
 
 ```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/reconcile-roster-reports.py \
+uv run .agents/skills/roster-workbook-delivery/scripts/reconcile-roster-reports.py \
   --before /绝对路径/旧名单.xlsx --after /绝对路径/新名单.xlsx \
   --contract /绝对路径/对账约定.json --reasons /绝对路径/已有说明.json \
   --output /绝对路径/对账回执.json --report /绝对路径/对账报告.txt
@@ -65,9 +65,3 @@ uv run .agents/skills/roster-ingestion-pipeline/scripts/reconcile-roster-reports
 JSON包含身份口径、实际列映射、输入数据行数（不含表头及CSV/XLSX全空分隔行）、有效不同标识数、可比身份数、完整新增/移除/保留集合、歧义/无效行、原始说明、口径差异、runId及文件哈希。可读报告摘出成员/名称变化、异常行坐标及三种完成状态，不列全部不变成员。
 
 退出码0仅表示成员对账完成且变化都有输入说明；1表示有未解释变化；2表示身份异常、未声明允许的空输入或输入/读写错误。0不表示企业资格正确、说明已被核实或外部办理已完成；completionClaimsVerified始终为false。外部办理pending不阻止“解释已收齐”，也不会被转换成办结状态。
-
-实际输入的独立CLI反例：
-
-```sh
-uv run .agents/skills/roster-ingestion-pipeline/scripts/test_689_report_reconciliation.py
-```

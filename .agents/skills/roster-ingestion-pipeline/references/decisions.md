@@ -23,7 +23,7 @@
 - 企业×称号最早的正式认定是首次认定。复核不算新首次认定；复核失败后再次获批不重置首次认定。
 - 复核计划按用户确认的三年规则，从最近有效认定或复核通过起算；计划到期年与当前有效资格分别输出，小巨人不能仅因到复核年自动失效。复核失败和再次获批保留各自周期，不改首次认定历史。
 - 平台申请、维护字段不是正式公布事件，尤其不能把 `sqsj`、`whpc`、`whpcyear` 或维护标签直接转成正式认定年、批次。字段须结合其接口解释，参见[身份查证说明](./uscc-recovery.md)。
-- RL-07 不采用自动增量复查。用户指定年份时使用已有通用查询 API，不另建专用复核接口。
+- 按年份查询复核或认定记录时直接使用通用查询 API。
 - 企业不在导出中，仍可能是有效正式名单行；平台独有记录可能是当前、旧记录或迁移结果，原因须有证据。
 
 ## 当前有效资格
@@ -36,9 +36,9 @@
 - 专精特新中小企业与创新型自身资格优先采用明确日期区间（含首尾）；缺少明确期间时，按认定或本次复核业务年度加三，到期年按当前边界判定到期。复核的原认定年与本次业务年分别保存；公布日期独立于业务年，不凭文号猜填。
 - 小巨人原认定不因认定年加三自动到期。对应周期的正式复核失败或证据完整且生效的未申请/未推荐处置可排除该周期；后续独立重新认定可恢复，后续仅复核通过不冒充重新认定。完整日期期间和主体终止/迁出边界仍适用。周期处置使用 `title-cycle-dispositions` 的当前、历史、预检、提交协议，不用差异原因替代。
 - 有效小巨人计入两个低梯度，有效专精特新中小企业计入创新型，无须低梯度自身历史。优先用本称号自身有效期间，否则展示实际支撑称号与期间；保留各称号历史，不补造低梯度认定、首次认定年或批次。低梯度失败不反向取消高梯度；本称号自身失效与高梯度向下计入分别计算，不把人工表中“取消”标签作为自动覆盖所有依据的规则。
-- 完整且已确认、生效的注销/吊销或迁出事实仍排除当前资格。迁入只说明地域变化，不生成认定。差异解释与当前资格分开，正常接口资格不靠旧 `currentQualification` 迁入断言授予。
+- 完整且已确认、生效的注销/吊销或迁出事实仍排除当前资格。迁入只说明地域变化，不生成认定。差异解释与当前资格分开，正常接口资格不经人工差异审批授予。
 
-查询使用 `GET /api/roster/current-enterprises` / `list_current_qualified_enterprises`，详情及当前名录导出共享资格裁定。按实际响应中的 `ruleVersion`、`assessmentVersion`、`asOf` 与判断时点核验；当前查询采用执行时点的 Asia/Shanghai 日历日，不能把响应 `asOf` 当作支持任意历史回放的输入参数。旧版本仅作为历史兼容，不套用到当前名单。业务工作簿呈现见[交付流程](business-workbook.md)。
+查询使用 `GET /api/roster/current-enterprises` / `list_current_qualified_enterprises`，详情及当前名录导出共享资格裁定。按实际响应中的 `ruleVersion`、`assessmentVersion`、`asOf` 与判断时点核验；当前查询采用执行时点的 Asia/Shanghai 日历日，不能把响应 `asOf` 当作支持任意历史回放的输入参数。业务工作簿呈现见 [roster-workbook-delivery](../../roster-workbook-delivery/references/business-workbook.md)。
 
 小巨人周期处置通过 `GET /api/roster/title-cycle-dispositions/current`、`GET /api/roster/title-cycle-dispositions/history`、`POST /api/roster/title-cycle-dispositions/preflight` 和 `POST /api/roster/title-cycle-dispositions/commit` 维护，对应 MCP 为 `get_current_title_cycle_dispositions`、`list_title_cycle_disposition_history`、`preflight_title_cycle_disposition`、`commit_title_cycle_disposition`。以当前 schema 的周期、来源、生效及版本绑定为准；保存 pending 不等于已确认生效。
 
@@ -55,5 +55,5 @@
 
 ## 文件与凭据
 
-- 文件范围以 `lib/sme-roster/file-store-scope.ts` 为唯一可执行规则。证据路径必须指向文件库内文件。
+- 文件范围以 `layers/sme-roster/lib/sme-roster/file-store-scope.ts` 为唯一可执行规则。证据路径必须指向文件库内文件。
 - 凭据保存在运行时密钥存储。业务数据库、源文档、上传文件保存在 Git 外。

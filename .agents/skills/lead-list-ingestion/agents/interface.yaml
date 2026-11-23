@@ -1,0 +1,19 @@
+interface:
+  display_name: "名单分流与线索名单入库"
+  short_description: "执行名单业务分流、线索名单版本登记、向企业基础库手动单向补充与 CSV 导出。"
+  default_prompt: "使用 $lead-list-ingestion 分流名单文件、登记线索名单版本、补充企业基础库或导出线索 CSV。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+  activation:
+    mode: "manual"
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "凭据、业务数据库、源文件与导出件不得进入 Git。"
+  degradation:
+    openai: "遵循 SKILL.md；接口不支持的操作如实报告。"

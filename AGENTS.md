@@ -1,6 +1,8 @@
 # Agent handoff
 
-- For roster-file cleanup or import, follow [the repository ingestion skill](.agents/skills/roster-ingestion-pipeline/SKILL.md), including its per-file handoff and page-level evidence rules.
+- For roster-file cleanup, platform collection, or difference investigation, follow [roster-ingestion-pipeline](.agents/skills/roster-ingestion-pipeline/SKILL.md), including its per-file handoff and page-level evidence rules.
+- For list routing, lead-list registration, and manual supplement into the enterprise shared kernel, follow [lead-list-ingestion](.agents/skills/lead-list-ingestion/SKILL.md).
+- For business workbook delivery, member reconciliation, layout checks, and value-boundary verification, follow [roster-workbook-delivery](.agents/skills/roster-workbook-delivery/SKILL.md).
 - Before writing to the app, inspect the running app's `/_openapi.json` or MCP `tools/list` contract.
 - Treat published announcement attachments as designation evidence and platform exports as current-state comparison snapshots. Keep all official roster rows, including rows unmatched to exports.
 - Keep business databases, source documents, uploaded files, and credentials outside Git commits.

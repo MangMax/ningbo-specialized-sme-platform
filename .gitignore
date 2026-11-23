@@ -30,6 +30,7 @@ files/**
 !.env.example
 
 # Local implementation artifacts; tracked docs are ADRs and agent instructions.
+.ryugi/
 .scratch/
 docs/*
 !docs/adr/

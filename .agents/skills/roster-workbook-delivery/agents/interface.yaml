@@ -1,0 +1,19 @@
+interface:
+  display_name: "业务工作簿交付与验收"
+  short_description: "生成并验收有效名单业务工作簿，执行成员对账、版式检查和原生值边界校验。"
+  default_prompt: "使用 $roster-workbook-delivery 生成或修订业务工作簿，并运行成员对账、版式和原生值验收。"
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "openai"
+  activation:
+    mode: "manual"
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "工作簿、对账约定与回执不得进入 Git。"
+  degradation:
+    openai: "遵循 SKILL.md；超出当前约定的异常如实报告。"

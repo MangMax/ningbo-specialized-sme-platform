@@ -14,7 +14,7 @@ from zipfile import ZipFile
 
 from openpyxl import Workbook
 
-SCRIPT = Path(__file__).with_name("reconcile-roster-reports.py")
+SCRIPT = Path(__file__).resolve().parents[2] / ".agents/skills/roster-workbook-delivery/scripts/reconcile-roster-reports.py"
 
 
 class ReconciliationCli(unittest.TestCase):

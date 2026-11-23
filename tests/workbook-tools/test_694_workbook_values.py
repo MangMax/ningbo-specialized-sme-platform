@@ -16,7 +16,7 @@ import unittest
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
-SCRIPT = Path(__file__).with_name("compare-workbook-values.py")
+SCRIPT = Path(__file__).resolve().parents[2] / ".agents/skills/roster-workbook-delivery/scripts/compare-workbook-values.py"
 
 
 class ValuesCli(unittest.TestCase):

@@ -17,7 +17,7 @@ from zipfile import ZipFile
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 
-SCRIPT = Path(__file__).with_name("check-workbook-layout.py")
+SCRIPT = Path(__file__).resolve().parents[2] / ".agents/skills/roster-workbook-delivery/scripts/check-workbook-layout.py"
 
 
 class WorkbookLayoutCli(unittest.TestCase):
