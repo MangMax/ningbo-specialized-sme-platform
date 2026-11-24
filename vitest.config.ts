@@ -4,7 +4,20 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    {
+      // Nuxt 在编译期把 `import.meta.dev` 替换成布尔值;裸 vitest 没有这层替换。
+      // 只有开发态专用的 `/design-tokens` 预览页靠它决定是否 404,所以只在这个
+      // 文件里按开发态求值 —— 服务端的生产守卫(`openapi-prod-guard` 等)保持
+      // 读不到该宏时的原样,不被测试环境顺带「打开」。
+      name: 'nuxt-dev-flag',
+      transform(code, id) {
+        if (!id.replace(/\\/g, '/').endsWith('/layers/core/app/pages/design-tokens.vue')) return
+        return { code: code.replaceAll('import.meta.dev', 'true'), map: null }
+      },
+    },
+  ],
   resolve: {
     alias: {
       // Exercise the same router version that Nuxt owns (not a second test-only router).

@@ -37,11 +37,12 @@ import RosterEnterpriseDrawer from '#sme-roster/app/components/EnterpriseDrawer.
 import RosterEnterpriseListTable, {
   type EnterpriseListRow,
 } from '#sme-roster/app/components/EnterpriseListTable.vue'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-import FilterChip from '#core/app/components/FilterChip.vue'
 import MultiSelectFilter from '#core/app/components/MultiSelectFilter.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card, CardContent } from '#core/app/components/ui/card'
 import { Input } from '#core/app/components/ui/input'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
@@ -320,38 +321,38 @@ const activeFilters = computed<ActiveFilter[]>(() => {
   return [
     ...s.title.map((v) => ({
       key: `title:${v}`,
-      label: `称号 · ${TITLES[v] ?? v}`,
+      label: `称号：${TITLES[v] ?? v}`,
       clear: () => without('title', v),
     })),
     ...(s.district
-      ? [{ key: 'district', label: `属地 · ${s.district}`, clear: () => patch('district', '') }]
+      ? [{ key: 'district', label: `属地：${s.district}`, clear: () => patch('district', '') }]
       : []),
     ...s.source.map((v) => ({
       key: `source:${v}`,
-      label: `来源 · ${SOURCES[v] ?? v}`,
+      label: `来源：${SOURCES[v] ?? v}`,
       clear: () => without('source', v),
     })),
     ...s.eventType.map((v) => ({
       key: `event:${v}`,
-      label: `事件 · ${EVENTS[v] ?? v}`,
+      label: `事件：${EVENTS[v] ?? v}`,
       clear: () => without('eventType', v),
     })),
-    ...s.year.map((v) => ({ key: `year:${v}`, label: `年份 · ${v}`, clear: () => without('year', v) })),
+    ...s.year.map((v) => ({ key: `year:${v}`, label: `年份：${v}`, clear: () => without('year', v) })),
     ...s.firstYear.map((v) => ({
       key: `firstYear:${v}`,
-      label: `首次认定年 · ${v}`,
+      label: `首次认定年：${v}`,
       clear: () => without('firstYear', v),
     })),
     ...s.firstStatus.map((v) => ({
       key: `firstStatus:${v}`,
-      label: `首次认定 · ${FIRST_RECOGNITION_STATUSES[v] ?? v}`,
+      label: `首次认定：${FIRST_RECOGNITION_STATUSES[v] ?? v}`,
       clear: () => without('firstStatus', v),
     })),
     ...(s.rosterState
       ? [
           {
             key: 'rosterState',
-            label: `总表状态 · ${s.rosterState === 'current' ? '当前总表' : '仅平台引入(已移除)'}`,
+            label: `总表状态：${s.rosterState === 'current' ? '当前总表' : '仅平台引入(已移除)'}`,
             clear: () => patch('rosterState', ''),
           },
         ]
@@ -360,7 +361,7 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       ? [
           {
             key: 'q',
-            label: `搜索 · ${s.q}`,
+            label: `搜索：${s.q}`,
             clear: () => {
               search.value = ''
               patch('q', '')
@@ -370,6 +371,13 @@ const activeFilters = computed<ActiveFilter[]>(() => {
       : []),
   ]
 })
+
+/** `ActiveFilterBar` 只认「键：值」文案，撤掉某一项时回到这里按 key 找动作。 */
+const filterItems = computed(() => activeFilters.value.map(({ key, label }) => ({ key, label })))
+
+function removeFilter(key: string) {
+  activeFilters.value.find((filter) => filter.key === key)?.clear()
+}
 
 const filtered = computed(() => activeFilters.value.length > 0)
 
@@ -397,7 +405,7 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
 </script>
 
 <template>
-  <div class="workspace-list ledger-page flex min-w-0 flex-col gap-2 sm:gap-3">
+  <WorkspacePage class="ledger-page" :title="ENTERPRISE_LIST_TITLE">
     <DefineAdvancedFilters>
       <MultiSelectFilter
         v-model="state.year"
@@ -436,10 +444,9 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
         </SelectContent>
       </Select>
     </DefineAdvancedFilters>
-    <PageHeader :title="ENTERPRISE_LIST_TITLE" />
 
-    <Card class="paginated-table-card min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-      <div role="region" aria-label="企业列表筛选" tabindex="0" class="table-toolbar workspace-list-filter flex flex-col gap-3">
+    <DataTableCard filter-scroll toolbar-label="企业列表筛选">
+      <template #toolbar>
         <div class="flex min-w-0 flex-wrap items-start gap-2">
           <div data-testid="ledger-filters" class="flex min-w-0 flex-wrap items-center gap-2">
             <div class="relative w-full sm:w-72">
@@ -449,7 +456,8 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
               />
               <Input
                 v-model="search"
-                class="bg-card h-8 pl-8 shadow-none"
+                size="sm"
+                class="bg-card pl-8 shadow-none"
                 placeholder="企业名称、曾用名或信用代码"
                 aria-label="按企业名称、已确认曾用名或统一社会信用代码搜索"
               />
@@ -487,43 +495,26 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
           <div class="flex flex-wrap items-center gap-2"><ReuseAdvancedFilters /></div>
         </DisclosurePanel>
 
-        <TransitionGroup
-          v-if="activeFilters.length"
-          tag="div"
-          class="flex flex-wrap items-center gap-1.5"
-          enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-          enter-from-class="scale-90 opacity-0"
-          leave-active-class="transition duration-100 ease-snap motion-reduce:transition-none"
-          leave-to-class="scale-90 opacity-0"
-          move-class="transition duration-150 ease-snap motion-reduce:transition-none"
-        >
-          <FilterChip v-for="f in activeFilters" :key="f.key" :label="f.label" @remove="f.clear()" />
-          <Button
-            variant="ghost"
-            size="sm"
-            class="text-muted-foreground h-6 px-1.5 text-xs"
-            @click="clearFilters"
-          >
-            清除全部
-          </Button>
-        </TransitionGroup>
-      </div>
-      <CardContent class="paginated-table-body relative flex min-h-0 flex-col p-0">
-        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
-        <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="!!displayedResult" :pending="isLoading" :description="failureDescription" @retry="retry" />
-        <RosterEnterpriseListTable
-          v-if="!error || displayedResult"
-          :rows="rows"
-          :loading="isLoading"
-          :has-error="!!error && !displayedResult"
-          :selected-id="selected"
-          :filtered="filtered"
-          @select="selectRow"
-          @clear-filters="clearFilters"
-        />
-      </CardContent>
-      <TablePagination in-card v-if="displayedResult" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家" @update:page="setPage" @update:page-size="setPageSize" />
-    </Card>
+        <ActiveFilterBar :items="filterItems" @remove="removeFilter" @clear="clearFilters" />
+      </template>
+
+      <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在搜索…" />
+      <TableFailureState v-if="error" title="企业列表暂时无法加载" :compact="!!displayedResult" :pending="isLoading" :description="failureDescription" @retry="retry" />
+      <RosterEnterpriseListTable
+        v-if="!error || displayedResult"
+        :rows="rows"
+        :loading="isLoading"
+        :has-error="!!error && !displayedResult"
+        :selected-id="selected"
+        :filtered="filtered"
+        @select="selectRow"
+        @clear-filters="clearFilters"
+      />
+
+      <template #footer>
+        <TablePagination in-card v-if="displayedResult" :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled" unit="家" @update:page="setPage" @update:page-size="setPageSize" />
+      </template>
+    </DataTableCard>
 
     <!--
       抽屉(三处基本动效之三:滑出)。**非模态**:开着它照样能看表、能接着点别的行
@@ -535,17 +526,11 @@ useHead({ title: ENTERPRISE_LIST_TITLE })
       :return-focus-target="drawerReturnFocusTarget"
       @close="closeDrawer"
     />
-  </div>
+  </WorkspacePage>
 </template>
 
 <style scoped>
 .ledger-page :deep([data-slot='button']) {
   box-shadow: none;
 }
-
-.ledger-page :deep(.text-xs) {
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 </style>

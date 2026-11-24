@@ -1,5 +1,17 @@
 import { type ClassValue, clsx } from 'clsx'
-import { twMerge } from 'tailwind-merge'
+import { extendTailwindMerge } from 'tailwind-merge'
+
+/**
+ * 告诉 tailwind-merge：`text-table` 是自定义字号类（见 tailwind.css `--text-table`），
+ * 避免与 `text-primary-foreground` / `text-muted-foreground` 等文字颜色类冲突时被误删。
+ */
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      'font-size': [{ text: ['table'] }],
+    },
+  },
+})
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))

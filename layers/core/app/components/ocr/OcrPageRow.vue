@@ -22,14 +22,7 @@ import {
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -705,29 +698,25 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <Dialog v-model:open="deleteOpen">
-      <DialogContent
-        class="sm:max-w-md"
-        @close-auto-focus="preventDeleteAutoFocus"
-      >
-        <DialogHeader>
-          <DialogTitle>删除这一页的识别结果？</DialogTitle>
-          <DialogDescription>
-            {{ filePath.split('/').pop() }} · {{ pageLabel(row.page) }}。只删这一页的文本，不动页图与台账；删除后重做要重新识别。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="ghost" :disabled="pending" @click="cancelDelete">
-            取消
-          </Button>
-          <Button variant="destructive" :disabled="pending" @click="confirmDelete">
-            <Loader2 v-if="pending" class="animate-spin motion-reduce:animate-none" />
-            <Trash2 v-else />
-            确认删除
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ModalDialog
+      v-model:open="deleteOpen"
+      title="删除这一页的识别结果？"
+      :description="`${filePath.split('/').pop()} · ${pageLabel(row.page)}。只删这一页的文本，不动页图与台账；删除后重做要重新识别。`"
+      size="sm"
+      :prevent-close="pending"
+      @close-auto-focus="preventDeleteAutoFocus"
+    >
+      <template #footer>
+        <Button variant="outline" :disabled="pending" @click="cancelDelete">
+          取消
+        </Button>
+        <Button variant="destructive" :disabled="pending" @click="confirmDelete">
+          <Loader2 v-if="pending" class="animate-spin motion-reduce:animate-none" />
+          <Trash2 v-else />
+          确认删除
+        </Button>
+      </template>
+    </ModalDialog>
   </li>
 </template>
 

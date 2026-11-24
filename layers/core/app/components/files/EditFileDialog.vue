@@ -3,7 +3,7 @@ import { computed, ref, watch, type Component } from 'vue'
 import FileDisplayNameEditor from './FileDisplayNameEditor.vue'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Button } from '#core/app/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import type { FileRow } from '#core/server/utils/file-store-contract'
 import type { FileDetailDraft } from '#core/lib/core/file-categories'
 
@@ -29,38 +29,34 @@ function save() {
 </script>
 
 <template>
-  <Dialog v-model:open="open">
-    <DialogContent class="max-h-[90svh] grid-rows-[auto_minmax(0,1fr)_auto] sm:max-w-lg">
-      <DialogHeader>
-        <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription class="break-all">
-          {{ file?.filename }}
-        </DialogDescription>
-      </DialogHeader>
+  <ModalDialog
+    v-model:open="open"
+    :title="title"
+    :description="file?.filename"
+    size="md"
+    :prevent-close="pending"
+    body-class="flex flex-col gap-4"
+  >
+    <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
+    <component
+      :is="panel.component"
+      v-for="panel in panels"
+      :key="panel.id"
+      :file="file"
+      :open="open"
+      :pending="pending"
+      @draft="drafts[panel.id] = $event"
+    />
+    <!-- `!` 压过 alertVariants 给说明文字加的那层 /90(深色下只剩 4.25:1)。 -->
+    <Alert v-if="failure" variant="destructive">
+      <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
+    </Alert>
 
-      <div class="flex min-h-0 flex-col gap-4 overflow-y-auto">
-        <FileDisplayNameEditor :open="open" :file="file" :pending="namePending" :failure="nameFailure" @save="emit('rename', $event)" />
-        <component
-          :is="panel.component"
-          v-for="panel in panels"
-          :key="panel.id"
-          :file="file"
-          :open="open"
-          :pending="pending"
-          @draft="drafts[panel.id] = $event"
-        />
-        <!-- `!` 压过 alertVariants 给说明文字加的那层 /90(深色下只剩 4.25:1)。 -->
-        <Alert v-if="failure" variant="destructive">
-          <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
-        </Alert>
-      </div>
-
-      <DialogFooter>
-        <Button variant="outline" :disabled="pending" @click="open = false">取消</Button>
-        <Button v-if="panels.length" :disabled="!canSave" @click="save">
-          {{ pending ? '保存中…' : '保存' }}
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
+    <template #footer>
+      <Button variant="outline" :disabled="pending" @click="open = false">取消</Button>
+      <Button v-if="panels.length" :disabled="!canSave" @click="save">
+        {{ pending ? '保存中…' : '保存' }}
+      </Button>
+    </template>
+  </ModalDialog>
 </template>

@@ -6,9 +6,9 @@ import type { EnterpriseLibraryDetails, EnterpriseLibraryRow, EnterpriseLibraryS
 import type { DictionaryEntry } from '#core/lib/dictionaries'
 import { fileUrl } from '#core/lib/preview'
 import EnterpriseDetailsForm from './EnterpriseDetailsForm.vue'
+import DetailDrawer from '#core/app/components/DetailDrawer.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '#core/app/components/ui/sheet'
 
 const props = defineProps<{
   enterprise: EnterpriseLibraryRow | null
@@ -57,17 +57,21 @@ function saveDetails(saved: EnterpriseLibraryDetails) {
 }
 
 const sourceGroups = computed(() => {
-  const groups = new Map<string, (EnterpriseLibrarySource & { detail: string })[]>()
+  const groups = new Map<string, (EnterpriseLibrarySource & { title: string; meta: string })[]>()
   for (const source of sources.value ?? []) {
     const label = source.listType
     const group = groups.get(label) ?? []
-    const detail = [...new Set([source.series, source.channel, source.acquiredOn])]
-      .filter(value => value && value !== label).join(' · ')
-    if (detail || source.filePath) group.push({ ...source, detail })
+    const parts = [...new Set([source.series, source.channel, source.acquiredOn])]
+      .filter((value): value is string => Boolean(value && value !== label))
+    const title = parts[0] ?? ''
+    const meta = parts.slice(1).join(' · ')
+    if (title || source.filePath) group.push({ ...source, title, meta })
     groups.set(label, group)
   }
   return [...groups].map(([label, items]) => ({ label, items }))
 })
+
+const totalSourceCount = computed(() => sourceGroups.value.reduce((sum, group) => sum + group.items.length, 0))
 
 const displayed = computed(() => details.value ?? props.enterprise)
 const district = computed(() => props.regions?.find(item => item.code === displayed.value?.districtCode)?.name
@@ -77,82 +81,142 @@ const industry = computed(() => industries.value?.find(item => item.code === dis
 </script>
 
 <template>
-  <Sheet :open="Boolean(enterprise)" @update:open="!$event && !saving && emit('close')">
-    <SheetContent
-      floating-size="detail"
-      class="gap-0"
-      @close-auto-focus="event => { event.preventDefault(); emit('restoreFocus') }"
+  <DetailDrawer
+    :open="Boolean(enterprise)"
+    :title="enterprise?.name ?? ''"
+    description="企业资料与入库来源"
+    hide-description
+    floating-size="detail"
+    :prevent-close="saving"
+    @update:open="!$event && emit('close')"
+    @close-auto-focus="event => { event.preventDefault(); emit('restoreFocus') }"
+  >
+    <div
+      v-if="editing && details && regions && industries"
+      class="-mx-5 -my-4 flex min-h-[calc(100%+2rem)] flex-col sm:-mx-6"
     >
-      <SheetHeader class="border-b px-5 py-5 pr-12 sm:px-6">
-        <SheetTitle class="wrap-anywhere text-lg">{{ enterprise?.name }}</SheetTitle>
-        <SheetDescription class="sr-only">企业资料与入库来源</SheetDescription>
-      </SheetHeader>
       <EnterpriseDetailsForm
-        v-if="editing && details && regions && industries"
         :key="details.id" v-model:saving="saving" :enterprise="details" :regions="regions" :industries="industries"
         @cancel="stopEditing" @saved="saveDetails"
       />
-      <div v-else-if="enterprise" class="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">
-        <section aria-labelledby="enterprise-details-heading" :aria-busy="detailsLoading">
-          <div class="mb-4 flex items-center justify-between gap-3">
-            <h2 id="enterprise-details-heading" class="text-base font-semibold">企业资料</h2>
-            <Button
-              id="edit-enterprise-details" type="button" size="sm" variant="outline"
-              :disabled="!details || !regions || !industries" @click="editDetails"
-            >编辑资料</Button>
-          </div>
-          <TableFailureState v-if="detailsError" class="mb-3" title="企业资料暂时无法加载" compact :pending="detailsLoading" @retry="retryDetails()" />
-          <TableFailureState v-if="industriesError" class="mb-3" title="行业字典暂时无法加载" compact @retry="retryIndustries()" />
-          <dl class="grid grid-cols-2 gap-x-4 gap-y-4 text-sm">
-            <div class="col-span-2">
-              <dt class="text-muted-foreground">统一社会信用代码</dt>
-              <dd class="mt-1 font-medium tabular-nums">{{ enterprise.uscc ?? '未登记' }}</dd>
-            </div>
-            <div>
-              <dt class="text-muted-foreground">区县</dt>
-              <dd class="mt-1">{{ district ?? '未登记' }}</dd>
-            </div>
-            <div>
-              <dt class="text-muted-foreground">乡镇（街道）</dt>
-              <dd class="mt-1">{{ township ?? '未登记' }}</dd>
-            </div>
-            <div class="col-span-2">
-              <dt class="text-muted-foreground">行业</dt>
-              <dd class="mt-1">{{ industry ?? '未登记' }}</dd>
-            </div>
-            <div v-if="details" class="col-span-2">
-              <dt class="text-muted-foreground">注册地址</dt>
-              <dd class="mt-1 wrap-anywhere whitespace-pre-line">{{ details.registeredAddress ?? '未登记' }}</dd>
-            </div>
-            <div v-if="details" class="col-span-2">
-              <dt class="text-muted-foreground">经营地址</dt>
-              <dd class="mt-1 wrap-anywhere whitespace-pre-line">{{ details.operatingAddress ?? '未登记' }}</dd>
-            </div>
-          </dl>
-        </section>
+    </div>
+    <div v-else-if="enterprise" class="space-y-6">
+      <section aria-labelledby="enterprise-details-heading" :aria-busy="detailsLoading">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h2 id="enterprise-details-heading" class="text-sm font-semibold">企业资料</h2>
+          <Button
+            id="edit-enterprise-details" type="button" size="sm" variant="outline"
+            :disabled="!details || !regions || !industries" @click="editDetails"
+          >编辑资料</Button>
+        </div>
+        <TableFailureState v-if="detailsError" class="mb-3" title="企业资料暂时无法加载" compact :pending="detailsLoading" @retry="retryDetails()" />
+        <TableFailureState v-if="industriesError" class="mb-3" title="行业字典暂时无法加载" compact @retry="retryIndustries()" />
 
-        <section class="mt-6 border-t pt-5" aria-labelledby="enterprise-sources-heading" :aria-busy="isLoading">
-          <h2 id="enterprise-sources-heading" class="text-base font-semibold">入库来源</h2>
-          <TableFailureState v-if="error" class="mt-3" title="来源暂时无法加载" :compact="Boolean(sources)" :pending="isLoading" @retry="refetch()" />
-          <p v-if="isLoading && !sources" class="text-muted-foreground mt-3 text-sm" role="status">正在加载来源…</p>
-          <p v-else-if="!error && sources?.length === 0" class="text-muted-foreground mt-3 text-sm">暂无来源记录</p>
-          <div v-if="sourceGroups.length" class="mt-1 divide-y">
-            <section v-for="{ label, items } in sourceGroups" :key="label" class="py-3">
-              <h3 class="text-sm font-medium">{{ label }}</h3>
-              <ul v-if="items.length" class="mt-2 space-y-2">
-                <li v-for="source in items" :key="source.id" class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <p v-if="source.detail" class="min-w-0 flex-1 wrap-anywhere text-sm text-muted-foreground">{{ source.detail }}</p>
-                  <Button v-if="source.filePath" as-child variant="outline" size="sm">
-                    <a :href="fileUrl(source.filePath)" target="_blank" rel="noopener">
-                      查看原文件 <ExternalLink class="size-3.5" aria-hidden="true" />
-                    </a>
-                  </Button>
-                </li>
-              </ul>
-            </section>
+        <dl class="border-border bg-card divide-border-secondary divide-y overflow-hidden rounded-lg border text-sm">
+          <!-- 核心标识：统一社会信用代码置于独立浅底抬头，一眼可读 -->
+          <div class="bg-surface-sunken px-3.5 py-2.5">
+            <dt class="text-muted-foreground text-xs">统一社会信用代码</dt>
+            <dd
+              class="mt-0.5 font-mono text-sm font-semibold tracking-tight tabular-nums"
+              :class="enterprise.uscc ? 'text-foreground' : 'text-text-tertiary font-normal'"
+            >
+              {{ enterprise.uscc ?? '未登记' }}
+            </dd>
           </div>
-        </section>
-      </div>
-    </SheetContent>
-  </Sheet>
+
+          <div class="grid grid-cols-2 gap-x-4 gap-y-3 px-3.5 py-3">
+              <div class="min-w-0">
+                <dt class="text-muted-foreground text-xs">区县</dt>
+                <dd class="mt-0.5" :class="district ? 'text-foreground font-medium' : 'text-text-tertiary'">
+                  {{ district ?? '未登记' }}
+                </dd>
+              </div>
+              <div class="min-w-0">
+                <dt class="text-muted-foreground text-xs">乡镇（街道）</dt>
+                <dd class="mt-0.5" :class="township ? 'text-foreground font-medium' : 'text-text-tertiary'">
+                  {{ township ?? '未登记' }}
+                </dd>
+              </div>
+              <div class="col-span-2 min-w-0">
+                <dt class="text-muted-foreground text-xs">行业</dt>
+                <dd class="mt-0.5" :class="industry ? 'text-foreground font-medium' : 'text-text-tertiary'">
+                  {{ industry ?? '未登记' }}
+                </dd>
+              </div>
+            </div>
+
+            <div v-if="details" class="space-y-3 px-3.5 py-3">
+              <div class="min-w-0">
+                <dt class="text-muted-foreground text-xs">注册地址</dt>
+                <dd
+                  class="mt-0.5 wrap-anywhere whitespace-pre-line leading-5"
+                  :class="details.registeredAddress ? 'text-foreground' : 'text-text-tertiary'"
+                >
+                  {{ details.registeredAddress ?? '未登记' }}
+                </dd>
+              </div>
+              <div class="min-w-0">
+                <dt class="text-muted-foreground text-xs">经营地址</dt>
+                <dd
+                  class="mt-0.5 wrap-anywhere whitespace-pre-line leading-5"
+                  :class="details.operatingAddress ? 'text-foreground' : 'text-text-tertiary'"
+                >
+                  {{ details.operatingAddress ?? '未登记' }}
+                </dd>
+              </div>
+            </div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="enterprise-sources-heading" :aria-busy="isLoading">
+        <div class="mb-3 flex items-center gap-2">
+          <h2 id="enterprise-sources-heading" class="text-sm font-semibold">入库来源</h2>
+          <span
+            v-if="totalSourceCount > 0"
+            class="bg-muted text-muted-foreground rounded-sm px-1.5 py-0.5 text-xs font-medium tabular-nums"
+          >
+            {{ totalSourceCount }}
+          </span>
+        </div>
+        <TableFailureState v-if="error" class="mt-3" title="来源暂时无法加载" :compact="Boolean(sources)" :pending="isLoading" @retry="refetch()" />
+        <p v-if="isLoading && !sources" class="text-muted-foreground mt-3 text-sm" role="status">正在加载来源…</p>
+        <p v-else-if="!error && sources?.length === 0" class="text-muted-foreground mt-3 text-sm">暂无来源记录</p>
+        <div v-if="sourceGroups.length" class="space-y-4">
+          <section v-for="{ label, items } in sourceGroups" :key="label">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <h3 class="text-muted-foreground text-xs font-medium">{{ label }}</h3>
+              <span class="text-text-tertiary text-xs tabular-nums">{{ items.length }} 项</span>
+            </div>
+            <ul v-if="items.length" class="border-border bg-card divide-border-secondary divide-y overflow-hidden rounded-lg border">
+              <li
+                v-for="source in items"
+                :key="source.id"
+                class="hover:bg-muted/40 flex items-center justify-between gap-3 px-3.5 py-2.5 transition-colors"
+              >
+                <div class="min-w-0 flex-1">
+                  <p v-if="source.title" class="text-foreground text-table leading-5 font-medium wrap-anywhere">
+                    {{ source.title }}
+                  </p>
+                  <p v-if="source.meta" class="text-muted-foreground mt-0.5 text-xs">
+                    {{ source.meta }}
+                  </p>
+                </div>
+                <Button
+                  v-if="source.filePath"
+                  as-child
+                  variant="ghost"
+                  size="sm"
+                  class="text-primary hover:text-primary h-7 shrink-0 px-2 text-xs"
+                >
+                  <a :href="fileUrl(source.filePath)" target="_blank" rel="noopener">
+                    查看原文件 <ExternalLink class="size-3.5" aria-hidden="true" />
+                  </a>
+                </Button>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </section>
+    </div>
+  </DetailDrawer>
 </template>

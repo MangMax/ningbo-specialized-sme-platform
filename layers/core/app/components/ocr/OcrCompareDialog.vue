@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, Copy, FileText, WrapText } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Copy, FileText, WrapText, X } from '@lucide/vue'
 import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import ImagePreview from '#core/app/components/preview/ImagePreview.vue'
 import { PAGE_IMAGE_ZOOM_MIN, pageLabel } from '#core/lib/page-gallery'
@@ -146,10 +146,11 @@ defineExpose({ openCompare })
   <Dialog :open="compareOpen" @update:open="onCompareOpen">
     <DialogContent
       data-ocr-comparison
-      class="flex h-[92vh] w-[96vw] flex-col gap-2 border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1500px,96vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:z-20"
+      :show-close-button="false"
+      class="flex h-[92vh] w-[96vw] flex-col gap-2 border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1500px,96vw)]"
       @close-auto-focus="preventAutoFocus"
     >
-      <div class="bg-card flex flex-col gap-1 rounded-md border px-3 py-2 pr-12">
+      <div class="bg-card flex flex-col gap-1 rounded-md border px-3 py-2">
         <div class="flex min-w-0 items-center gap-2">
           <DialogTitle class="min-w-0 truncate text-sm">
             <span class="sm:hidden">{{ pageLabel(currentPage ?? 1) }}</span>
@@ -181,6 +182,16 @@ defineExpose({ openCompare })
               <span class="hidden sm:inline">下一页</span>
               <ChevronRight />
             </Button>
+            <DialogClose as-child>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                class="text-muted-foreground hover:text-foreground shrink-0"
+                aria-label="关闭"
+              >
+                <X class="size-4" aria-hidden="true" />
+              </Button>
+            </DialogClose>
           </div>
         </div>
         <DialogDescription class="text-muted-foreground text-table leading-relaxed">

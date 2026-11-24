@@ -5,7 +5,7 @@ import { Button } from '#core/app/components/ui/button'
 import { Checkbox } from '#core/app/components/ui/checkbox'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import { describeFetchError } from '../../../lib/file-content-status'
 
 const open = defineModel<boolean>('open', { default: false })
@@ -114,42 +114,43 @@ async function execute(action: 'quarantine' | 'recover', retry = false) {
 </script>
 
 <template>
-  <Dialog v-model:open="dialogOpen">
-    <DialogContent class="sm:max-w-md max-h-[90dvh] overflow-y-auto" @interact-outside="busy && $event.preventDefault()" @escape-key-down="busy && $event.preventDefault()">
-      <DialogHeader>
-        <DialogTitle>移出与恢复文件</DialogTitle>
-        <DialogDescription class="break-all">{{ filename || '按原文件编号读取隔离状态并恢复同一文件。' }}</DialogDescription>
-      </DialogHeader>
-      <div class="flex flex-col gap-3">
-        <template v-if="!fileId">
-          <Label for="recovery-file">原文件编号</Label>
-          <Input id="recovery-file" v-model="lookupId" :disabled="locked" inputmode="numeric" />
-        </template>
-        <p class="text-sm">移出文件库会保留原文件。隔离会移走原路径上的文件，可申请恢复。</p>
-        <p class="break-all text-sm">{{ physical?.intent.relPath || relPath }}</p>
-        <p v-if="referenceCount > 0" class="text-sm">文件仍在使用，不能隔离。仅移出文件库会保留原文件。</p>
-        <Button variant="outline" :disabled="locked" @click="readLatest">{{ reading ? '读取中…' : '读取最新状态' }}</Button>
-        <p v-if="stateText" role="status">{{ stateText }}</p>
-        <p v-if="physical?.intent.state === 'pending' || physical?.intent.state === 'recovering'" class="text-sm">操作尚未完成，不能推断原路径可用。可重试保留的原请求；恢复待处理若没有原请求，请由原操作端继续处理。</p>
-        <div v-if="fileId && canQuarantine" class="flex items-start gap-2">
-          <Checkbox id="delete-disk" :model-value="deleteDisk" :disabled="locked || !!command || referenceCount > 0" @update:model-value="v => deleteDisk = v === true" />
-          <Label for="delete-disk">同时隔离磁盘文件（可显式申请恢复）</Label>
-        </div>
-        <template v-if="deleteDisk || physical || command">
-          <Label for="physical-actor">操作人</Label><Input id="physical-actor" v-model="actor" :disabled="locked || !!command" maxlength="200" />
-          <Label for="physical-basis">操作依据</Label><Input id="physical-basis" v-model="basis" :disabled="locked || !!command" maxlength="2000" />
-          <Label for="physical-token">本次操作凭证</Label><Input id="physical-token" v-model="credential" :disabled="locked" type="password" autocomplete="off" />
-          <p class="text-sm text-muted-foreground">凭证只用于当前请求，不保存到浏览器存储。失败后保留原请求，重试不会新建操作。</p>
-        </template>
-        <Alert v-if="error || failure" variant="destructive"><AlertDescription>{{ error || failure }}</AlertDescription></Alert>
-      </div>
-      <DialogFooter class="flex-wrap">
-        <Button variant="outline" :disabled="locked" @click="open = false">关闭</Button>
-        <Button v-if="fileId && !deleteDisk && canQuarantine && !command" :disabled="locked" @click="emit('confirm', false)">移出文件库</Button>
-        <Button v-if="deleteDisk && canQuarantine && !command" variant="destructive" :disabled="locked || !valid || referenceCount > 0" @click="execute('quarantine')">确认移出并隔离</Button>
-        <Button v-if="canRecover && command?.action !== 'recover'" :disabled="locked || !valid" @click="execute('recover')">确认恢复原文件</Button>
-        <Button v-if="command" :disabled="locked || !credential.trim()" @click="execute(command.action, true)">重试原请求</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
+  <ModalDialog
+    v-model:open="dialogOpen"
+    title="移出与恢复文件"
+    :description="filename || '按原文件编号读取隔离状态并恢复同一文件。'"
+    size="sm"
+    :prevent-close="busy"
+    body-class="flex flex-col gap-3"
+    footer-class="flex-wrap"
+  >
+    <template v-if="!fileId">
+      <Label for="recovery-file">原文件编号</Label>
+      <Input id="recovery-file" v-model="lookupId" :disabled="locked" inputmode="numeric" />
+    </template>
+    <p class="text-sm">移出文件库会保留原文件。隔离会移走原路径上的文件，可申请恢复。</p>
+    <p class="break-all text-sm">{{ physical?.intent.relPath || relPath }}</p>
+    <p v-if="referenceCount > 0" class="text-sm">文件仍在使用，不能隔离。仅移出文件库会保留原文件。</p>
+    <Button variant="outline" :disabled="locked" @click="readLatest">{{ reading ? '读取中…' : '读取最新状态' }}</Button>
+    <p v-if="stateText" role="status">{{ stateText }}</p>
+    <p v-if="physical?.intent.state === 'pending' || physical?.intent.state === 'recovering'" class="text-sm">操作尚未完成，不能推断原路径可用。可重试保留的原请求；恢复待处理若没有原请求，请由原操作端继续处理。</p>
+    <div v-if="fileId && canQuarantine" class="flex items-start gap-2">
+      <Checkbox id="delete-disk" :model-value="deleteDisk" :disabled="locked || !!command || referenceCount > 0" @update:model-value="v => deleteDisk = v === true" />
+      <Label for="delete-disk">同时隔离磁盘文件（可显式申请恢复）</Label>
+    </div>
+    <template v-if="deleteDisk || physical || command">
+      <Label for="physical-actor">操作人</Label><Input id="physical-actor" v-model="actor" :disabled="locked || !!command" maxlength="200" />
+      <Label for="physical-basis">操作依据</Label><Input id="physical-basis" v-model="basis" :disabled="locked || !!command" maxlength="2000" />
+      <Label for="physical-token">本次操作凭证</Label><Input id="physical-token" v-model="credential" :disabled="locked" type="password" autocomplete="off" />
+      <p class="text-sm text-muted-foreground">凭证只用于当前请求，不保存到浏览器存储。失败后保留原请求，重试不会新建操作。</p>
+    </template>
+    <Alert v-if="error || failure" variant="destructive"><AlertDescription>{{ error || failure }}</AlertDescription></Alert>
+
+    <template #footer>
+      <Button variant="outline" :disabled="locked" @click="open = false">关闭</Button>
+      <Button v-if="fileId && !deleteDisk && canQuarantine && !command" :disabled="locked" @click="emit('confirm', false)">移出文件库</Button>
+      <Button v-if="deleteDisk && canQuarantine && !command" variant="destructive" :disabled="locked || !valid || referenceCount > 0" @click="execute('quarantine')">确认移出并隔离</Button>
+      <Button v-if="canRecover && command?.action !== 'recover'" :disabled="locked || !valid" @click="execute('recover')">确认恢复原文件</Button>
+      <Button v-if="command" :disabled="locked || !credential.trim()" @click="execute(command.action, true)">重试原请求</Button>
+    </template>
+  </ModalDialog>
 </template>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { projectionDisplay } from '#sme-roster/lib/platform/projection-display'
 import { computed } from 'vue'
-import { ExternalLink, FileText } from '@lucide/vue'
+import { ChevronRight, ExternalLink, FileText } from '@lucide/vue'
 import type { DeclarationRow } from '#sme-roster/lib/platform/declarations'
 import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
 import { PLATFORM_RDJBS, RELATION_DECLARE_KINDS } from '#sme-roster/lib/labels'
+import { platformStatusVariant } from '#sme-roster/lib/platform/status-badge'
+import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 
@@ -36,14 +38,14 @@ const conflictLabel: Record<string, string> = {
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="申报记录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[19%]">企业</TableHead>
-              <TableHead class="w-[14%] whitespace-nowrap">称号</TableHead>
-              <TableHead class="w-[8%] whitespace-nowrap">事项</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">年度</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">状态</TableHead>
-              <TableHead class="w-[13%] whitespace-nowrap">申报时间</TableHead>
-              <TableHead class="hidden w-[12%] whitespace-nowrap 2xl:table-cell">最近采集</TableHead>
-              <TableHead class="sticky right-0 z-20 w-[13%] border-l bg-muted">详情</TableHead>
+              <TableHead class="w-[29%] 2xl:w-[25%]">企业</TableHead>
+              <TableHead class="w-[17%] whitespace-nowrap 2xl:w-[14%]">称号</TableHead>
+              <TableHead class="w-[10%] whitespace-nowrap 2xl:w-[9%]">事项</TableHead>
+              <TableHead class="w-[8%] whitespace-nowrap 2xl:w-[7%]">年度</TableHead>
+              <TableHead class="w-[14%] whitespace-nowrap 2xl:w-[13%]">状态</TableHead>
+              <TableHead class="w-[16%] whitespace-nowrap 2xl:w-[13%]">申报时间</TableHead>
+              <TableHead class="hidden w-[13%] whitespace-nowrap 2xl:table-cell">最近采集</TableHead>
+              <TableHead class="table-sticky-action-head w-[6%] text-right"><span class="sr-only">详情</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -56,12 +58,18 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, titleLabel) }}</TableCell>
               <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.declareKind, declareKind) }}</TableCell>
               <TableCell class="break-words tabular-nums">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.declarationYear) }}</TableCell>
-              <TableCell class="whitespace-normal break-words">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}</TableCell>
+              <TableCell class="whitespace-normal break-words">
+                <div class="flex flex-wrap gap-1">
+                  <Badge :variant="platformStatusVariant(projectionDisplay(row.matchedVersion, row.matchedVersion.status))">
+                    {{ projectionDisplay(row.matchedVersion, row.matchedVersion.status) }}
+                  </Badge>
+                  <Badge v-for="conflict in row.conflicts" :key="conflict" variant="warning">{{ conflictLabel[conflict] ?? conflict }}</Badge>
+                </div>
+              </TableCell>
               <TableCell class="whitespace-normal break-words tabular-nums">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.appliedAt, time) }}</TableCell>
               <TableCell class="hidden whitespace-nowrap tabular-nums 2xl:table-cell">{{ time(row.latestObservationAt) }}</TableCell>
-              <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
-                <span v-for="conflict in row.conflicts" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
+              <TableCell class="table-sticky-action-cell text-right">
+                <Button variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground size-7" :disabled="loading" title="查看详情" @click="emit('open-record', row.record.id)"><ChevronRight class="size-4" aria-hidden="true" /><span class="sr-only">查看详情</span></Button>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -91,16 +99,16 @@ const conflictLabel: Record<string, string> = {
         <Table class="data-table min-w-[980px] table-fixed 2xl:min-w-[1080px]" aria-label="缺编号观察">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[14%]">原行 / 查询</TableHead>
-              <TableHead class="w-[21%]">企业原值</TableHead>
-              <TableHead class="w-[14%] whitespace-nowrap">称号</TableHead>
-              <TableHead class="w-[8%] whitespace-nowrap">事项</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">年度</TableHead>
-              <TableHead class="w-[9%] whitespace-nowrap">状态</TableHead>
-              <TableHead class="w-[11%] whitespace-nowrap">申报时间</TableHead>
-              <TableHead class="hidden w-[10%] whitespace-nowrap 2xl:table-cell">采集</TableHead>
-              <TableHead class="w-[10%]">隔离原因</TableHead>
-              <TableHead class="sticky right-0 z-20 w-[11%] border-l bg-muted">查询证据</TableHead>
+              <TableHead class="w-[12%] 2xl:w-[11%]">原行 / 查询</TableHead>
+              <TableHead class="w-[20%] 2xl:w-[18%]">企业原值</TableHead>
+              <TableHead class="w-[12%] whitespace-nowrap 2xl:w-[11%]">称号</TableHead>
+              <TableHead class="w-[8%] whitespace-nowrap 2xl:w-[7%]">事项</TableHead>
+              <TableHead class="w-[7%] whitespace-nowrap 2xl:w-[6%]">年度</TableHead>
+              <TableHead class="w-[9%] whitespace-nowrap 2xl:w-[8%]">状态</TableHead>
+              <TableHead class="w-[11%] whitespace-nowrap 2xl:w-[10%]">申报时间</TableHead>
+              <TableHead class="hidden w-[8%] whitespace-nowrap 2xl:table-cell">采集</TableHead>
+              <TableHead class="w-[9%]">隔离原因</TableHead>
+              <TableHead class="table-sticky-action-head w-[12%]">查询证据</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -110,15 +118,19 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal">{{ titleLabel(row.titleRaw) }}</TableCell>
               <TableCell class="whitespace-nowrap">{{ declareKind(row.declareKind) }}</TableCell>
               <TableCell class="tabular-nums">{{ missing(row.declarationYear) }}</TableCell>
-              <TableCell class="whitespace-nowrap">{{ missing(row.status) }}</TableCell>
+              <TableCell class="whitespace-nowrap">
+                <Badge :variant="platformStatusVariant(missing(row.status))">{{ missing(row.status) }}</Badge>
+              </TableCell>
               <TableCell class="tabular-nums">{{ time(row.appliedAt) }}</TableCell>
               <TableCell class="hidden tabular-nums 2xl:table-cell">{{ time(row.queriedAt) }}</TableCell>
               <TableCell class="text-xs">
-                <span v-if="row.identityState === 'missing_key'">缺少平台业务编号</span>
-                <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
-                <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
+                <div class="flex flex-wrap gap-1">
+                  <Badge v-if="row.identityState === 'missing_key'" variant="warning">缺少平台业务编号</Badge>
+                  <Badge v-else-if="row.identityState === 'conflict'" variant="error">平台编号冲突</Badge>
+                  <Badge v-if="row.contentState === 'unverifiable'" variant="warning">原文内容无法核实</Badge>
+                </div>
               </TableCell>
-              <TableCell class="sticky right-0 z-10 border-l bg-card">
+              <TableCell class="table-sticky-action-cell">
                 <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
               </TableCell>
             </TableRow>

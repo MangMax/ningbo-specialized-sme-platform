@@ -72,19 +72,25 @@ const visibleAliasesByEnterpriseId = computed(() => new Map(
     data-evidence-return-scroll-container
     class="data-table-scroll"
   >
+    <!--
+      列宽按「可见列」分配:
+      - 窄屏只显示前两列,百分比合计 100%,不触发横向滚动;
+      - lg 起四列像素合计 320+400+180+80 = 980,与 `lg:min-w-[980px]` 自洽。
+      表头的高度、底色、字号由基础组件 + `.data-table` 统一提供,这里只写列宽。
+    -->
     <Table class="data-table w-full min-w-0 table-fixed lg:min-w-[980px]">
       <TableHeader>
         <TableRow class="hover:bg-transparent">
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[28%] text-xs font-semibold tracking-wide lg:w-[20rem]">
+          <TableHead class="w-[42%] lg:w-[20rem]">
             企业名称
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground h-9 w-[42%] text-xs font-semibold tracking-wide lg:w-[20rem]">
+          <TableHead class="w-[58%] lg:w-[25rem]">
             称号 · 年份批次
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[11.5rem] text-xs font-semibold tracking-wide lg:table-cell">
+          <TableHead class="hidden lg:table-cell lg:w-[11.25rem]">
             统一社会信用代码
           </TableHead>
-          <TableHead class="bg-muted text-muted-foreground hidden h-9 w-[4.5rem] text-xs font-semibold tracking-wide lg:table-cell">
+          <TableHead class="hidden lg:table-cell lg:w-[5rem]">
             属地
           </TableHead>
         </TableRow>
@@ -104,7 +110,7 @@ const visibleAliasesByEnterpriseId = computed(() => new Map(
         <TableRow
           v-for="row in rows"
           :key="row.enterpriseId"
-          class="cursor-pointer [&>td]:py-1.5"
+          class="cursor-pointer"
           :class="selectedId === row.enterpriseId ? 'bg-accent hover:bg-accent' : ''"
           :aria-current="selectedId === row.enterpriseId ? 'true' : undefined"
           @click="selectRow(row.enterpriseId, $event.currentTarget)"

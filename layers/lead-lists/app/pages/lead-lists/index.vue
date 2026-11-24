@@ -2,13 +2,13 @@
 import { computed, ref, useTemplateRef, watch } from 'vue'
 import { useQuery } from '@pinia/colada'
 import { ArrowLeft, FileText } from '@lucide/vue'
-import PageHeader from '#core/app/components/PageHeader.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
 import { Badge } from '#core/app/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 import type { LeadCatalog, LeadRow, LeadVersionDetail } from '../../../lib/contracts'
 import LeadListRegistration from '../../components/LeadListRegistration.vue'
@@ -71,28 +71,31 @@ useHead({ title: '线索名单' })
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-col gap-4">
-    <PageHeader title="线索名单" />
+  <WorkspacePage title="线索名单">
     <LeadListRegistration v-if="catalog.data.value" v-model:open="registration" :catalog="catalog.data.value" @registered="registered" />
     <LeadListCatalog
       v-show="!activeVersion"
       :catalog="catalog.data.value" :loading="catalog.isLoading.value" :failed="Boolean(catalog.error.value)"
       @register="registration = true" @retry="catalog.refetch()"
     />
-    <Card v-if="activeVersion" class="paginated-table-card relative min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-      <TableLoadingStatus kind="ledger" :loading="detail.isLoading.value" label="正在读取名单…" />
-      <CardHeader class="table-toolbar flex-row">
+    <DataTableCard v-if="activeVersion">
+      <template #status>
+        <TableLoadingStatus kind="ledger" :loading="detail.isLoading.value" label="正在读取名单…" />
+      </template>
+
+      <template #toolbar>
         <div ref="detail-header" tabindex="-1" class="outline-none">
           <Button as-child variant="ghost" size="sm">
             <NuxtLink :to="catalogDestination" replace><ArrowLeft aria-hidden="true" />返回名单目录</NuxtLink>
           </Button>
         </div>
-      </CardHeader>
+      </template>
+
       <TableFailureState v-if="catalog.error.value" title="名单目录加载失败" compact :pending="catalog.isLoading.value" @retry="catalog.refetch()" />
       <TableFailureState v-if="detail.error.value" title="名单详情加载失败" :compact="Boolean(displayed)" :description="displayed ? '仍显示上次成功读取的名单。' : undefined" :pending="detail.isLoading.value" @retry="detail.refetch()" />
       <template v-if="displayed">
-        <CardHeader class="shrink-0 gap-2 border-b px-4 py-4">
-          <CardTitle as="h2" class="wrap-anywhere">{{ displayed.series }} · {{ displayed.acquiredOn }}</CardTitle>
+        <div class="flex shrink-0 flex-col gap-2 border-b px-4 py-4">
+          <h2 class="wrap-anywhere text-base leading-none font-semibold tracking-tight">{{ displayed.series }} · {{ displayed.acquiredOn }}</h2>
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="outline">类型 {{ listTypeLabels.get(displayed.listType) ?? displayed.listType }}</Badge>
             <Badge variant="outline">来源 {{ sourceLabels.get(displayed.channel) ?? displayed.channel }}</Badge>
@@ -102,39 +105,40 @@ useHead({ title: '线索名单' })
             <Badge v-else variant="outline">原文件已移出</Badge>
           </div>
           <LeadListExport :key="displayed.id" :version-id="displayed.id" :disabled="!showingActive || Boolean(detail.error.value)" />
-        </CardHeader>
-        <CardContent class="paginated-table-body flex min-h-0 flex-col p-0">
-          <div ref="lead-rows" class="data-table-scroll" role="region" aria-label="名单企业" tabindex="0">
-            <Table class="data-table table-fixed sm:min-w-[700px]">
-              <TableHeader><TableRow><TableHead class="w-14">序号</TableHead><TableHead>企业名称</TableHead><TableHead class="hidden w-44 sm:table-cell">统一社会信用代码</TableHead><TableHead class="hidden w-24 sm:table-cell">区县</TableHead><TableHead class="hidden sm:table-cell">备注</TableHead><TableHead class="w-20">基础库</TableHead></TableRow></TableHeader>
-              <TableBody><TableRow v-for="item in visibleRows" :key="item.id">
-                <TableCell>{{ item.rowNumber }}</TableCell>
-                <TableCell class="whitespace-normal wrap-anywhere">
-                  <div class="font-medium">{{ item.name }}</div>
-                  <dl v-if="item.uscc || item.district || item.note" class="text-muted-foreground mt-1 space-y-0.5 text-xs sm:hidden">
-                    <div v-if="item.uscc"><dt class="sr-only">统一社会信用代码</dt><dd class="font-mono">{{ item.uscc }}</dd></div>
-                    <div v-if="item.district"><dt class="sr-only">区县</dt><dd>{{ item.district }}</dd></div>
-                    <div v-if="item.note"><dt class="sr-only">备注</dt><dd>{{ item.note }}</dd></div>
-                  </dl>
-                </TableCell>
-                <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.uscc ?? '—' }}</TableCell>
-                <TableCell class="hidden whitespace-normal sm:table-cell">{{ item.district ?? '—' }}</TableCell>
-                <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.note ?? '—' }}</TableCell>
-                <TableCell>
-                  <Badge v-if="item.enterpriseId" variant="secondary">已关联</Badge>
-                  <Button v-else variant="ghost" size="sm" :disabled="!showingActive || Boolean(detail.error.value)" :aria-label="`补充企业基础库：${item.name}`" @click="reviewing = { row: item, versionId: displayed.id }">补充</Button>
-                </TableCell>
-              </TableRow></TableBody>
-            </Table>
-          </div>
-        </CardContent>
+        </div>
+        <div ref="lead-rows" class="data-table-scroll" role="region" aria-label="名单企业" tabindex="0">
+          <Table class="data-table table-fixed sm:min-w-[700px]">
+            <TableHeader><TableRow><TableHead class="w-14">序号</TableHead><TableHead>企业名称</TableHead><TableHead class="hidden w-44 sm:table-cell">统一社会信用代码</TableHead><TableHead class="hidden w-24 sm:table-cell">区县</TableHead><TableHead class="hidden sm:table-cell">备注</TableHead><TableHead class="w-20">基础库</TableHead></TableRow></TableHeader>
+            <TableBody><TableRow v-for="item in visibleRows" :key="item.id">
+              <TableCell>{{ item.rowNumber }}</TableCell>
+              <TableCell class="whitespace-normal wrap-anywhere">
+                <div class="font-medium">{{ item.name }}</div>
+                <dl v-if="item.uscc || item.district || item.note" class="text-muted-foreground mt-1 space-y-0.5 text-xs sm:hidden">
+                  <div v-if="item.uscc"><dt class="sr-only">统一社会信用代码</dt><dd class="font-mono">{{ item.uscc }}</dd></div>
+                  <div v-if="item.district"><dt class="sr-only">区县</dt><dd>{{ item.district }}</dd></div>
+                  <div v-if="item.note"><dt class="sr-only">备注</dt><dd>{{ item.note }}</dd></div>
+                </dl>
+              </TableCell>
+              <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.uscc ?? '—' }}</TableCell>
+              <TableCell class="hidden whitespace-normal sm:table-cell">{{ item.district ?? '—' }}</TableCell>
+              <TableCell class="hidden whitespace-normal wrap-anywhere sm:table-cell">{{ item.note ?? '—' }}</TableCell>
+              <TableCell>
+                <Badge v-if="item.enterpriseId" variant="secondary">已关联</Badge>
+                <Button v-else variant="ghost" size="sm" :disabled="!showingActive || Boolean(detail.error.value)" :aria-label="`补充企业基础库：${item.name}`" @click="reviewing = { row: item, versionId: displayed.id }">补充</Button>
+              </TableCell>
+            </TableRow></TableBody>
+          </Table>
+        </div>
+      </template>
+
+      <template #footer>
         <TablePagination
           v-if="total > 0" in-card :page="page" :page-size="pageSize" :total="total"
           :loading="!showingActive || detail.isLoading.value || Boolean(detail.error.value)" unit="家"
           @update:page="page = $event" @update:page-size="resize"
         />
       </template>
-    </Card>
+    </DataTableCard>
     <LeadListSupplement :row="reviewing?.row ?? null" :version-id="reviewing?.versionId" @close="reviewing = null" @saved="supplemented" />
-  </div>
+  </WorkspacePage>
 </template>

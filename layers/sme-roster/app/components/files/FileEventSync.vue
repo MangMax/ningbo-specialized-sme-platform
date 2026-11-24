@@ -118,7 +118,7 @@ function reset() {
 }
 </script>
 <template>
-  <Button variant="outline" class="whitespace-normal" :disabled="disabled" @click="open = true">按本文件全部已保存分段预检</Button>
+  <Button variant="outline" size="sm" class="whitespace-normal" :disabled="disabled" @click="open = true">按本文件全部已保存分段预检</Button>
   <Sheet :open="open" @update:open="value => { if(!busy) open=value }">
     <SheetContent floating-size="detail" class="flex flex-col">
       <SheetHeader

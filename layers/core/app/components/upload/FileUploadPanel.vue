@@ -6,14 +6,7 @@ import type { HttpResponse } from 'tus-js-client'
 import { withTusLogging } from '#core/lib/client-logging/tus'
 import { clientLibraryReporterKey, ignoreClientLibrarySignal } from '#core/lib/client-logging/library-reporter'
 import { Button } from '#core/app/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import UploadDropzone from './UploadDropzone.vue'
 import UploadItem from './UploadItem.vue'
 import type { PreviousUpload, UploadFailure, UploadPhase } from '../../../lib/upload-transport'
@@ -509,39 +502,35 @@ defineExpose({ addFiles: addToQueue })
   </div>
 
   <!-- 入队前先把落位信息确认掉:确认框里就能看见东西会落到哪。 -->
-  <Dialog v-if="metadataFields" v-model:open="dialogOpen">
-    <DialogContent class="sm:max-w-xl">
-      <DialogHeader>
-        <DialogTitle>这份文件放到哪里</DialogTitle>
-        <DialogDescription>
-          落位由服务端按文件库规则裁决;下面填的是声明,填错了会被服务端挡回来。
-        </DialogDescription>
-      </DialogHeader>
+  <ModalDialog
+    v-if="metadataFields"
+    v-model:open="dialogOpen"
+    title="这份文件放到哪里"
+    description="落位由服务端按文件库规则裁决;下面填的是声明,填错了会被服务端挡回来。"
+    size="lg"
+    body-class="flex flex-col gap-4"
+  >
+    <div class="bg-muted/60 rounded-md border px-3 py-2">
+      <p class="truncate text-sm font-medium" :title="pendingName">{{ pendingName }}</p>
+      <p class="text-muted-foreground mt-0.5 text-xs">
+        {{
+          pendingFiles.length > 1
+            ? `共 ${pendingFiles.length} 份文件,以下声明对它们一起生效`
+            : '文件名取自所选文件,原样保留'
+        }}
+      </p>
+    </div>
 
-      <div class="flex flex-col gap-4">
-        <div class="bg-muted/60 rounded-md border px-3 py-2">
-          <p class="truncate text-sm font-medium" :title="pendingName">{{ pendingName }}</p>
-          <p class="text-muted-foreground mt-0.5 text-xs">
-            {{
-              pendingFiles.length > 1
-                ? `共 ${pendingFiles.length} 份文件,以下声明对它们一起生效`
-                : '文件名取自所选文件,原样保留'
-            }}
-          </p>
-        </div>
+    <component :is="metadataFields" v-model:meta="meta" :filename="pendingName" :problems="problems" />
 
-        <component :is="metadataFields" v-model:meta="meta" :filename="pendingName" :problems="problems" />
-      </div>
-
-      <DialogFooter>
-        <Button variant="outline" @click="dialogOpen = false">取消</Button>
-        <Button
-          :disabled="!canStart || pendingFiles.some((f) => !isFilenameSafe(f.name))"
-          @click="confirmAdd"
-        >
-          加入队列
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
+    <template #footer>
+      <Button variant="outline" @click="dialogOpen = false">取消</Button>
+      <Button
+        :disabled="!canStart || pendingFiles.some((f) => !isFilenameSafe(f.name))"
+        @click="confirmAdd"
+      >
+        加入队列
+      </Button>
+    </template>
+  </ModalDialog>
 </template>

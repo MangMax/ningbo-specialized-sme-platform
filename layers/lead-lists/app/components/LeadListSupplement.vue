@@ -2,7 +2,8 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { Button } from '#core/app/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
+import { DialogFooter } from '#core/app/components/ui/dialog'
 import { Field, FieldError, FieldGroup, FieldLabel } from '#core/app/components/ui/field'
 import { Input } from '#core/app/components/ui/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
@@ -155,14 +156,17 @@ async function save() {
 </script>
 
 <template>
-  <Dialog :open="Boolean(row)" @update:open="value => { if (!value && !saving) emit('close') }">
-    <DialogContent class="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl" :show-close-button="!saving">
-      <DialogHeader class="shrink-0 border-b px-4 py-4 pr-12 text-left sm:px-6 sm:pr-12">
-        <DialogTitle>补充企业基础库</DialogTitle>
-        <DialogDescription class="wrap-anywhere">{{ row?.name }}</DialogDescription>
-      </DialogHeader>
-      <form :action="endpoint" method="post" aria-label="补充企业基础库" class="flex min-h-0 flex-col" @submit.prevent="save">
-        <div class="min-h-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+  <ModalDialog
+    :open="Boolean(row)"
+    title="补充企业基础库"
+    :description="row?.name"
+    size="lg"
+    :prevent-close="saving"
+    bare-body
+    @update:open="value => { if (!value && !saving) emit('close') }"
+  >
+    <form :action="endpoint" method="post" aria-label="补充企业基础库" class="flex min-h-0 flex-1 flex-col" @submit.prevent="save">
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
           <Tabs v-model="action">
             <TabsList class="grid w-full grid-cols-2" aria-label="补充方式">
               <TabsTrigger value="attach" :disabled="saving">关联已有企业</TabsTrigger>
@@ -229,11 +233,10 @@ async function save() {
           </Tabs>
           <FieldError v-if="error" class="mt-3" role="alert">{{ error }}</FieldError>
         </div>
-        <DialogFooter class="shrink-0 flex-row justify-end border-t px-4 py-3 sm:px-6">
+        <DialogFooter class="bg-surface-sunken/40 shrink-0 flex-row justify-end border-t px-5 py-3 sm:px-6">
           <Button type="button" variant="outline" :disabled="saving" @click="emit('close')">取消</Button>
           <Button type="submit" :disabled="saving || searching">{{ saving ? '正在保存…' : action === 'create' ? '新增并关联' : '保存并关联' }}</Button>
         </DialogFooter>
       </form>
-    </DialogContent>
-  </Dialog>
+  </ModalDialog>
 </template>

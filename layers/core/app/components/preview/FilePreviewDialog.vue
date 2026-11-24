@@ -38,7 +38,7 @@ const title = computed(() => props.name || fileNameOf(props.src))
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)] [&_[data-slot=dialog-close]]:top-2 [&_[data-slot=dialog-close]]:right-2 [&_[data-slot=dialog-close]]:z-10 [&_[role=toolbar]]:pr-10"
+      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)] [&_[data-slot=dialog-close]]:top-[5px] [&_[data-slot=dialog-close]]:right-2 [&_[data-slot=dialog-close]]:z-10 [&_[role=toolbar]]:pr-11"
     >
       <DialogTitle class="sr-only">{{ title }}</DialogTitle>
       <DialogDescription class="sr-only">来源文件预览。按 Esc 或点右上角关闭。</DialogDescription>

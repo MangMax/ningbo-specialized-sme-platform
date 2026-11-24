@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import EnterpriseListTable from '../../../layers/sme-roster/app/components/EnterpriseListTable.vue'
 import EnterpriseAliasSummary from '../../../layers/sme-roster/app/components/EnterpriseAliasSummary.vue'
 import EnterpriseTitleSummary from '../../../layers/sme-roster/app/components/EnterpriseTitleSummary.vue'
-import RosterEnterpriseTable from '../../../layers/sme-roster/app/components/RosterEnterpriseTable.vue'
 import PreviewToolbar from '../../../layers/core/app/components/preview/PreviewToolbar.vue'
 
 const mounted: ReturnType<typeof mount>[] = []
@@ -21,21 +20,6 @@ const enterpriseListRow = {
   titles: ['little_giant'],
   firstRecognition: [{ titleCode: 'little_giant', year: 2021, needsReview: false }],
   difference: { count: 0, status: null, reasonCode: null, anyCurrent: false },
-}
-
-const rosterRow = {
-  enterpriseId: 101,
-  name: '宁波芯速联光电科技有限公司',
-  uscc: null,
-  district: null,
-  city: null,
-  regStatus: null,
-  rosterState: 'current' as const,
-  titles: [],
-  aliasNames: [],
-  firstRecognition: [],
-  nextReviewYear: null,
-  anchorNeedsReview: false,
 }
 
 /**
@@ -75,17 +59,22 @@ describe('核心交互按钮的完整交互态', () => {
     expect(cls).toContain('disabled:opacity-50')
   })
 
-  it('台账表企业名按钮渲染为 ui/button;展开按钮保留 aria-expanded', () => {
-    const wrapper = mount(RosterEnterpriseTable, {
-      props: { rows: [rosterRow], loading: false, hasError: false, expandedId: null, backQuery: '' },
-      global: { stubs: { RosterEnterprisePanel: true } },
+  it('名录表企业名按钮渲染为 ui/button,并标出当前打开抽屉的行', () => {
+    const wrapper = mount(EnterpriseListTable, {
+      props: { rows: [enterpriseListRow], loading: false, hasError: false, selectedId: null, filtered: false },
     })
     mounted.push(wrapper)
-    const nameBtn = wrapper.get('tbody tr td button')
+    const nameBtn = wrapper.get('[data-testid="enterprise-name-trigger"]')
     expect(nameBtn.attributes('data-slot')).toBe('button')
-    const expandBtn = wrapper.get('[aria-expanded]')
-    expect(expandBtn.attributes('aria-expanded')).toBe('false')
-    expect(expandBtn.attributes('data-slot')).toBe('button')
+    expect(nameBtn.element.tagName).toBe('BUTTON')
+
+    const openRow = mount(EnterpriseListTable, {
+      props: { rows: [enterpriseListRow], loading: false, hasError: false, selectedId: 7289, filtered: false },
+    })
+    mounted.push(openRow)
+    const row = openRow.get('tbody tr')
+    expect(row.attributes('aria-current')).toBe('true')
+    expect(row.classes()).toContain('bg-accent')
   })
 
   it('预览工具栏缩放重置按钮渲染为 ui/button,保留 aria-label 文案', () => {

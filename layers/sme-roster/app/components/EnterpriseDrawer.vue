@@ -327,10 +327,10 @@ function eventSuffix(item: TimelineItem): string {
             </dd>
           </dl>
 
-          <RosterPlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" />
+          <RosterPlatformRecords :key="detail.enterprise.enterpriseId" :timeline="detail.businessTimeline" class="mt-5" />
 
           <!-- 称号历史：年份 + 事件；普通分隔线，不做节点/连线装饰。 -->
-          <h3 class="text-muted-foreground mt-5 border-t pt-4 text-xs font-medium">称号历史</h3>
+          <h3 class="text-muted-foreground mt-5 border-t pt-4 text-table font-medium">称号历史</h3>
           <ol v-if="timeline.length" class="mt-3 divide-y rounded-lg border" data-testid="drawer-timeline">
             <li
               v-for="item in timeline"
@@ -340,14 +340,14 @@ function eventSuffix(item: TimelineItem): string {
             >
               <span
                 data-testid="timeline-event-year"
-                class="text-muted-foreground text-xs leading-5 tabular-nums"
+                class="text-muted-foreground text-table leading-5 tabular-nums"
                 :aria-label="item.yearUnknown || item.year == null ? '结论年份待核' : `${item.year}年`"
               >
                 {{ item.yearUnknown || item.year == null ? '待核' : item.year }}
               </span>
               <span class="text-table leading-5">
                 <span>{{ TITLES[item.titleCode] ?? item.titleCode }}</span>
-                <span class="text-muted-foreground ml-1.5 text-xs">
+                <span class="text-muted-foreground ml-1.5 text-table">
                   {{ eventLabel(item.eventType)
                   }}<template v-if="item.batchSeq != null"> · 第{{ item.batchSeq }}批</template>
                   <template v-if="eventSuffix(item)"> {{ eventSuffix(item) }}</template>
@@ -377,7 +377,7 @@ function eventSuffix(item: TimelineItem): string {
         </div>
 
         <footer class="border-t px-5 py-3">
-          <Button as-child variant="ghost" size="sm" class="h-7 gap-1 px-1.5 text-xs">
+          <Button as-child variant="ghost" size="sm" class="gap-1 px-1.5 text-table">
             <NuxtLink :to="fullPageTo" @click="rememberLedger">完整企业页 <ExternalLink class="size-3" /></NuxtLink>
           </Button>
         </footer>
@@ -407,10 +407,5 @@ function eventSuffix(item: TimelineItem): string {
 <style scoped>
 .enterprise-drawer :deep([data-slot='button']) {
   box-shadow: none;
-}
-
-.enterprise-drawer :deep(.text-xs) {
-  font-size: 13px;
-  line-height: 1.5;
 }
 </style>

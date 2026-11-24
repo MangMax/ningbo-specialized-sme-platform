@@ -88,7 +88,7 @@ function apply() {
     <div class="flex min-w-0 flex-wrap items-center gap-2">
       <slot name="quick-search" />
       <CollapsibleTrigger as-child>
-        <Button id="enterprise-filter-trigger" :variant="open ? 'secondary' : 'outline'" type="button" class="group shrink-0">
+        <Button id="enterprise-filter-trigger" :variant="open ? 'secondary' : 'outline'" type="button" size="sm" class="group shrink-0">
           筛选与排序
           <ChevronDown aria-hidden="true" class="motion-safe:transition-transform ease-snap group-data-[state=open]:rotate-180" />
         </Button>
@@ -105,10 +105,10 @@ function apply() {
           </div>
           <TabsContent value="filters" class="max-h-[min(38dvh,20rem)] min-w-0 overflow-y-auto overscroll-contain p-3">
             <FieldGroup class="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 @min-[42rem]/enterprise-filters:grid-cols-4">
-              <Field v-for="item in textFields" :key="item.key" class="min-w-0">
-                <FieldLabel :for="`enterprise-filter-${item.key}`">{{ item.label }}</FieldLabel>
+              <Field v-for="item in textFields" :key="item.key" class="min-w-0 gap-1.5">
+                <FieldLabel :for="`enterprise-filter-${item.key}`" class="text-muted-foreground text-xs">{{ item.label }}</FieldLabel>
                 <Input
-                  :id="`enterprise-filter-${item.key}`" v-model="filters[item.key]" :maxlength="item.limit"
+                  :id="`enterprise-filter-${item.key}`" v-model="filters[item.key]" size="sm" :maxlength="item.limit"
                   :aria-invalid="item.key === 'uscc' && invalidUscc ? true : undefined"
                   :aria-describedby="item.key === 'uscc' && invalidUscc ? 'enterprise-filter-uscc-error' : undefined"
                   @update:model-value="item.key === 'uscc' && (invalidUscc = false)"
@@ -117,17 +117,17 @@ function apply() {
               </Field>
               <TableFailureState v-if="regionsError" class="col-span-full" title="区划字典暂时无法加载" compact @retry="emit('retryRegions')" />
               <TableFailureState v-if="industriesError" class="col-span-full" title="行业字典暂时无法加载" compact @retry="emit('retryIndustries')" />
-              <Field class="col-span-full min-w-0 @min-[30rem]/enterprise-filters:col-span-1">
-                <FieldLabel for="enterprise-filter-region">区划</FieldLabel>
+              <Field class="col-span-full min-w-0 gap-1.5 @min-[30rem]/enterprise-filters:col-span-1">
+                <FieldLabel for="enterprise-filter-region" class="text-muted-foreground text-xs">区划</FieldLabel>
                 <EnterpriseDictionaryCascade
-                  id="enterprise-filter-region" v-model="region" label="区划" kind="region" :entries="regions"
+                  id="enterprise-filter-region" v-model="region" size="sm" label="区划" kind="region" :entries="regions"
                   empty-label="不限" parent-label="按此区县筛选"
                 />
               </Field>
-              <Field class="col-span-full min-w-0 @min-[30rem]/enterprise-filters:col-span-1">
-                <FieldLabel for="enterprise-filter-industry">行业</FieldLabel>
+              <Field class="col-span-full min-w-0 gap-1.5 @min-[30rem]/enterprise-filters:col-span-1">
+                <FieldLabel for="enterprise-filter-industry" class="text-muted-foreground text-xs">行业</FieldLabel>
                 <EnterpriseDictionaryCascade
-                  id="enterprise-filter-industry" v-model="industry" label="行业" kind="industry" :entries="industries"
+                  id="enterprise-filter-industry" v-model="industry" size="sm" label="行业" kind="industry" :entries="industries"
                   empty-label="不限" parent-label="按此行业大类筛选"
                 />
               </Field>
@@ -138,8 +138,8 @@ function apply() {
           </TabsContent>
         </Tabs>
         <div class="flex items-center justify-end gap-2 border-t px-3 py-2">
-          <Button variant="ghost" type="button" @click="reset">{{ tab === 'sort' ? '清除排序' : '清除筛选' }}</Button>
-          <Button type="submit">应用</Button>
+          <Button variant="ghost" size="sm" type="button" @click="reset">{{ tab === 'sort' ? '清除排序' : '清除筛选' }}</Button>
+          <Button size="sm" type="submit">应用</Button>
         </div>
       </form>
     </CollapsibleContent>

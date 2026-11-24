@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { X } from '@lucide/vue'
 import FilePreview from '#core/app/components/preview/FilePreview.vue'
 import PageImageGallery from '#core/app/components/preview/PageImageGallery.vue'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
+import { Button } from '#core/app/components/ui/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '#core/app/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
 import { fileNameOf } from '#core/lib/preview'
 
@@ -57,7 +59,8 @@ const view = ref<'pdf' | 'pages'>('pdf')
 <template>
   <Dialog v-model:open="open">
     <DialogContent
-      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)] [&_[data-slot=dialog-close]]:top-3 [&_[data-slot=dialog-close]]:right-3 [&_[data-slot=dialog-close]]:z-10 [&_[data-slot=dialog-close]]:flex [&_[data-slot=dialog-close]]:size-8 [&_[data-slot=dialog-close]]:items-center [&_[data-slot=dialog-close]]:justify-center [&_[data-slot=dialog-close]]:rounded-md"
+      :show-close-button="false"
+      class="flex h-[92vh] w-[96vw] flex-col border-0 bg-transparent p-0 shadow-none sm:max-w-[min(1600px,96vw)]"
     >
       <DialogTitle class="sr-only">{{ title }}</DialogTitle>
       <DialogDescription class="sr-only">
@@ -65,11 +68,9 @@ const view = ref<'pdf' | 'pages'>('pdf')
       </DialogDescription>
 
       <Tabs v-model="view" class="flex min-h-0 flex-1 flex-col">
-        <!-- 文件名与视图切换同一条:近乎全屏的弹窗里,得有个地方能确认「这是哪一份」。
-             它吃剩余宽度并 `truncate`,长文件名不会把两个 tab 挤走;`pr-11` 为距右侧 12px、
-             宽 32px 的关闭按钮留出空间,省略号不会落在关闭热区下。 -->
+        <!-- 文件名、视图切换与关闭按钮同在一条 flex-center 顶栏里，关闭按钮永远垂直居中且不压文件名。 -->
         <div
-          class="bg-card flex shrink-0 items-center gap-2 rounded-lg border py-1 pr-11 pl-1.5"
+          class="bg-card flex shrink-0 items-center gap-2 rounded-lg border px-1.5 py-1"
         >
           <TabsList aria-label="PDF 视图">
             <TabsTrigger value="pdf">原文</TabsTrigger>
@@ -81,6 +82,16 @@ const view = ref<'pdf' | 'pages'>('pdf')
           >
             {{ title }}
           </span>
+          <DialogClose as-child>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              class="text-muted-foreground hover:text-foreground shrink-0"
+              aria-label="关闭"
+            >
+              <X class="size-4" aria-hidden="true" />
+            </Button>
+          </DialogClose>
         </div>
 
         <TabsContent value="pdf" class="flex min-h-0 flex-1 flex-col">
