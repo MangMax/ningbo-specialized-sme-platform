@@ -55,6 +55,7 @@ const owners = {
     "runtime/read-scheduling",
     "runtime/test-services",
     "ui/accessibility",
+    "ui/dialogs",
     "ui/disclosure",
     "ui/feedback",
     "ui/navigation",
