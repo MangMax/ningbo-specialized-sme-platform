@@ -239,7 +239,7 @@
 
 ### 2.7 弹窗与表单布局
 
-- 业务模态弹窗统一用 `ModalDialog`（与 `DetailDrawer` 对称：固定头部、标题行右侧垂直居中关闭按钮、独立滚动主体、可选固定底栏，`size` 取 `sm`/`md`/`lg`/`xl`），不得在业务组件里直接拼裸 `DialogContent`（由契约测试 `modal-dialog-standards.test.ts` 锁定）。表单用 `FieldGroup` / `Field`，弹窗内控件保持 36px。
+- 业务模态弹窗统一用 `ModalDialog`（与 `DetailDrawer` 对称：固定头部、标题行右侧垂直居中关闭按钮、独立滚动主体、可选固定底栏，`size` 取 `sm`/`md`/`lg`/`xl`），不得在业务组件里直接拼裸 `DialogContent`。表单用 `FieldGroup` / `Field`，弹窗内控件保持 36px。
 - **按钮顺序固定：取消在左、主操作在右**；主操作只在右侧出现一次。不可中断的提交状态用 `preventClose` / 禁用取消，而不是把主操作挪到左边。
 - 表单校验信息紧贴对应字段，不出全局横幅；提交失败保留已填写内容并给出显式重试。
 
