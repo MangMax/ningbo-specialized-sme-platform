@@ -17,6 +17,7 @@ interface SheetContentProps extends DialogContentProps {
   side?: "top" | "right" | "bottom" | "left"
   /** Opt in only for side business drawers; top/bottom sheets stay unchanged. */
   floatingSize?: "compact" | "standard" | "detail"
+  showCloseButton?: boolean
 }
 
 defineOptions({
@@ -25,10 +26,11 @@ defineOptions({
 
 const props = withDefaults(defineProps<SheetContentProps>(), {
   side: "right",
+  showCloseButton: true,
 })
 const emits = defineEmits<DialogContentEmits>()
 
-const delegatedProps = reactiveOmit(props, "class", "side", "floatingSize")
+const delegatedProps = reactiveOmit(props, "class", "side", "floatingSize", "showCloseButton")
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
@@ -41,7 +43,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       :data-floating-drawer="side === 'left' || side === 'right' ? floatingSize : undefined"
       :data-drawer-side="side"
       :class="cn(
-        'bg-background motion-safe:data-[state=open]:animate-in motion-safe:data-[state=closed]:animate-out ease-snap fixed z-50 flex flex-col gap-4 shadow-lg data-[state=closed]:duration-150 data-[state=open]:duration-200',
+        'bg-background motion-safe:data-[state=open]:animate-in motion-safe:data-[state=closed]:animate-out ease-snap fixed z-50 flex flex-col gap-4 shadow-(--shadow-drawer) data-[state=closed]:duration-150 data-[state=open]:duration-200',
         side === 'right'
           && 'data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm',
         side === 'left'
@@ -56,7 +58,9 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       <slot />
 
       <DialogClose
-        class="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 motion-safe:transition-opacity ease-snap hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none"
+        v-if="showCloseButton"
+        data-slot="sheet-close"
+        class="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary hover:bg-accent hover:text-accent-foreground absolute top-3 right-3 inline-flex size-8 items-center justify-center rounded-md opacity-70 motion-safe:transition-[color,background-color,opacity] ease-snap hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none"
       >
         <X class="size-4" />
         <span class="sr-only">关闭</span>

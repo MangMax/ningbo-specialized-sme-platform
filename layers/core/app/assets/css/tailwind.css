@@ -18,118 +18,198 @@
    * outline 按钮、Switch 滑块),而 `bg-page` 才是页面底。若把 --background 直接设成
    * 页面底,这些地方就会和页面同色、糊在一起(亮色下尤其明显)。
    * 故 --background = 卡片白,页面底另立 --page。 */
-  --page: oklch(0.9628 0.0091 258.34); /* #EFF3F9 页面底:body 与内容区 */
+  --page: oklch(0.975 0.002 260); /* #F7F8FA 中性办公底:body 与内容区 */
   --background: oklch(1 0 0); /* 抬起的表面:与卡片同档,纯白 */
-  --foreground: oklch(0.2336 0.0458 257.01); /* #0F1E33 藏青近黑 */
+  --foreground: oklch(0.18 0.01 260); /* #121418 中性深炭主文字 */
 
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2336 0.0458 257.01);
+  --card-foreground: oklch(0.18 0.01 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2336 0.0458 257.01);
+  --popover-foreground: oklch(0.18 0.01 260);
+  --surface-sunken: oklch(0.958 0.003 260); /* 卡片内嵌下沉面 */
+  --mask: oklch(0.12 0.006 260 / 0.42); /* 模态/抽屉遮罩层 */
 
-  --primary: oklch(0.3815 0.1143 257.4); /* #14417E */
+  --primary: oklch(0.45 0.145 256); /* #1D56B0 清透商务蓝 */
   --primary-foreground: oklch(1 0 0);
 
-  --secondary: oklch(0.966 0.0062 255.48); /* #F1F4F8 */
-  --secondary-foreground: oklch(0.3815 0.1143 257.4);
+  --secondary: oklch(0.962 0.003 260); /* 中性浅灰实心面 */
+  --secondary-foreground: oklch(0.28 0.03 256);
 
-  --muted: oklch(0.966 0.0062 255.48);
-  --muted-foreground: oklch(0.4972 0.0426 256.2); /* #5A6B84 5.05:1 on 页面底 */
+  --muted: oklch(0.962 0.003 260);
+  --muted-foreground: oklch(0.48 0.012 260); /* 中性次级文字 >=5.2:1 */
+  --text-tertiary: oklch(0.60 0.01 260); /* 占位与弱提示 */
+  --text-quaternary: oklch(0.73 0.008 260); /* 禁用态文字 */
 
-  --accent: oklch(0.9442 0.0161 254.9); /* #E8EFF9 悬停面 */
-  --accent-foreground: oklch(0.2943 0.0875 257.96);
+  --accent: oklch(0.945 0.006 255); /* 悬停/已选高亮面 */
+  --accent-foreground: oklch(0.22 0.02 255);
 
-  --destructive: oklch(0.4911 0.1796 25.62); /* #B01F24 */
+  --destructive: oklch(0.52 0.195 25); /* 朱砂告警红 */
   --destructive-foreground: oklch(1 0 0);
+  --destructive-bg: oklch(0.966 0.02 24);
+  --destructive-bg-hover: oklch(0.938 0.036 24);
+  --destructive-border: oklch(0.855 0.068 24);
 
-  /* 操作反馈语义色：信息复用主色，错误复用 destructive。 */
-  --success: oklch(0.49 0.105 158);
-  --warning: oklch(0.52 0.105 75);
+  /* 操作反馈语义色：4 态 × 4 档（主色 / 软底 / 悬停底 / 浅描边）。 */
+  --success: oklch(0.51 0.135 154);
+  --success-bg: oklch(0.965 0.022 154);
+  --success-bg-hover: oklch(0.938 0.036 154);
+  --success-border: oklch(0.85 0.06 154);
 
-  --border: oklch(0.9028 0.0131 254.6); /* #DCE3ED */
-  --input: oklch(0.8711 0.0195 254.9);
-  --ring: oklch(0.3815 0.1143 257.4);
+  --info: oklch(0.45 0.145 256);
+  --info-bg: oklch(0.956 0.02 256);
+  --info-bg-hover: oklch(0.928 0.034 256);
+  --info-border: oklch(0.835 0.055 256);
 
-  --sidebar: oklch(1 0 0);
-  --sidebar-foreground: oklch(0.2336 0.0458 257.01);
-  --sidebar-primary: oklch(0.3815 0.1143 257.4);
+  --warning: oklch(0.56 0.13 72);
+  --warning-bg: oklch(0.97 0.028 78);
+  --warning-bg-hover: oklch(0.942 0.048 78);
+  --warning-border: oklch(0.86 0.075 76);
+
+  --border: oklch(0.905 0.004 260); /* 主描边 */
+  --border-secondary: oklch(0.942 0.003 260); /* 轻分隔线/表内网格 */
+  --input: oklch(0.875 0.006 260);
+  --ring: oklch(0.45 0.145 256);
+
+  --sidebar: oklch(0.99 0.002 260);
+  --sidebar-foreground: oklch(0.20 0.01 260);
+  --sidebar-primary: oklch(0.45 0.145 256);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.9583 0.0111 254.4);
-  --sidebar-accent-foreground: oklch(0.2943 0.0875 257.96);
-  --sidebar-border: oklch(0.9236 0.0106 255.4);
-  --sidebar-ring: oklch(0.3815 0.1143 257.4);
+  --sidebar-accent: oklch(0.948 0.005 260);
+  --sidebar-accent-foreground: oklch(0.20 0.01 260);
+  --sidebar-border: oklch(0.922 0.004 260);
+  --sidebar-ring: oklch(0.45 0.145 256);
 
-  /* —— 称号梯度:由高到低一条色阶 —— */
-  --tier-1-surface: oklch(0.3567 0.1073 258.9); /* 小巨人:实心藏青 */
-  --tier-1-on: oklch(1 0 0); /* 11.3:1 */
-  --tier-1-line: oklch(0.3567 0.1073 258.9);
-  --tier-2-surface: oklch(0.9442 0.0161 254.9); /* 专精特新中小企业:藏青浅底 */
-  --tier-2-on: oklch(0.3815 0.1143 257.4); /* 8.7:1 */
-  --tier-2-line: oklch(0.8208 0.0403 254.9);
-  --tier-3-surface: oklch(0.958 0.007 255.5); /* 创新型中小企业:中性 */
-  --tier-3-on: oklch(0.4629 0.0411 256.43); /* 6.4:1 */
-  /* 第三档不能只剩近白底:边界要能在白卡片上读出来。 */
-  --tier-3-line: oklch(0.845 0.023 257.2);
+  /* —— 通用 12 色相强调色（对齐 LobeUI Hue Accents）：标签、头像、图表、分类高亮 —— */
+  --hue-red: oklch(0.58 0.21 20);
+  --hue-volcano: oklch(0.62 0.19 38);
+  --hue-orange: oklch(0.68 0.175 58);
+  --hue-gold: oklch(0.73 0.165 78);
+  --hue-yellow: oklch(0.84 0.155 96);
+  --hue-lime: oklch(0.75 0.175 126);
+  --hue-green: oklch(0.56 0.15 152);
+  --hue-cyan: oklch(0.64 0.12 192);
+  --hue-blue: oklch(0.56 0.17 248);
+  --hue-geekblue: oklch(0.49 0.19 266);
+  --hue-purple: oklch(0.56 0.185 300);
+  --hue-magenta: oklch(0.58 0.195 342);
 
-  /* —— 来源/等级标记:金 = 国家级,藏青 = 市级 —— */
-  --mark-national: oklch(0.7059 0.1206 85.57); /* #C29A3B */
-  --mark-municipal: oklch(0.3815 0.1143 257.4);
+  /* —— 称号梯度与来源标记（基于通用色相映射：靛紫 → 商务蓝 → 中性灰）—— */
+  --tier-1-surface: oklch(0.43 0.145 276); /* 小巨人:深靛紫 */
+  --tier-1-on: oklch(1 0 0);
+  --tier-1-line: oklch(0.43 0.145 276);
+  --tier-2-surface: oklch(0.952 0.018 256); /* 专精特新中小企业:商务蓝浅底 */
+  --tier-2-on: oklch(0.42 0.135 256);
+  --tier-2-line: oklch(0.835 0.05 256);
+  --tier-3-surface: oklch(0.958 0.022 154); /* 创新型中小企业:清翠绿浅底 */
+  --tier-3-on: oklch(0.42 0.125 154);
+  --tier-3-line: oklch(0.84 0.058 154);
+
+  --mark-national: oklch(0.68 0.155 276); /* 国家级标记:靛紫 */
+  --mark-municipal: oklch(0.45 0.145 256); /* 市级标记:商务蓝 */
+
+  /* —— 阴影:亮暗双色板成对定义 ——
+   * 卡片默认不投影,层级靠表面色与描边区分;只有浮层(弹出层、抽屉)才投影。
+   * 投影颜色一律由主题 token 经 color-mix 派生,暗色下改由 --page 向黑混合,
+   * 避免浅色前景在暗底上读成「光晕」而不是影子。 */
+  --shadow-card: none;
+  --shadow-popover: 0 4px 16px color-mix(in oklch, var(--foreground) 10%, transparent);
+  --shadow-drawer: 0 8px 24px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 
 .dark {
-  --page: oklch(0.1765 0.0346 267.28); /* #0A1020 藏青底,不是纯灰黑:body 与内容区 */
-  --background: oklch(0.219 0.038 263.34); /* #111A2C 抬起的表面:与卡片同档 */
-  --foreground: oklch(0.9254 0.0174 258.3); /* #E8EEF7 */
+  --page: oklch(0.145 0.004 260); /* #0B0C0E 中性炭黑底 */
+  --background: oklch(0.185 0.005 260); /* #131417 抬起的表面:与卡片同档 */
+  --foreground: oklch(0.94 0.004 260); /* 高清中性白字 */
 
-  --card: oklch(0.219 0.038 263.34); /* #111A2C */
-  --card-foreground: oklch(0.9254 0.0174 258.3);
-  --popover: oklch(0.2442 0.0395 262); /* #131D31 */
-  --popover-foreground: oklch(0.9254 0.0174 258.3);
+  --card: oklch(0.185 0.005 260); /* #131417 */
+  --card-foreground: oklch(0.94 0.004 260);
+  --popover: oklch(0.22 0.006 260); /* #1B1D21 */
+  --popover-foreground: oklch(0.94 0.004 260);
+  --surface-sunken: oklch(0.158 0.004 260); /* 卡片内嵌下沉面 */
+  --mask: oklch(0.05 0.003 260 / 0.65); /* 模态/抽屉遮罩层 */
 
-  --primary: oklch(0.7487 0.0734 255.75); /* #7FA7DD */
-  --primary-foreground: oklch(0.1565 0.0331 266.6);
+  --primary: oklch(0.71 0.125 254); /* 清透亮商务蓝 */
+  --primary-foreground: oklch(0.14 0.01 260);
 
-  --secondary: oklch(0.2606 0.0387 262.68); /* #1A2437 */
-  --secondary-foreground: oklch(0.8843 0.0256 259.1);
+  --secondary: oklch(0.23 0.006 260);
+  --secondary-foreground: oklch(0.90 0.006 260);
 
-  --muted: oklch(0.2606 0.0387 262.68);
-  --muted-foreground: oklch(0.6657 0.0326 258.6); /* #8B9AB0 6.1:1 on 卡片 */
+  --muted: oklch(0.23 0.006 260);
+  --muted-foreground: oklch(0.66 0.008 260); /* 中性次级灰 >=6.2:1 */
+  --text-tertiary: oklch(0.54 0.007 260); /* 占位与弱提示 */
+  --text-quaternary: oklch(0.42 0.006 260); /* 禁用态文字 */
 
-  --accent: oklch(0.2957 0.0432 262.4);
-  --accent-foreground: oklch(0.9254 0.0174 258.3);
+  --accent: oklch(0.265 0.008 260);
+  --accent-foreground: oklch(0.94 0.004 260);
 
-  --destructive: oklch(0.65 0.165 22.2); /* #DE6B70 深色下当**文字**用时对卡片 5.3:1 */
-  --destructive-foreground: oklch(0.1565 0.0331 266.6);
+  --destructive: oklch(0.66 0.185 24);
+  --destructive-foreground: oklch(0.14 0.01 260);
+  --destructive-bg: oklch(0.23 0.048 24);
+  --destructive-bg-hover: oklch(0.275 0.062 24);
+  --destructive-border: oklch(0.39 0.09 24);
 
-  --success: oklch(0.77 0.12 158);
-  --warning: oklch(0.79 0.12 80);
+  --success: oklch(0.74 0.14 154);
+  --success-bg: oklch(0.225 0.038 154);
+  --success-bg-hover: oklch(0.265 0.048 154);
+  --success-border: oklch(0.365 0.068 154);
 
-  --border: oklch(0.3181 0.0393 262.2);
-  --input: oklch(0.3729 0.0457 261.3);
-  --ring: oklch(0.7487 0.0734 255.75);
+  --info: oklch(0.71 0.125 254);
+  --info-bg: oklch(0.23 0.042 256);
+  --info-bg-hover: oklch(0.27 0.055 256);
+  --info-border: oklch(0.38 0.08 256);
 
-  --sidebar: oklch(0.2103 0.0359 266.2);
-  --sidebar-foreground: oklch(0.9254 0.0174 258.3);
-  --sidebar-primary: oklch(0.7487 0.0734 255.75);
-  --sidebar-primary-foreground: oklch(0.1565 0.0331 266.6);
-  --sidebar-accent: oklch(0.2606 0.0387 262.68);
-  --sidebar-accent-foreground: oklch(0.9254 0.0174 258.3);
-  --sidebar-border: oklch(0.3181 0.0393 262.2);
-  --sidebar-ring: oklch(0.7487 0.0734 255.75);
+  --warning: oklch(0.78 0.14 78);
+  --warning-bg: oklch(0.238 0.038 76);
+  --warning-bg-hover: oklch(0.28 0.05 76);
+  --warning-border: oklch(0.385 0.072 76);
 
-  --tier-1-surface: oklch(0.4291 0.1065 259.4); /* #2B4F86 */
-  --tier-1-on: oklch(0.9693 0.0161 255.7); /* 7.6:1 */
-  --tier-1-line: oklch(0.4978 0.1106 259);
-  --tier-2-surface: oklch(0.2978 0.0729 261.1); /* #16294A */
-  --tier-2-on: oklch(0.8036 0.0751 256.2); /* 7.7:1 */
-  --tier-2-line: oklch(0.3843 0.0881 260.5);
-  --tier-3-surface: oklch(0.2606 0.0387 262.68);
-  --tier-3-on: oklch(0.7566 0.0373 258.9); /* 7.0:1 */
-  --tier-3-line: oklch(0.346 0.04 261.8);
+  --border: oklch(0.285 0.006 260);
+  --border-secondary: oklch(0.24 0.005 260); /* 轻分隔线/表内网格 */
+  --input: oklch(0.32 0.008 260);
+  --ring: oklch(0.71 0.125 254);
 
-  --mark-national: oklch(0.7059 0.1206 85.57);
-  --mark-municipal: oklch(0.6698 0.0903 256.3);
+  --sidebar: oklch(0.165 0.005 260);
+  --sidebar-foreground: oklch(0.94 0.004 260);
+  --sidebar-primary: oklch(0.71 0.125 254);
+  --sidebar-primary-foreground: oklch(0.14 0.01 260);
+  --sidebar-accent: oklch(0.235 0.006 260);
+  --sidebar-accent-foreground: oklch(0.94 0.004 260);
+  --sidebar-border: oklch(0.26 0.006 260);
+  --sidebar-ring: oklch(0.71 0.125 254);
 
+  /* —— 通用 12 色相强调色（暗色版）—— */
+  --hue-red: oklch(0.66 0.195 20);
+  --hue-volcano: oklch(0.68 0.18 38);
+  --hue-orange: oklch(0.74 0.165 58);
+  --hue-gold: oklch(0.78 0.155 78);
+  --hue-yellow: oklch(0.86 0.145 96);
+  --hue-lime: oklch(0.79 0.165 126);
+  --hue-green: oklch(0.72 0.15 152);
+  --hue-cyan: oklch(0.76 0.115 192);
+  --hue-blue: oklch(0.71 0.145 248);
+  --hue-geekblue: oklch(0.68 0.16 266);
+  --hue-purple: oklch(0.72 0.165 300);
+  --hue-magenta: oklch(0.72 0.175 342);
+
+  /* —— 称号梯度与来源标记（暗色版）—— */
+  --tier-1-surface: oklch(0.48 0.145 276);
+  --tier-1-on: oklch(0.97 0.012 276);
+  --tier-1-line: oklch(0.56 0.14 276);
+  --tier-2-surface: oklch(0.245 0.045 256);
+  --tier-2-on: oklch(0.78 0.105 254);
+  --tier-2-line: oklch(0.37 0.078 256);
+  --tier-3-surface: oklch(0.232 0.04 154);
+  --tier-3-on: oklch(0.76 0.125 154);
+  --tier-3-line: oklch(0.365 0.072 154);
+
+  --mark-national: oklch(0.78 0.13 276);
+  --mark-municipal: oklch(0.71 0.125 254);
+
+  /* 暗色阴影从 --page 向纯黑混合:比深色页面底更深,读得出层次;
+   * 与亮色共用同一组变量名,组件不需要按主题分支。 */
+  --shadow-card: none;
+  --shadow-popover: 0 4px 20px color-mix(in oklch, var(--page) 20%, black);
+  --shadow-drawer: 0 8px 28px color-mix(in oklch, var(--page) 15%, black);
 }
 
 @theme inline {
@@ -140,20 +220,37 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-mask: var(--mask);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-quaternary: var(--text-quaternary);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-bg: var(--destructive-bg);
+  --color-destructive-bg-hover: var(--destructive-bg-hover);
+  --color-destructive-border: var(--destructive-border);
   --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-success-bg-hover: var(--success-bg-hover);
+  --color-success-border: var(--success-border);
   --color-warning: var(--warning);
-  --color-info: var(--primary);
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-bg-hover: var(--warning-bg-hover);
+  --color-warning-border: var(--warning-border);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-bg-hover: var(--info-bg-hover);
+  --color-info-border: var(--info-border);
   --color-border: var(--border);
+  --color-border-secondary: var(--border-secondary);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
@@ -164,6 +261,19 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-hue-red: var(--hue-red);
+  --color-hue-volcano: var(--hue-volcano);
+  --color-hue-orange: var(--hue-orange);
+  --color-hue-gold: var(--hue-gold);
+  --color-hue-yellow: var(--hue-yellow);
+  --color-hue-lime: var(--hue-lime);
+  --color-hue-green: var(--hue-green);
+  --color-hue-cyan: var(--hue-cyan);
+  --color-hue-blue: var(--hue-blue);
+  --color-hue-geekblue: var(--hue-geekblue);
+  --color-hue-purple: var(--hue-purple);
+  --color-hue-magenta: var(--hue-magenta);
 
   --color-tier-1-surface: var(--tier-1-surface);
   --color-tier-1-on: var(--tier-1-on);
@@ -181,9 +291,6 @@
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
   --radius-xl: calc(var(--radius) + 6px);
-
-  /* 控制件的统一手感:「咔嗒」——短促、到位、不弹 */
-  --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* 工作台表格的事实标准字号:13px/20px,语义名 text-table。
@@ -200,6 +307,47 @@
    * `.data-table-scroll` 经 `calc(100dvh - var(--table-budget))` 消费它;
    * 新增列表页直接套 `.data-table-scroll`,不再各自照抄 17rem。 */
   --table-budget: 17rem;
+}
+
+/* 层级 / 布局 / 动效三组刻度。`static` 让这些变量**始终**输出到 :root:
+ * 它们主要给开发态预览页与后续调用点用 var() 读取,不依赖某个工具类是否被扫描到;
+ * 默认的按需裁剪会把没被工具类引用的刻度删掉,预览页就会读到空值。 */
+@theme static {
+  /* —— 层级(Elevation)阶梯 ——
+   * 只登记档位,不逐处写数字:吸顶单元格 / 吸顶表头 / 应用顶栏 / 抽屉 / 模态弹窗
+   * 各自引用同一档,新浮层按语义选档而不是和相邻元素比大小。 */
+  --z-sticky-cell: 10;
+  --z-sticky-head: 20;
+  --z-header: 30;
+  --z-drawer: 40;
+  --z-modal: 50;
+
+  /* —— 布局与密度 ——
+   * 表格行高与控件高度的唯一刻度。组件与页面引用 token,不在调用点写 32/36/44。
+   * 注意:`.data-table` 的 component 规则仍写 36px/44px 字面量(组件层要能被
+   * utilities 覆盖且契约测试按字面量断言),两边数值必须保持一致。 */
+  --table-header-h: 36px;
+  --table-row-min-h: 44px;
+  --table-row-compact-h: 36px;
+  --control-toolbar-h: 32px;
+  --control-form-h: 36px;
+  --drawer-width-compact: 360px;
+  --drawer-width-standard: 448px;
+  --drawer-width-detail: 560px;
+
+  /* —— 动效曲线与时长（对齐 LobeUI Motion 体系）——
+   * 3 条贝塞尔缓动 + 3 条归一化到 settle time 的 CSS linear() 弹簧曲线 + 3 档时长。
+   * --ease-snap 保留为 --motion-ease-out 的兼容别名，确保既有 ease-snap 类自动对齐。 */
+  --ease-snap: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --motion-ease-in-out-circ: cubic-bezier(0.78, 0.14, 0.15, 0.86);
+  --motion-spring-smooth: linear(0, 0.064 6%, 0.214 14%, 0.422 24%, 0.625 36%, 0.785 49%, 0.896 63%, 0.961 78%, 0.991 92%, 1);
+  --motion-spring-snappy: linear(0, 0.082 5%, 0.278 12%, 0.546 21%, 0.794 31%, 0.957 42%, 1.015 55%, 1.008 72%, 1.001 88%, 1);
+  --motion-spring-bouncy: linear(0, 0.098 5%, 0.335 12%, 0.652 21%, 0.916 31%, 1.046 43%, 1.032 56%, 0.996 71%, 1.002 86%, 1);
+  --duration-fast: 100ms;
+  --duration-mid: 200ms;
+  --duration-slow: 300ms;
 }
 
 @layer base {
@@ -236,11 +384,130 @@
 }
 
 @layer components {
-  /* 表格外壳:吸顶表头 + 正交分隔线。列多时线是唯一的分组手段。 */
+  /* ── 表格外壳 ──────────────────────────────────────────────────────────
+   * 这些规则放 components 层,不是拍脑袋:utilities 层在后、优先级更高,
+   * 调用点才能用 p-0 / py-* 覆盖默认内边距(空态、骨架屏、弹窗小表都要)。
+   * 基础组件(Table / TableHead / TableCell)的默认工具类与这里保持一致,
+   * 两边不打架:字号 13px、表头 36px、单元格左右 12px。
+   * 列多时正交分隔线是唯一的分组手段,表头吸顶由 TableHeader 负责。 */
   .data-table {
-    --table-line: var(--border);
+    --table-line: var(--border-secondary);
+    font-size: var(--text-table);
+    line-height: var(--text-table--line-height);
+  }
+  .data-table > thead > tr > th {
+    height: 36px;
+    padding-inline: 12px;
+    background: var(--surface-sunken);
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 1.125rem;
+  }
+  .data-table > thead > tr > th + th {
+    box-shadow: inset 1px 0 0 color-mix(in oklch, var(--border-secondary) 75%, transparent);
+  }
+  /* Fluid Functionalism 风格：单层行跟随悬停滑块 */
+  .table-fluid-hover {
+    background: color-mix(in oklch, var(--accent) 52%, transparent);
+    transition:
+      transform 140ms var(--motion-ease-out),
+      height 140ms var(--motion-ease-out),
+      opacity 120ms var(--motion-ease-out);
+    will-change: transform, height, opacity;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .table-fluid-hover {
+      transition: none;
+    }
+  }
+  /* HTML 表格里的 height 等同最小行高:单行纯文本保底 44px,多行自动撑高。 */
+  .data-table > tbody > tr {
+    height: 44px;
+  }
+  .data-table > tbody > tr > td,
+  .data-table > tbody > tr > th {
+    padding-block: 10px;
+    padding-inline: 12px;
   }
 
+  /* 紧凑变体:只给弹窗里的小型核对表显式加 data-density="compact"。 */
+  .data-table[data-density='compact'] > tbody > tr {
+    height: 36px;
+  }
+  .data-table[data-density='compact'] > tbody > tr > td,
+  .data-table[data-density='compact'] > tbody > tr > th {
+    padding-block: 6px;
+  }
+
+  /* 横向滚动时固定最右侧操作列。表头用 muted 底,与吸顶表头同面;
+   * 行悬停时单元格跟着行底色走,避免固定列在悬停时「断开」。 */
+  .table-sticky-action-head {
+    position: sticky;
+    right: 0;
+    z-index: var(--z-sticky-head);
+    background: var(--surface-sunken);
+    box-shadow: inset 1px 0 0 var(--border-secondary);
+  }
+  .table-sticky-action-cell {
+    position: sticky;
+    right: 0;
+    z-index: var(--z-sticky-cell);
+    background: var(--card);
+    box-shadow: inset 1px 0 0 var(--border-secondary);
+    transition: background-color 140ms var(--motion-ease-out);
+  }
+  tr:hover > .table-sticky-action-cell {
+    background: color-mix(in oklch, var(--accent) 52%, var(--card));
+  }
+
+  /* 视口预算:离开 workspace-list 的独立表格,按 100dvh 减去页头/筛选/分页
+   * 的预算滚动。放在 workspace 规则之前,让下面的 max-height: none 能覆盖。 */
+  .data-table-scroll {
+    max-height: max(320px, calc(100dvh - var(--table-budget)));
+    overflow: auto;
+  }
+
+  /* ── 列表工作区的纵向高度链 ───────────────────────────────────────────
+   * 页面根 → 列表体 → 结果卡 → 卡内正文逐级 flex:1 / min-height:0,
+   * 让表格只在剩余高度里滚动;页头、工具栏、分页始终留在滚动区外。 */
+  .workspace-list,
+  .workspace-list-body,
+  .paginated-table-card,
+  .paginated-table-body {
+    flex: 1 1 0%;
+    min-height: 0;
+  }
+  .workspace-list > :not(.workspace-list-body, .paginated-table-card) {
+    flex-shrink: 0;
+  }
+  .table-toolbar {
+    @apply shrink-0 space-y-0 border-b p-3 sm:px-4;
+  }
+  .workspace-list-filter {
+    max-height: 60%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .workspace-list :where(.data-table-scroll) {
+    flex: 1 1 0%;
+    min-height: 0;
+    max-height: none;
+    overscroll-behavior: contain;
+  }
+}
+
+/* 表格包装层不再二次滚动:横向和纵向都交给 .data-table-scroll。
+ * 保持非 layered —— Table.vue 的容器自带 overflow-auto 工具类,必须让位于此规则。 */
+.data-table-scroll > [data-slot='table-container'] {
+  overflow: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .table-sticky-action-cell {
+    transition: none;
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -371,64 +638,16 @@ html.theme-transition::view-transition-new(root) {
   }
 }
 
-/* Workspace tables share typography and spacing. */
-.data-table {
-  font-size: var(--text-table);
-  line-height: var(--text-table--line-height);
-}
-.data-table > thead > tr > th {
-  height: 36px;
-  padding-inline: 12px;
-  background: var(--muted);
-  color: var(--muted-foreground);
-  font-size: var(--text-table);
-  font-weight: 600;
-  line-height: var(--text-table--line-height);
-}
-.data-table > tbody > tr > td {
-  padding-block: 6px;
-}
-
-/* Keep list pages within the same viewport-based table budget: from 100dvh
- * reserve --table-budget for the page header / filter row / pagination.
- * New list pages consume .data-table-scroll instead of copying the figure. */
-.data-table-scroll {
-  max-height: max(320px, calc(100dvh - var(--table-budget)));
-  overflow: auto;
-}
-.data-table-scroll > [data-slot='table-container'] {
-  overflow: visible;
-}
-
-.workspace-list,
-.workspace-list-body,
-.paginated-table-card {
-  min-height: 0;
-}
-.workspace-list > :not(.workspace-list-body, .paginated-table-card) {
-  flex-shrink: 0;
-}
-.table-toolbar {
-  @apply shrink-0 space-y-0 border-b p-3 sm:px-4;
-}
-.workspace-list-filter {
-  max-height: 60%;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.workspace-list :where(.data-table-scroll) {
-  min-height: 0;
-  max-height: none;
-  overscroll-behavior: contain;
-}
-
 /* Business side drawers opt in explicitly. Kept outside utilities so consumer
  * width classes cannot bypass the viewport cap. Navigation and top/bottom
  * sheets do not receive this attribute. EnterpriseDrawer shares this contract. */
 [data-floating-drawer] {
   --drawer-gutter: 8px;
-  --drawer-width: 448px;
-  --drawer-shadow: 0 8px 24px color-mix(in oklch, var(--foreground) 16%, transparent);
+  --drawer-width: var(--drawer-width-standard);
+  /* 抽屉阴影就是全局 `--shadow-drawer`;保留 `--drawer-shadow` 作为抽屉自己的
+   * 别名,既让本文件的 `box-shadow` 继续只引用一个变量,也给旧调用点留出
+   * 窄口径的覆盖位。未定义 `--shadow-drawer` 时退回同一公式。 */
+  --drawer-shadow: var(--shadow-drawer, 0 8px 24px color-mix(in oklch, var(--foreground) 16%, transparent));
   top: var(--drawer-gutter);
   bottom: var(--drawer-gutter);
   height: auto;
@@ -440,8 +659,8 @@ html.theme-transition::view-transition-new(root) {
   box-shadow: var(--drawer-shadow);
   overflow-wrap: anywhere;
 }
-[data-floating-drawer='compact'] { --drawer-width: 360px; }
-[data-floating-drawer='detail'] { --drawer-width: 560px; }
+[data-floating-drawer='compact'] { --drawer-width: var(--drawer-width-compact); }
+[data-floating-drawer='detail'] { --drawer-width: var(--drawer-width-detail); }
 .dark [data-floating-drawer] {
   /* 暗色下浅色 --foreground 混合会读成光晕而非投影;把阴影颜色从 --page 向
    * 纯黑方向混合 —— 随主题切换(非固定字面量),同时保证比深色页面底更深,

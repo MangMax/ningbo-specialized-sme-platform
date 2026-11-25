@@ -11,14 +11,7 @@ import {
   SelectContent,
   SelectItem,
 } from '#core/app/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import {
   Table,
   TableBody,
@@ -385,28 +378,29 @@ defineExpose({ requestLeave })
 <template>
   <section
     v-if="open"
-    class="min-w-0 space-y-4 text-sm"
+    class="min-w-0 space-y-3 text-table"
     aria-label="文件内容分段"
   >
     <header class="flex flex-wrap items-center justify-between gap-2">
       <div>
-        <h3 class="font-medium">
+        <h3 class="text-table font-semibold">
           文件内容分段 · {{ state?.registeredSummary.count ?? '…' }} 段已登记
         </h3>
-        <p class="text-muted-foreground text-sm">
+        <p class="text-muted-foreground text-xs">
           文件发布：{{ file?.year ?? '年份未知' }} /
           {{ file?.batch ?? '批次未知' }}。下方登记名单内容。
         </p>
       </div>
       <Button
         variant="outline"
+        size="sm"
         :disabled="locked || active || drafts.length >= 1000"
         @click="add"
         >新增分段</Button
       >
     </header>
-    <p v-if="!state && pending" role="status">正在加载分段…</p>
-    <p v-if="!enabled && state" role="status">当前实例只读，未开放修改。</p>
+    <p v-if="!state && pending" role="status" class="text-muted-foreground text-xs">正在加载分段…</p>
+    <p v-if="!enabled && state" role="status" class="text-muted-foreground text-xs">当前实例只读，未开放修改。</p>
     <p
       v-if="active && !pending && !committed"
       role="status"
@@ -448,9 +442,9 @@ defineExpose({ requestLeave })
       :key="part.declarationId ?? 'new-draft'"
       class="min-w-0 rounded-md border bg-background"
     >
-      <div class="flex flex-wrap items-center justify-between gap-2 p-3">
-        <div class="min-w-0 break-words">
-          <p class="font-medium">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+        <div class="min-w-0 space-y-0.5 break-words">
+          <p class="text-table font-medium">
             {{
               part.declarationId
                 ? (EVENTS[part.eventKind] ?? '事件待选')
@@ -458,10 +452,10 @@ defineExpose({ requestLeave })
             }}
             · {{ TITLES[part.titleCode] ?? '称号待选' }}
           </p>
-          <p>
+          <p class="text-xs">
             内容年份 {{ part.year || '未知' }} · 批次 {{ part.batch || '未知' }}
           </p>
-          <p class="text-muted-foreground text-sm">
+          <p class="text-muted-foreground text-xs">
             {{ part.attachment || '附件未填' }} · {{ part.rowCount }} 行 ·
             {{
               part.ranges.map((r) => `第${r.start}–${r.end}页`).join('、') ||
@@ -469,14 +463,16 @@ defineExpose({ requestLeave })
             }}
           </p>
         </div>
-        <div v-if="editing !== i" class="flex flex-wrap gap-2">
+        <div v-if="editing !== i" class="flex flex-wrap gap-1.5">
           <Button
             variant="outline"
+            size="sm"
             :disabled="locked || active"
             @click="begin(i)"
             >修改</Button
           ><Button
             variant="ghost"
+            size="sm"
             :disabled="locked || active"
             @click="begin(i, true)"
             >删除分段</Button
@@ -665,14 +661,15 @@ defineExpose({ requestLeave })
     </p>
     <DisclosurePanel
       v-if="state"
+      compact
       title="入库情况统计"
       :description="`${state.ingestionStatistics.rowCount} 条企业记录`"
     >
-      <p class="mb-3 text-muted-foreground">
+      <p class="mb-2 text-muted-foreground text-xs">
         这反映企业记录的填写情况，不表示文件有几个名单段。
       </p>
       <div class="data-table-scroll" role="region" aria-label="企业记录内容分布" tabindex="0">
-        <Table class="data-table"
+        <Table class="data-table" data-density="compact"
           ><TableHeader
             ><TableRow
               ><TableHead>企业记录内容分布</TableHead
@@ -692,8 +689,8 @@ defineExpose({ requestLeave })
         >
       </div>
     </DisclosurePanel>
-    <footer v-if="state" class="space-y-2 border-t pt-3">
-      <p class="text-muted-foreground text-sm">
+    <footer v-if="state" class="space-y-2 border-t pt-2.5">
+      <p class="text-muted-foreground text-xs">
         保存描述不会自动修改已入库企业记录。
       </p>
       <RosterFileEventSync
@@ -705,33 +702,24 @@ defineExpose({ requestLeave })
       />
       <p v-else class="text-muted-foreground">没有已保存分段可同步。</p>
     </footer>
-    <Dialog
+    <ModalDialog
       :open="leaveOpen"
-      @update:open="
-        (value) => {
-          if (!value) void leave('stay')
-        }
-      "
-      ><DialogContent
-        ><DialogHeader
-          ><DialogTitle>当前分段操作尚未完成</DialogTitle
-          ><DialogDescription
-            >保存后离开、放弃本次修改，或留在当前继续。提交已确认时只能重试读取。</DialogDescription
-          ></DialogHeader
-        ><DialogFooter
-          ><Button :disabled="pending || syncing" @click="leave('save')">{{
-            committed ? '重试读取后离开' : '保存后离开'
-          }}</Button
-          ><Button
-            variant="outline"
-            :disabled="pending || committed || syncing"
-            @click="leave('discard')"
-            >放弃修改并离开</Button
-          ><Button variant="outline" @click="leave('stay')"
-            >留在当前</Button
-          ></DialogFooter
-        ></DialogContent
-      ></Dialog
+      title="当前分段操作尚未完成"
+      description="保存后离开、放弃本次修改，或留在当前继续。提交已确认时只能重试读取。"
+      size="sm"
+      @update:open="(value) => { if (!value) void leave('stay') }"
     >
+      <template #footer>
+        <Button variant="outline" @click="leave('stay')">留在当前</Button>
+        <Button
+          variant="outline"
+          :disabled="pending || committed || syncing"
+          @click="leave('discard')"
+        >放弃修改并离开</Button>
+        <Button :disabled="pending || syncing" @click="leave('save')">{{
+          committed ? '重试读取后离开' : '保存后离开'
+        }}</Button>
+      </template>
+    </ModalDialog>
   </section>
 </template>

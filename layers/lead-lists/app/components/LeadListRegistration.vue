@@ -7,7 +7,8 @@ import DatePicker from '#core/app/components/DatePicker.vue'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Button } from '#core/app/components/ui/button'
 import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
+import { DialogFooter } from '#core/app/components/ui/dialog'
 import { Field, FieldError, FieldGroup, FieldLabel } from '#core/app/components/ui/field'
 import { Input } from '#core/app/components/ui/input'
 import { Pagination, PaginationContent, PaginationNext, PaginationPrevious } from '#core/app/components/ui/pagination'
@@ -141,19 +142,25 @@ async function advance() {
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="value => { if (!saving && !readingRows) open = value }">
-    <DialogContent class="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
-      <DialogHeader class="shrink-0 border-b px-4 py-4 pr-12 text-left sm:px-6 sm:pr-12">
-        <DialogTitle>新增名单</DialogTitle>
-        <DialogDescription class="sr-only">选择原件，预览名单，然后保存。</DialogDescription>
-        <ol aria-label="新增名单进度" class="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          <li :aria-current="step === 'source' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">原件与资料</li>
-          <li :aria-current="step === 'rows' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">名单预览</li>
-          <li :aria-current="step === 'confirm' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">确认名单</li>
-        </ol>
-      </DialogHeader>
-      <form class="flex min-h-0 flex-1 flex-col" novalidate @submit.prevent="advance">
-        <div ref="stepBody" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+  <ModalDialog
+    :open="open"
+    title="新增名单"
+    description="选择原件，预览名单，然后保存。"
+    hide-description
+    size="lg"
+    :prevent-close="saving || readingRows"
+    bare-body
+    @update:open="value => { if (!saving && !readingRows) open = value }"
+  >
+    <template #header-extra>
+      <ol aria-label="新增名单进度" class="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-sm">
+        <li :aria-current="step === 'source' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">原件与资料</li>
+        <li :aria-current="step === 'rows' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">名单预览</li>
+        <li :aria-current="step === 'confirm' ? 'step' : undefined" class="aria-[current=step]:text-primary aria-[current=step]:font-semibold">确认名单</li>
+      </ol>
+    </template>
+    <form class="flex min-h-0 flex-1 flex-col" novalidate @submit.prevent="advance">
+      <div ref="stepBody" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
           <section v-if="step === 'source'" data-lead-step="source" class="space-y-5">
             <Card class="min-w-0 gap-0 overflow-hidden py-0 shadow-none">
               <CardHeader class="flex-row flex-wrap items-center justify-between gap-2 space-y-0 p-3 pb-0">
@@ -273,7 +280,7 @@ async function advance() {
             </dl>
           </section>
         </div>
-        <DialogFooter class="shrink-0 flex-row flex-wrap items-center justify-end border-t px-4 py-3 sm:px-6">
+        <DialogFooter class="bg-surface-sunken/40 shrink-0 flex-row flex-wrap items-center justify-end border-t px-5 py-3 sm:px-6">
           <FieldError v-if="error" ref="errorSummary" tabindex="-1" class="w-full">{{ error }}</FieldError>
           <Button v-if="step !== 'source'" type="button" variant="outline" :disabled="saving || readingRows" class="mr-auto"
             @click="showStep(step === 'confirm' ? 'rows' : 'source')">上一步</Button>
@@ -282,6 +289,5 @@ async function advance() {
           </Button>
         </DialogFooter>
       </form>
-    </DialogContent>
-  </Dialog>
+  </ModalDialog>
 </template>

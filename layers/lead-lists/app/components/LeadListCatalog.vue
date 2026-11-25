@@ -2,12 +2,12 @@
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { FileText, ListFilter, Plus } from '@lucide/vue'
-import FilterChip from '#core/app/components/FilterChip.vue'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
 import { Field, FieldLabel } from '#core/app/components/ui/field'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#core/app/components/ui/select'
@@ -83,8 +83,10 @@ const facets = computed(() => facetFields.map(field => {
     values: optionsFor(field.key).map(option => ({ ...option, count: counts.get(option.value) ?? 0 })),
   }
 }))
-const activeFacets = computed(() => facetFields.filter(field => selected.value[field.key])
+const activeFacets = computed(() => fields.filter(field => selected.value[field.key])
   .map(field => ({ key: field.key, label: `${field.label}：${label(field.key, selected.value[field.key])}` })))
+/** 已生效条件：类型、来源与系列都摊成一行 chip，系列没有常驻 chip 控件也照样可撤。 */
+const catalogChips = computed(() => activeFacets.value)
 
 const filtered = computed(() => versions.value
   .filter(item => isMatch(item))
@@ -119,108 +121,114 @@ watch(() => route.query.version, async (version, previous) => {
 </script>
 
 <template>
-  <Card class="paginated-table-card relative min-w-0 flex-1 gap-0 overflow-hidden py-0 shadow-none">
-    <TableLoadingStatus kind="ledger" :loading="loading" label="正在读取名单目录…" />
+  <!-- 宽屏「目录栏 | 结果卡」双栏；窄屏目录收进工具栏的筛选抽屉，侧栏整列隐藏。 -->
+  <div
+    class="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)]"
+    :class="showFilters && 'lg:grid-cols-[minmax(13rem,16rem)_minmax(0,1fr)]'"
+  >
+    <aside v-if="showFilters" aria-label="名单筛选侧栏" class="hidden min-h-0 min-w-0 flex-col border-r lg:flex">
+      <LeadListFacetBrowser v-model:group="facetGroup" :groups="facets" :selected="selected" @select="setFilter" />
+    </aside>
+
+    <DataTableCard toolbar-class="gap-2">
+    <template #toolbar>
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
+        <Sheet v-if="showFilters" v-model:open="showDrawer">
+          <SheetTrigger as-child>
+            <Button type="button" variant="outline" size="sm" class="lg:hidden"><ListFilter aria-hidden="true" />筛选</Button>
+          </SheetTrigger>
+          <SheetContent side="left" class="w-11/12 min-w-0 gap-0 sm:max-w-sm">
+            <SheetHeader class="shrink-0 border-b px-4 py-4">
+              <SheetTitle>名单筛选</SheetTitle>
+              <SheetDescription class="sr-only">按名单来源和类型筛选</SheetDescription>
+            </SheetHeader>
+            <LeadListFacetBrowser v-model:group="facetGroup" :groups="facets" :selected="selected" @select="setFilter" />
+            <div class="shrink-0 border-t p-3">
+              <Button type="button" class="w-full" @click="showDrawer = false">查看 {{ filtered.length.toLocaleString('zh-CN') }} 份名单</Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+        <Field v-if="showFilters" class="max-w-52 min-w-0 flex-1 gap-0">
+          <FieldLabel for="lead-catalog-series" class="sr-only">所属系列</FieldLabel>
+          <Select :model-value="filterValue(selected.series)" @update:model-value="setSeries">
+            <SelectTrigger id="lead-catalog-series" size="sm" class="w-full min-w-0 *:data-[slot=select-value]:min-w-0" aria-label="所属系列">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent class="max-w-(--reka-select-content-available-width)">
+              <SelectItem :value="all">全部系列</SelectItem>
+              <SelectItem v-for="option in seriesOptions" :key="option.value" :value="filterValue(option.value)">
+                <span class="min-w-0 wrap-anywhere">{{ option.label }}</span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Button type="button" size="sm" class="ml-auto shrink-0" @click="emit('register')"><Plus aria-hidden="true" />新增名单</Button>
+      </div>
+      <ActiveFilterBar
+        aria-label="已选名单筛选条件"
+        :items="catalogChips"
+        @remove="key => setFilter(key as FilterKey, '')"
+        @clear="clearFilters"
+      />
+    </template>
+
+    <template #status>
+      <TableLoadingStatus kind="ledger" :loading="loading" label="正在读取名单目录…" />
+    </template>
+
     <TableFailureState
       v-if="failed" title="名单目录加载失败" :compact="Boolean(catalog)"
       :description="catalog ? '仍显示上次读取的名单目录。' : undefined"
       :pending="loading" @retry="emit('retry')"
     />
-    <div
-      v-if="catalog" class="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)]"
-      :class="showFilters && 'lg:grid-cols-[minmax(13rem,16rem)_minmax(0,1fr)]'"
-    >
-      <aside v-if="showFilters" aria-label="名单筛选侧栏" class="hidden min-h-0 min-w-0 flex-col border-r lg:flex">
-        <LeadListFacetBrowser v-model:group="facetGroup" :groups="facets" :selected="selected" @select="setFilter" />
-      </aside>
-      <div class="flex min-h-0 min-w-0 flex-col">
-        <CardHeader class="table-toolbar flex flex-col gap-2">
-          <div class="flex min-w-0 flex-wrap items-center gap-2">
-            <Sheet v-if="showFilters" v-model:open="showDrawer">
-              <SheetTrigger as-child>
-                <Button type="button" variant="outline" class="lg:hidden"><ListFilter aria-hidden="true" />筛选</Button>
-              </SheetTrigger>
-              <SheetContent side="left" class="w-11/12 min-w-0 gap-0 sm:max-w-sm">
-                <SheetHeader class="shrink-0 border-b px-4 py-4">
-                  <SheetTitle>名单筛选</SheetTitle>
-                  <SheetDescription class="sr-only">按名单来源和类型筛选</SheetDescription>
-                </SheetHeader>
-                <LeadListFacetBrowser v-model:group="facetGroup" :groups="facets" :selected="selected" @select="setFilter" />
-                <div class="shrink-0 border-t p-3">
-                  <Button type="button" class="w-full" @click="showDrawer = false">查看 {{ filtered.length.toLocaleString('zh-CN') }} 份名单</Button>
-                </div>
-              </SheetContent>
-            </Sheet>
-            <Field v-if="showFilters" class="max-w-52 min-w-0 flex-1 gap-0">
-              <FieldLabel for="lead-catalog-series" class="sr-only">所属系列</FieldLabel>
-              <Select :model-value="filterValue(selected.series)" @update:model-value="setSeries">
-                <SelectTrigger id="lead-catalog-series" class="w-full min-w-0 *:data-[slot=select-value]:min-w-0" aria-label="所属系列">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent class="max-w-(--reka-select-content-available-width)">
-                  <SelectItem :value="all">全部系列</SelectItem>
-                  <SelectItem v-for="option in seriesOptions" :key="option.value" :value="filterValue(option.value)">
-                    <span class="min-w-0 wrap-anywhere">{{ option.label }}</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Button type="button" class="ml-auto shrink-0" @click="emit('register')"><Plus aria-hidden="true" />新增名单</Button>
-          </div>
-          <div v-if="hasFilters" class="flex min-w-0 flex-wrap items-center gap-2" role="group" aria-label="已选名单筛选条件">
-            <FilterChip v-for="facet in activeFacets" :key="facet.key" :label="facet.label" @remove="setFilter(facet.key, '')" />
-            <Button type="button" variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-          </div>
-        </CardHeader>
-        <CardContent v-if="rows.length" class="paginated-table-body flex min-h-0 flex-col p-0">
-          <div ref="catalog-rows" class="data-table-scroll @container" role="region" aria-label="名单目录" tabindex="0">
-            <Table class="data-table table-fixed min-w-0" aria-label="名单目录">
-              <TableHeader>
-                <TableRow>
-                  <TableHead scope="col">名单</TableHead>
-                  <TableHead scope="col" class="hidden w-36 @min-[36rem]:table-cell @min-[55rem]:w-[19%]">名单类型</TableHead>
-                  <TableHead scope="col" class="hidden w-36 @min-[36rem]:table-cell @min-[55rem]:w-[19%]">名单来源</TableHead>
-                  <TableHead scope="col" class="hidden w-30 @min-[36rem]:table-cell">获取日期</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow v-for="item in rows" :key="item.id">
-                  <TableCell class="whitespace-normal wrap-anywhere">
-                    <Button variant="link" as-child class="h-auto max-w-full justify-start p-0 text-left whitespace-normal">
-                      <NuxtLink
-                        :to="{ query: { ...route.query, version: String(item.id), exportJob: undefined } }"
-                        :data-lead-version="item.id"
-                        :aria-label="`查看名单：${item.series}，${item.acquiredOn}，${item.fileName}`"
-                      >{{ item.series }}</NuxtLink>
-                    </Button>
-                    <p class="text-muted-foreground">{{ item.fileName }}</p>
-                    <dl class="mt-1 flex flex-wrap gap-x-4 gap-y-1 @min-[36rem]:hidden">
-                      <div class="flex flex-wrap gap-x-1"><dt class="text-muted-foreground">类型</dt><dd>{{ label('listType', item.listType) }}</dd></div>
-                      <div class="flex flex-wrap gap-x-1"><dt class="text-muted-foreground">来源</dt><dd>{{ label('channel', item.channel) }}</dd></div>
-                      <div class="flex basis-full flex-wrap gap-x-1"><dt class="text-muted-foreground">获取日期</dt><dd><time :datetime="item.acquiredOn">{{ item.acquiredOn }}</time></dd></div>
-                    </dl>
-                  </TableCell>
-                  <TableCell class="hidden whitespace-normal wrap-anywhere @min-[36rem]:table-cell">{{ label('listType', item.listType) }}</TableCell>
-                  <TableCell class="hidden whitespace-normal wrap-anywhere @min-[36rem]:table-cell">{{ label('channel', item.channel) }}</TableCell>
-                  <TableCell class="hidden tabular-nums @min-[36rem]:table-cell"><time :datetime="item.acquiredOn">{{ item.acquiredOn }}</time></TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-        <TablePagination
-          v-if="filtered.length" in-card :page="page" :page-size="pageSize" :total="filtered.length" unit="份"
-          @update:page="update({ page: String($event) })"
-          @update:page-size="update({ pageSize: String($event), page: undefined })"
-        />
-        <Empty v-else-if="catalog">
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia>
-            <EmptyTitle>{{ hasFilters ? '没有符合条件的名单' : '还没有名单' }}</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
-      </div>
+    <div v-if="rows.length" ref="catalog-rows" class="data-table-scroll @container" role="region" aria-label="名单目录" tabindex="0">
+      <Table class="data-table table-fixed min-w-0" aria-label="名单目录">
+        <TableHeader>
+          <TableRow>
+            <TableHead scope="col">名单</TableHead>
+            <TableHead scope="col" class="hidden w-36 @min-[36rem]:table-cell @min-[55rem]:w-[19%]">名单类型</TableHead>
+            <TableHead scope="col" class="hidden w-36 @min-[36rem]:table-cell @min-[55rem]:w-[19%]">名单来源</TableHead>
+            <TableHead scope="col" class="hidden w-30 @min-[36rem]:table-cell">获取日期</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow v-for="item in rows" :key="item.id">
+            <TableCell class="whitespace-normal wrap-anywhere">
+              <Button variant="link" as-child class="h-auto max-w-full justify-start p-0 text-left whitespace-normal">
+                <NuxtLink
+                  :to="{ query: { ...route.query, version: String(item.id), exportJob: undefined } }"
+                  :data-lead-version="item.id"
+                  :aria-label="`查看名单：${item.series}，${item.acquiredOn}，${item.fileName}`"
+                >{{ item.series }}</NuxtLink>
+              </Button>
+              <p class="text-muted-foreground">{{ item.fileName }}</p>
+              <dl class="mt-1 flex flex-wrap gap-x-4 gap-y-1 @min-[36rem]:hidden">
+                <div class="flex flex-wrap gap-x-1"><dt class="text-muted-foreground">类型</dt><dd>{{ label('listType', item.listType) }}</dd></div>
+                <div class="flex flex-wrap gap-x-1"><dt class="text-muted-foreground">来源</dt><dd>{{ label('channel', item.channel) }}</dd></div>
+                <div class="flex basis-full flex-wrap gap-x-1"><dt class="text-muted-foreground">获取日期</dt><dd><time :datetime="item.acquiredOn">{{ item.acquiredOn }}</time></dd></div>
+              </dl>
+            </TableCell>
+            <TableCell class="hidden whitespace-normal wrap-anywhere @min-[36rem]:table-cell">{{ label('listType', item.listType) }}</TableCell>
+            <TableCell class="hidden whitespace-normal wrap-anywhere @min-[36rem]:table-cell">{{ label('channel', item.channel) }}</TableCell>
+            <TableCell class="hidden tabular-nums @min-[36rem]:table-cell"><time :datetime="item.acquiredOn">{{ item.acquiredOn }}</time></TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
     </div>
-    <div v-else-if="loading && !failed" class="h-10" />
-  </Card>
+    <Empty v-else-if="catalog">
+      <EmptyHeader>
+        <EmptyMedia variant="icon"><FileText aria-hidden="true" /></EmptyMedia>
+        <EmptyTitle>{{ hasFilters ? '没有符合条件的名单' : '还没有名单' }}</EmptyTitle>
+      </EmptyHeader>
+    </Empty>
+
+    <template #footer>
+      <TablePagination
+        v-if="filtered.length" in-card :page="page" :page-size="pageSize" :total="filtered.length" unit="份"
+        @update:page="update({ page: String($event) })"
+        @update:page-size="update({ pageSize: String($event), page: undefined })"
+      />
+    </template>
+    </DataTableCard>
+  </div>
 </template>

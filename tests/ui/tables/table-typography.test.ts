@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
+import { cn } from '../../../layers/core/lib/utils'
 
 const cssDir = path.resolve(__dirname, '../../../layers/core/app/assets/css')
 const cssPath = path.join(cssDir, 'tailwind.css')
@@ -39,5 +40,12 @@ describe('表格字号 token', () => {
   it('data-table 候选类经主题编译后仍得到同一字号声明', async () => {
     const css = await compileTailwind(['data-table'])
     expect(css).toMatch(/\.data-table\s*\{[^}]*font-size:\s*var\(--text-table\)/)
+  })
+
+  it('cn() 将 text-table 识别为字号类，不会被文字颜色类吞掉，且可被其他字号类覆盖', () => {
+    expect(cn('text-table', 'text-primary-foreground')).toBe('text-table text-primary-foreground')
+    expect(cn('text-muted-foreground', 'text-table')).toBe('text-muted-foreground text-table')
+    expect(cn('text-table', 'text-xs')).toBe('text-xs')
+    expect(cn('text-sm', 'text-table')).toBe('text-table')
   })
 })

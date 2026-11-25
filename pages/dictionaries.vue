@@ -4,12 +4,13 @@ import { useMediaQuery } from '@vueuse/core'
 import { useQuery, useQueryCache } from '@pinia/colada'
 import { ChevronLeft, Plus } from '@lucide/vue'
 import DictionaryDirectory from '../app/components/DictionaryDirectory.vue'
-import PageHeader from '#core/app/components/PageHeader.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '#core/app/components/ui/card'
+import { CardTitle } from '#core/app/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#core/app/components/ui/dialog'
 import { Field, FieldError, FieldLabel } from '#core/app/components/ui/field'
 import { Input } from '#core/app/components/ui/input'
@@ -141,71 +142,73 @@ useHead({ title: '字典管理' })
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-col gap-4">
-    <PageHeader title="字典管理" />
+  <WorkspacePage title="字典管理">
     <div ref="workspace" class="workspace-list-body grid flex-1 min-w-0 grid-rows-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(13rem,16rem)_minmax(0,1fr)]">
       <DictionaryDirectory v-model="directorySearch" :groups="groups" :active="isNarrow ? selected?.id : active"
         :class="{ 'hidden lg:block': selected }" />
 
-      <Card class="paginated-table-card min-w-0 gap-0 p-0 shadow-none" :class="{ 'hidden lg:flex': !selected }">
-        <CardHeader class="table-toolbar gap-3 space-y-0">
+      <DataTableCard class="min-w-0" :class="{ 'hidden lg:flex': !selected }" toolbar-class="gap-3">
+        <template #toolbar>
           <Button as-child variant="ghost" size="sm" class="-ml-2 w-fit lg:hidden">
             <NuxtLink to="/dictionaries"><ChevronLeft aria-hidden="true" />返回字典目录</NuxtLink>
           </Button>
           <div class="flex flex-wrap items-center justify-between gap-2">
             <CardTitle id="dictionary-detail-title" as="h2" tabindex="-1" class="text-lg">{{ label }}</CardTitle>
-            <Button v-if="editable" :disabled="saving || !list.data.value" @click="edit()"><Plus aria-hidden="true" />新增选项</Button>
-            <Button v-else-if="active === 'series'" as-child variant="outline"><NuxtLink to="/lead-lists">线索名单</NuxtLink></Button>
+            <Button v-if="editable" size="sm" :disabled="saving || !list.data.value" @click="edit()"><Plus aria-hidden="true" />新增选项</Button>
+            <Button v-else-if="active === 'series'" as-child variant="outline" size="sm"><NuxtLink to="/lead-lists">线索名单</NuxtLink></Button>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <Input v-model="search" type="search" :aria-label="`搜索${label}条目`"
+            <Input v-model="search" type="search" size="sm" :aria-label="`搜索${label}条目`"
               :placeholder="hasCode ? '搜索条目名称或编码' : '搜索条目名称'" class="min-w-32 flex-1 sm:max-w-xs" />
             <span v-if="saved" role="status" class="text-sm">{{ saved }}</span>
           </div>
-        </CardHeader>
-        <div class="relative min-h-0 flex flex-col">
+        </template>
+
+        <template #status>
           <TableLoadingStatus kind="ledger" :loading="list.isLoading.value" :label="`正在读取${label}…`" />
-          <TableFailureState v-if="list.error.value" :title="`${label}加载失败`" :compact="Boolean(list.data.value)"
-            :pending="list.isLoading.value" @retry="list.refetch()" />
-          <CardContent v-if="list.data.value" class="paginated-table-body flex min-h-0 flex-col p-0">
-            <div ref="optionScroll" role="region" aria-label="字典条目" tabindex="0" class="data-table-scroll">
-              <Table class="data-table table-fixed">
-                <TableCaption class="sr-only">{{ label }}</TableCaption>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead scope="col">名称</TableHead>
-                    <TableHead v-if="hasCode" scope="col" class="w-24 sm:w-40">编码</TableHead>
-                    <TableHead v-if="hierarchical" scope="col" class="w-28 sm:w-1/3">上级</TableHead>
-                    <TableHead v-if="active === 'series'" scope="col" class="w-32 sm:w-1/3">最近获取</TableHead>
-                    <TableHead v-if="editable" scope="col" class="w-24 text-right">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow v-for="entry in visible" :key="entry.code">
-                    <TableCell class="whitespace-normal wrap-anywhere">
-                      <Button v-if="active === 'series'" as-child variant="link" class="h-auto max-w-full justify-start p-0 text-left whitespace-normal">
-                        <NuxtLink :to="{ path: '/lead-lists', query: { version: entry.code } }">{{ entry.name }}</NuxtLink>
-                      </Button>
-                      <template v-else>{{ entry.name }}</template>
-                    </TableCell>
-                    <TableCell v-if="hasCode" class="font-mono whitespace-normal wrap-anywhere">{{ entry.code }}</TableCell>
-                    <TableCell v-if="hierarchical || active === 'series'" class="whitespace-normal wrap-anywhere">{{ entry.detail ?? '—' }}</TableCell>
-                    <TableCell v-if="editable" class="text-right">
-                      <Button v-if="entry.code !== 'direct'" variant="ghost" size="sm" :aria-label="`编辑${entry.name}`"
-                        :disabled="saving" @click="edit(entry)">编辑</Button>
-                      <span v-else class="text-muted-foreground">系统项</span>
-                    </TableCell>
-                  </TableRow>
-                  <TableEmpty v-if="!visible.length" :colspan="1 + Number(hasCode) + Number(hierarchical || active === 'series') + Number(editable)">
-                    {{ search.trim() ? '没有匹配的选项' : '暂无字典项' }}
-                  </TableEmpty>
-                </TableBody>
-              </Table>
-            </div>
-            <TablePagination v-if="filtered.length > 25" v-model:page="page" v-model:page-size="pageSize" in-card :compact="isCompactPagination" unit="项" :total="filtered.length" />
-          </CardContent>
+        </template>
+
+        <TableFailureState v-if="list.error.value" :title="`${label}加载失败`" :compact="Boolean(list.data.value)"
+          :pending="list.isLoading.value" @retry="list.refetch()" />
+        <div v-if="list.data.value" ref="optionScroll" role="region" aria-label="字典条目" tabindex="0" class="data-table-scroll">
+          <Table class="data-table table-fixed">
+            <TableCaption class="sr-only">{{ label }}</TableCaption>
+            <TableHeader>
+              <TableRow>
+                <TableHead scope="col">名称</TableHead>
+                <TableHead v-if="hasCode" scope="col" class="w-24 sm:w-40">编码</TableHead>
+                <TableHead v-if="hierarchical" scope="col" class="w-28 sm:w-1/3">上级</TableHead>
+                <TableHead v-if="active === 'series'" scope="col" class="w-32 sm:w-1/3">最近获取</TableHead>
+                <TableHead v-if="editable" scope="col" class="w-24 text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow v-for="entry in visible" :key="entry.code">
+                <TableCell class="whitespace-normal wrap-anywhere">
+                  <Button v-if="active === 'series'" as-child variant="link" class="h-auto max-w-full justify-start p-0 text-left whitespace-normal">
+                    <NuxtLink :to="{ path: '/lead-lists', query: { version: entry.code } }">{{ entry.name }}</NuxtLink>
+                  </Button>
+                  <template v-else>{{ entry.name }}</template>
+                </TableCell>
+                <TableCell v-if="hasCode" class="font-mono whitespace-normal wrap-anywhere">{{ entry.code }}</TableCell>
+                <TableCell v-if="hierarchical || active === 'series'" class="whitespace-normal wrap-anywhere">{{ entry.detail ?? '—' }}</TableCell>
+                <TableCell v-if="editable" class="text-right">
+                  <Button v-if="entry.code !== 'direct'" variant="ghost" size="sm" :aria-label="`编辑${entry.name}`"
+                    :disabled="saving" @click="edit(entry)">编辑</Button>
+                  <span v-else class="text-muted-foreground">系统项</span>
+                </TableCell>
+              </TableRow>
+              <TableEmpty v-if="!visible.length" :colspan="1 + Number(hasCode) + Number(hierarchical || active === 'series') + Number(editable)">
+                {{ search.trim() ? '没有匹配的选项' : '暂无字典项' }}
+              </TableEmpty>
+            </TableBody>
+          </Table>
         </div>
-      </Card>
+
+        <template #footer>
+          <TablePagination v-if="filtered.length > 25" v-model:page="page" v-model:page-size="pageSize" in-card :compact="isCompactPagination" unit="项" :total="filtered.length" />
+        </template>
+      </DataTableCard>
     </div>
 
     <Dialog :open="Boolean(editing)" @update:open="value => { if (!value && !saving) editing = undefined }">
@@ -229,5 +232,5 @@ useHead({ title: '字典管理' })
         </form>
       </DialogContent>
     </Dialog>
-  </div>
+  </WorkspacePage>
 </template>

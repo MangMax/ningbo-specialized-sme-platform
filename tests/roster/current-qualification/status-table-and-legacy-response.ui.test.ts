@@ -100,7 +100,7 @@ async function setup(query: Record<string, string> = {}, narrow = false) {
 }
 function expectBack(view: ReturnType<typeof mount>, query: Record<string, string>) {
   const links = view.findAll('a').filter(link => link.attributes('href')?.startsWith('/enterprises/801?'))
-  expect(links).toHaveLength(2)
+  expect(links).toHaveLength(3)
   for (const link of links) {
     const back = new URL(link.attributes('href')!, 'http://localhost').searchParams.get('currentBack')!
     expect(Object.fromEntries(new URLSearchParams(back))).toEqual(query)

@@ -45,8 +45,10 @@ function publishedYearBatch(row: Partial<RosterFileFields>): string {
   return row.batch == null ? String(row.year) : `${row.year} / ${row.batch}`
 }
 const parseLabel = computed(() => row.parseState ? PARSE_STATES[row.parseState] : '—')
-const parseVariant = computed(() => row.parseState === 'failed' ? 'destructive'
-  : row.parseState === 'parsed' ? 'solid' : 'dashed')
+const parseVariant = computed(() => row.parseState === 'failed' ? 'error'
+  : row.parseState === 'parsed' ? 'success' : 'warning')
+const categoryVariant = computed(() => row.categoryState === 'set' ? 'success'
+  : row.categoryState === 'inferred' ? 'info' : 'warning')
 const details = computed(() => [
   { label: '来源', value: row.source ? SOURCES[row.source] : '—' },
   { label: '类别', value: row.kind ? KINDS[row.kind] : '—' },
@@ -119,7 +121,7 @@ const details = computed(() => [
          语言 —— `dashed` = 还没坐实),不靠颜色 —— 颜色已被称号梯度占用。 -->
     <Badge
       v-if="row.categoryState"
-      :variant="row.categoryState === 'set' ? 'quiet' : 'dashed'"
+      :variant="categoryVariant"
       :title="
         row.categoryState === 'unset' && !isComplete(row)
           ? '来源或类别未填全'

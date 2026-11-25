@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { CalendarClock, ChevronRight, RefreshCw } from '@lucide/vue'
 import { ref } from 'vue'
-import PageHeader from '#core/app/components/PageHeader.vue'
+import SectionCard from '#core/app/components/SectionCard.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Badge, type BadgeVariants } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
-import { Card } from '#core/app/components/ui/card'
 import { Empty, EmptyHeader, EmptyTitle } from '#core/app/components/ui/empty'
 import { useTaskSnapshot } from '#core/app/composables/useTaskSnapshot'
 import { TASK_STATES } from '#core/lib/task-center'
@@ -62,11 +62,10 @@ function formatTime(value: number) {
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-1 flex-col gap-4">
-    <PageHeader title="定时任务" />
+  <WorkspacePage title="定时任务">
     <div class="workspace-list-body overflow-y-auto overscroll-contain">
-      <Card class="gap-0 py-0">
-        <div class="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+      <SectionCard :padded="false">
+        <template #header>
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <CalendarClock class="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
             <span class="text-sm font-medium">自动调度</span>
@@ -74,6 +73,8 @@ function formatTime(value: number) {
               {{ data.enabled ? '已启用' : '已停用' }}
             </Badge>
           </div>
+        </template>
+        <template #actions>
           <Button variant="outline" size="sm" :disabled="loading" @click="refresh()">
             <RefreshCw
               class="size-3.5"
@@ -82,7 +83,7 @@ function formatTime(value: number) {
             />
             {{ loading ? '正在刷新' : '刷新' }}
           </Button>
-        </div>
+        </template>
 
         <TableFailureState
           v-if="failed"
@@ -152,7 +153,7 @@ function formatTime(value: number) {
             </Button>
           </li>
         </ul>
-      </Card>
+      </SectionCard>
     </div>
-  </div>
+  </WorkspacePage>
 </template>

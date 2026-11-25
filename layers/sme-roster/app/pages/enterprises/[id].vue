@@ -21,6 +21,8 @@ import {
 } from '#sme-roster/lib/roster/evidence-preview-return'
 import FilePreviewDialog from '#core/app/components/preview/FilePreviewDialog.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
+import SectionCard from '#core/app/components/SectionCard.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Alert, AlertDescription, AlertTitle } from '#core/app/components/ui/alert'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '#core/app/components/ui/breadcrumb'
 import { Button } from '#core/app/components/ui/button'
@@ -77,8 +79,8 @@ const backLabel = computed(() => typeof route.query.currentBack === 'string' ? C
 /**
  * 返回名录台账。
  *
- * 台账把「视图 + 全部筛选 + 页码」都放在地址栏里,所以进企业详情时把那份筛选串
- * 作为 `back` 带过来(见 `RosterEnterprisePanel` / `RosterTitleTable` 的链接)。
+ * 台账把「全部筛选 + 页码」都放在地址栏里,所以进企业详情时把那份筛选串
+ * 作为 `back` 带过来(见 `EnterpriseDrawer` 的「完整企业页」链接)。
  * 没有 `back`(直接输 URL、从别处进来)就退回台账首页。
  *
  * 只接受**查询串**形状(`a=1&b=2`),兑成 query 对象再交给 router —— 不直接拼进 `to`,
@@ -279,63 +281,63 @@ function openPreview(e: Evidence) {
 
 <template>
   <div class="flex flex-col gap-5">
-    <!-- 加载中 -->
-    <template v-if="isLoading && !detail">
-      <div class="flex flex-col gap-2">
-        <Skeleton class="h-3 w-24" />
-        <Skeleton class="h-7 w-72" />
-        <Skeleton class="h-4 w-96 max-w-full" />
-      </div>
-      <div class="bg-card rounded-lg border p-5">
-        <Skeleton class="h-6 w-56" />
-        <Skeleton class="mt-3 h-4 w-full max-w-xl" />
-      </div>
-    </template>
+    <WorkspacePage
+      mode="scroll"
+      :title="detail?.name ?? '企业详情'"
+      :busy="isLoading && !detail"
+      class="gap-5"
+      header-class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]"
+    >
+      <template #breadcrumb>
+        <Breadcrumb aria-label="当前位置">
+          <BreadcrumbList>
+            <BreadcrumbItem><BreadcrumbLink as-child><NuxtLink :to="backTo">{{ backLabel }}</NuxtLink></BreadcrumbLink></BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem><BreadcrumbPage>企业详情</BreadcrumbPage></BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+      </template>
+      <template v-if="detail" #description>
+        <span>{{ detail.district ?? '属地未知' }}</span>
+        <template v-if="detail.uscc"><span class="mx-1.5">·</span><span class="font-mono text-xs break-all">{{ detail.uscc }}</span></template>
+      </template>
 
-    <!-- 加载失败 -->
-    <Alert v-else-if="error && !detail" variant="destructive">
-      <AlertTitle>未能加载企业详情</AlertTitle>
-      <AlertDescription class="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button>
-        <Button as-child variant="ghost" size="sm"><NuxtLink :to="backTo">返回{{ backLabel }}</NuxtLink></Button>
-      </AlertDescription>
-    </Alert>
+      <!-- 加载中 -->
+      <template v-if="isLoading && !detail">
+        <div class="bg-card rounded-lg border p-5">
+          <Skeleton class="h-6 w-56" />
+          <Skeleton class="mt-3 h-4 w-full max-w-xl" />
+        </div>
+      </template>
 
-    <template v-else-if="detail">
-      <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
-
-      <section class="bg-card min-w-0 space-y-3 rounded-lg border p-4 sm:p-5" aria-label="企业概况">
-      <PageHeader :title="detail.name" class="min-w-0 max-w-full [&_h1]:max-w-full [&_h1]:whitespace-normal [&_h1]:[overflow-wrap:anywhere]">
-        <template #breadcrumb>
-          <Breadcrumb aria-label="当前位置">
-            <BreadcrumbList>
-              <BreadcrumbItem><BreadcrumbLink as-child><NuxtLink :to="backTo">{{ backLabel }}</NuxtLink></BreadcrumbLink></BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem><BreadcrumbPage>企业详情</BreadcrumbPage></BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </template>
-        <template #description>
-          <span>{{ detail.district ?? '属地未知' }}</span>
-          <template v-if="detail.uscc"><span class="mx-1.5">·</span><span class="font-mono text-xs break-all">{{ detail.uscc }}</span></template>
-        </template>
-      </PageHeader>
-
-      <p v-if="confirmedAliasNames.length" class="text-muted-foreground border-t pt-3 text-sm leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
-      </section>
-
-      <Alert v-if="!detail.uscc" variant="destructive">
-        <AlertTitle>缺少统一社会信用代码</AlertTitle>
-        <AlertDescription>记录按企业名称归并。同名企业需查阅公布名单原件核对。</AlertDescription>
+      <!-- 加载失败 -->
+      <Alert v-else-if="error && !detail" variant="destructive">
+        <AlertTitle>未能加载企业详情</AlertTitle>
+        <AlertDescription class="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" @click="refetch()">重新读取企业详情</Button>
+          <Button as-child variant="ghost" size="sm"><NuxtLink :to="backTo">返回{{ backLabel }}</NuxtLink></Button>
+        </AlertDescription>
       </Alert>
 
-      <div class="flex min-w-0 flex-col gap-5">
+      <template v-else-if="detail">
+        <TableFailureState v-if="error" title="企业详情更新失败" description="保留上次成功的企业详情，请重试读取当前状态。" :pending="isLoading" @retry="refetch()" />
+
+        <section v-if="confirmedAliasNames.length" aria-label="企业概况" class="min-w-0">
+          <p class="text-muted-foreground text-sm leading-6">已确认曾用名：{{ confirmedAliasNames.join('、') }}</p>
+        </section>
+
+        <Alert v-if="!detail.uscc" variant="destructive">
+          <AlertTitle>缺少统一社会信用代码</AlertTitle>
+          <AlertDescription>记录按企业名称归并。同名企业需查阅公布名单原件核对。</AlertDescription>
+        </Alert>
+
+        <div class="flex min-w-0 flex-col gap-5">
           <!-- 称号与复核安排：只保留首屏需要的事实，不重复核对状态矩阵。 -->
-          <section class="bg-card overflow-hidden rounded-lg border" aria-label="称号与复核安排">
-            <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
+          <SectionCard :padded="false" aria-label="称号与复核安排">
+            <template #header>
               <h2 class="text-sm font-semibold">称号与复核安排</h2>
               <span class="text-muted-foreground text-table">评估时点：<time v-if="assessmentTimeLabel" :datetime="assessmentTime">{{ assessmentTimeLabel }}</time><span v-else>未知</span></span>
-            </header>
+            </template>
             <dl v-if="titleInfo.length" class="divide-y">
               <div
                 v-for="item in titleInfo"
@@ -353,67 +355,92 @@ function openPreview(e: Evidence) {
             <p v-else class="text-muted-foreground px-4 py-6 text-table">尚无正式称号记录。</p>
             <DisclosurePanel v-if="qualificationRows.length" trigger-class="px-4" class="border-t">
               <template #title>资格依据</template>
-              <div class="flex min-w-0 flex-col gap-4 px-4 pb-4 text-base leading-6">
-                <section v-for="item in qualificationRows" :key="item.titleCode" class="flex min-w-0 flex-col gap-2 break-words">
-                  <h3 class="flex flex-wrap items-center gap-2"><RosterTitleBadge :code="item.titleCode" /><span>{{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}</span></h3>
-                  <p v-for="basis in item.effectiveQualification?.presentationBasis ?? []" :key="basis">{{ basis }}</p>
-                  <template v-if="!item.effectiveQualification?.source">
-                    <p>公布资格：{{ item.officialQualification.message }}</p>
-                    <p v-for="note in item.officialQualification.notes" :key="note">{{ note }}</p>
-                  </template>
-                  <p>主体：{{ item.subject.message }}</p>
-                  <p>地域：{{ item.region.message }}</p>
-                  <p v-for="(cycle, index) in item.cycles" :key="index">原认定周期 {{ cycle.originYear }} 年 · {{ cycle.batchSeq == null ? '原批次未记录，未推断数字批次' : `第 ${cycle.batchSeq} 批` }}（年份精度）</p>
+              <div class="divide-y px-4 pb-3">
+                <section v-for="item in qualificationRows" :key="item.titleCode" class="py-3.5 first:pt-1 last:pb-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <RosterTitleBadge :code="item.titleCode" />
+                    <span class="text-sm font-semibold">
+                      {{ item.effectiveQualification ? CURRENT_STATUS_LABELS[item.effectiveQualification.status] : qualificationGroupLabel[item.group] }}
+                    </span>
+                  </div>
+                  <dl class="mt-2.5 grid grid-cols-1 gap-x-4 gap-y-2 text-sm leading-5 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+                    <template v-if="item.effectiveQualification?.presentationBasis?.length">
+                      <dt class="text-muted-foreground text-xs leading-5 sm:pt-0.5">资格依据</dt>
+                      <dd class="min-w-0 space-y-1 wrap-anywhere">
+                        <p v-for="basis in item.effectiveQualification.presentationBasis" :key="basis">{{ basis }}</p>
+                      </dd>
+                    </template>
+                    <template v-if="!item.effectiveQualification?.source">
+                      <dt class="text-muted-foreground text-xs leading-5 sm:pt-0.5">公布资格</dt>
+                      <dd class="min-w-0 space-y-1 wrap-anywhere">
+                        <p>{{ item.officialQualification.message }}</p>
+                        <p v-for="note in item.officialQualification.notes" :key="note" class="text-muted-foreground text-xs leading-5">{{ note }}</p>
+                      </dd>
+                    </template>
+                    <dt class="text-muted-foreground text-xs leading-5 sm:pt-0.5">主体</dt>
+                    <dd class="min-w-0 wrap-anywhere">{{ item.subject.message }}</dd>
+                    <dt class="text-muted-foreground text-xs leading-5 sm:pt-0.5">地域</dt>
+                    <dd class="min-w-0 wrap-anywhere">{{ item.region.message }}</dd>
+                    <template v-if="item.cycles.length">
+                      <dt class="text-muted-foreground text-xs leading-5 sm:pt-0.5">原认定周期</dt>
+                      <dd class="min-w-0 space-y-1 tabular-nums wrap-anywhere">
+                        <p v-for="(cycle, index) in item.cycles" :key="index">
+                          {{ cycle.originYear }} 年 · {{ cycle.batchSeq == null ? '原批次未记录，未推断数字批次' : `第 ${cycle.batchSeq} 批` }}<span class="text-muted-foreground text-xs">（年份精度）</span>
+                        </p>
+                      </dd>
+                    </template>
+                  </dl>
                 </section>
               </div>
             </DisclosurePanel>
-          </section>
+          </SectionCard>
 
           <RosterPlatformRecords v-if="data" :key="id" :timeline="data.businessTimeline">
             <template #publication="{ title: selectedBusinessTitle }">
-          <section class="bg-card overflow-hidden rounded-lg border" aria-label="认定与复核记录">
-            <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b px-4 py-3">
-              <h2 class="text-sm font-semibold">认定与复核记录</h2>
-            </header>
-            <div v-if="!publicationHistories.length" class="text-muted-foreground py-8 text-center text-sm">
-              暂无公布记录。
-            </div>
-            <div v-else>
-              <p v-if="selectedBusinessTitle !== 'all' && !publicationHistories.some(history => history.code === selectedBusinessTitle)" class="text-muted-foreground py-8 text-center text-sm">该称号暂无公布记录。</p>
-              <section v-for="history in publicationHistories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0 border-b last:border-b-0">
-                <header class="bg-muted/40 flex flex-wrap items-baseline gap-3 border-b px-4 py-3">
-                  <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
-                  <span class="text-muted-foreground text-sm">{{ history.events.length }} 条事件</span>
-                </header>
-                <p v-if="!history.events.length" class="text-muted-foreground px-4 py-6 text-sm">该称号暂无事件。</p>
-                <ol v-else :aria-label="`${titleLabel(history.code)}事件顺序`" class="divide-y">
-                  <li v-for="(event, index) in history.events" :key="event.id" class="min-w-0">
-                    <p v-if="historyYear(event) == null && (index === 0 || historyYear(history.events[index - 1]!) != null)" class="bg-muted/40 text-muted-foreground border-b px-4 py-2 text-sm">年份待核 · 未知时点</p>
-                    <section :id="`record-event-${event.id}`" :data-event-id="event.id" tabindex="-1" class="scroll-mt-20 px-4 py-4 sm:px-5" :data-highlighted="highlightedEventId === event.id ? 'true' : undefined">
-                      <p class="flex flex-wrap items-center gap-2"><span class="font-semibold tabular-nums">{{ historyYear(event) ?? '年份待核' }}</span><RosterEventChip :type="event.type" :hide-batch="true" /></p>
-                      <p v-if="event.type === 'review'" class="mt-2">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
-                      <p v-if="event.seq != null" class="text-muted-foreground mt-1 text-sm">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</p>
-                      <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-sm">入库培育不表示已持有称号。</p>
-                      <section aria-label="公布名单" class="mt-3 flex min-w-0 flex-col gap-3">
-                        <h4 class="text-sm font-medium">正式出处</h4>
-                        <p v-if="!event.evidence.length" class="text-muted-foreground text-sm">此事件未记录公布名单出处。</p>
-                        <ul v-else class="grid min-w-0 gap-3 xl:grid-cols-2">
-                          <li v-for="(item, index) in event.evidence" :key="item.id ?? index" class="min-w-0">
-                            <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />
-                          </li>
-                        </ul>
-                      </section>
-                    </section>
-                  </li>
-                </ol>
+              <section aria-label="认定与复核记录" class="min-w-0">
+                <h2 class="sr-only">认定与复核记录</h2>
+                <div v-if="!publicationHistories.length" class="text-muted-foreground py-8 text-center text-sm">
+                  暂无公布记录。
+                </div>
+                <div v-else class="divide-y">
+                  <p v-if="selectedBusinessTitle !== 'all' && !publicationHistories.some(history => history.code === selectedBusinessTitle)" class="text-muted-foreground py-8 text-center text-sm">该称号暂无公布记录。</p>
+                  <section v-for="history in publicationHistories.filter(h => selectedBusinessTitle === 'all' || h.code === selectedBusinessTitle)" :key="history.code" :aria-label="`${titleLabel(history.code)}历史`" class="min-w-0">
+                    <header class="bg-muted/35 flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
+                      <h3 class="text-sm font-semibold">{{ titleLabel(history.code) }}</h3>
+                      <span class="text-muted-foreground text-xs tabular-nums">{{ history.events.length }} 条事件</span>
+                    </header>
+                    <p v-if="!history.events.length" class="text-muted-foreground px-4 py-6 text-sm">该称号暂无事件。</p>
+                    <ol v-else :aria-label="`${titleLabel(history.code)}事件顺序`" class="divide-y">
+                      <li v-for="(event, index) in history.events" :key="event.id" class="min-w-0">
+                        <p v-if="historyYear(event) == null && (index === 0 || historyYear(history.events[index - 1]!) != null)" class="bg-muted/30 text-muted-foreground border-b px-4 py-1.5 text-xs">年份待核 · 未知时点</p>
+                        <section :id="`record-event-${event.id}`" :data-event-id="event.id" tabindex="-1" class="scroll-mt-20 px-4 py-3.5" :data-highlighted="highlightedEventId === event.id ? 'true' : undefined">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-sm font-semibold tabular-nums">{{ historyYear(event) ?? '年份待核' }}</span>
+                            <RosterEventChip :type="event.type" :hide-batch="true" />
+                            <span v-if="event.seq != null" class="text-muted-foreground text-xs">{{ event.type === 'review' ? '原认定批次' : '批次' }}：第 {{ event.seq }} 批</span>
+                          </div>
+                          <p v-if="event.type === 'review'" class="mt-1.5 text-sm leading-5">{{ eventDecisionText({ eventType: event.type, year: event.year, decidedYear: event.decidedYear, reviewOutcome: event.reviewOutcome }) }}</p>
+                          <p v-if="event.type === 'nurture'" class="text-muted-foreground mt-1 text-xs">入库培育不表示已持有称号。</p>
+                          <section aria-label="公布名单" class="mt-2.5 min-w-0">
+                            <h4 class="sr-only">正式出处</h4>
+                            <p v-if="!event.evidence.length" class="text-muted-foreground text-xs">此事件未记录公布名单出处。</p>
+                            <ul v-else class="grid min-w-0 gap-2.5 xl:grid-cols-2">
+                              <li v-for="(item, index) in event.evidence" :key="item.id ?? index" class="min-w-0">
+                                <OfficialEvidenceView :evidence="item" :back="previewReturnPath(event.id)" @preview="openPreview(item)" @page-open="rememberPagePreviewReturn(event.id, $event)" />
+                              </li>
+                            </ul>
+                          </section>
+                        </section>
+                      </li>
+                    </ol>
+                  </section>
+                </div>
               </section>
-            </div>
-          </section>
             </template>
           </RosterPlatformRecords>
-
-      </div>
-    </template>
+        </div>
+      </template>
+    </WorkspacePage>
 
     <!--
       预览弹窗挂在最外层,不放卡片里:弹窗是 Teleport 到 body 的,

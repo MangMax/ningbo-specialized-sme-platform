@@ -4,13 +4,14 @@ import { ArrowDown, ArrowDownUp, ArrowUp, Search } from '@lucide/vue'
 import EnterpriseLibraryFiltersPanel from '#core/app/components/enterprise-library/EnterpriseLibraryFilters.vue'
 import { computed, ref, shallowRef, watch } from 'vue'
 import EnterpriseSourceSheet from '#core/app/components/enterprise-library/EnterpriseSourceSheet.vue'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import FilterChip from '#core/app/components/FilterChip.vue'
-import PageHeader from '#core/app/components/PageHeader.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card } from '#core/app/components/ui/card'
 import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from '#core/app/components/ui/empty'
 import { Input } from '#core/app/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
@@ -166,10 +167,13 @@ function restoreSourceFocus() {
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-col gap-4">
-    <PageHeader title="企业基础库" />
-    <Card class="paginated-table-card min-w-0 gap-0 py-0">
-      <div class="table-toolbar @container/enterprise-filters flex flex-col gap-3">
+  <WorkspacePage title="企业基础库">
+    <DataTableCard
+      toolbar-label="企业列表筛选与操作"
+      toolbar-class="@container/enterprise-filters flex flex-col gap-3"
+      :body-busy="isLoading"
+    >
+      <template #toolbar>
         <EnterpriseLibraryFiltersPanel
           :filters="filters" :sorts="sorts" :regions="regions" :industries="industries"
           :regions-error="Boolean(regionsError)" :industries-error="Boolean(industriesError)"
@@ -177,92 +181,95 @@ function restoreSourceFocus() {
         >
           <template #quick-search>
             <form aria-label="快速查询企业" class="flex min-w-0 flex-1 grow basis-60 items-center gap-2 @min-[36rem]/enterprise-filters:max-w-96" @submit.prevent="applySearch">
-              <Input id="enterprise-library-search" v-model="draft" maxlength="500" class="min-w-0" aria-label="企业名称或统一社会信用代码" placeholder="企业名称或完整信用代码" />
-              <Button type="submit"><Search class="size-4" aria-hidden="true" />查询</Button>
+              <Input id="enterprise-library-search" v-model="draft" size="sm" maxlength="500" class="min-w-0" aria-label="企业名称或统一社会信用代码" placeholder="企业名称或完整信用代码" />
+              <Button type="submit" size="sm"><Search class="size-4" aria-hidden="true" />查询</Button>
             </form>
           </template>
         </EnterpriseLibraryFiltersPanel>
-        <div v-if="filterChips.length" class="flex min-w-0 flex-wrap items-center gap-2">
-          <FilterChip v-for="chip in filterChips" :key="chip.key" :label="chip.label" @remove="removeFilter(chip.key)" />
-          <Button v-if="filterChips.length > 1" type="button" size="sm" variant="ghost" @click="reset">清除筛选</Button>
-        </div>
+        <ActiveFilterBar :items="filterChips" :show-clear-min="2" @remove="key => removeFilter(key as keyof EnterpriseLibraryFilters)" @clear="reset" />
         <div v-if="sorts.length" role="group" aria-label="已应用的排序" class="flex min-w-0 flex-wrap items-center gap-2">
           <FilterChip v-for="(rule, index) in sorts" :key="rule.field" :label="`${index + 1}. ${sortLabel(rule)}`"
             :remove-label="`移除排序：${sortLabel(rule)}`" @remove="removeSort(rule.field)" />
           <Button v-if="sorts.length > 1" type="button" size="sm" variant="ghost" @click="clearSort">清除排序</Button>
         </div>
-      </div>
-      <p role="status" class="sr-only">{{ resultLabel }}</p>
+      </template>
 
-      <div class="paginated-table-body relative flex min-h-0 flex-col" :aria-busy="isLoading">
+      <template #status>
         <TableLoadingStatus kind="ledger" :loading="isLoading" :label="isShowingPrevious ? '正在更新企业列表…' : '正在加载企业…'" />
-        <TableFailureState
-          v-if="error" title="企业列表暂时无法加载"
-          :compact="Boolean(rows.length)" :pending="isLoading" :description="rows.length ? '已保留上次查询结果。' : undefined" @retry="refetch()"
-        />
-        <div
-          v-if="rows.length" ref="enterprise-table" role="region" aria-label="企业列表" tabindex="0"
-          class="data-table-scroll @container focus-visible:outline-ring focus-visible:outline-2 focus-visible:-outline-offset-2"
-        >
-          <Table class="data-table min-w-[64rem] table-fixed">
-            <caption class="sr-only">企业基础库列表</caption>
-            <TableHeader>
-              <TableRow>
-                <TableHead
-                  v-for="field in enterpriseLibrarySortFields" :key="field"
-                  scope="col" class="px-0!" :class="columnWidths[field]"
-                  :aria-sort="primarySort?.field === field ? primarySort.direction === 'desc' ? 'descending' : 'ascending' : undefined"
-                >
-                  <Button type="button" variant="ghost" class="h-10 w-full justify-start gap-1 rounded-none px-2 text-table"
-                    @click="sortColumn(field)">
-                    {{ enterpriseLibraryColumnLabels[field] }}
-                    <component
-                      :is="directionsByField.has(field) ? directionsByField.get(field) === 'desc' ? ArrowDown : ArrowUp : ArrowDownUp"
-                      aria-hidden="true" class="size-3.5 shrink-0" :class="!directionsByField.has(field) && 'text-muted-foreground'"
-                    />
-                  </Button>
-                </TableHead>
-                <TableHead scope="col" class="sticky right-0 z-20 w-28 border-l bg-muted text-right">资料</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow v-for="row in rows" :key="row.id">
-                <th scope="row" class="px-2 py-2.5 text-left align-middle font-medium whitespace-normal">
-                  <span class="wrap-anywhere">{{ row.name }}</span>
-                  <span v-if="row.uscc || row.districtName" class="text-muted-foreground mt-0.5 flex flex-wrap gap-x-2 text-table font-normal @min-[48rem]:hidden">
-                    <span v-if="row.uscc" class="tabular-nums">{{ row.uscc }}</span>
-                    <span v-if="row.districtName">{{ row.districtName }}</span>
-                  </span>
-                </th>
-                <TableCell class="tabular-nums">{{ row.uscc ?? '—' }}</TableCell>
-                <TableCell class="whitespace-normal">{{ row.districtName ?? '—' }}</TableCell>
-                <TableCell class="whitespace-normal">{{ row.townshipName ?? '—' }}</TableCell>
-                <TableCell class="whitespace-normal">{{ row.industryName ?? '—' }}</TableCell>
-                <TableCell class="wrap-anywhere whitespace-pre-line">{{ row.registeredAddress ?? '—' }}</TableCell>
-                <TableCell class="wrap-anywhere whitespace-pre-line">{{ row.operatingAddress ?? '—' }}</TableCell>
-                <TableCell class="sticky right-0 z-10 border-l bg-card text-right">
-                  <Button variant="ghost" size="sm" class="min-h-11 sm:min-h-0" :aria-label="`查看资料：${row.name}`" @click="openSource(row, $event)">查看资料</Button>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-        <Empty v-else-if="hasCurrentSnapshot && !isLoading && !error" class="min-h-44 gap-4 border-0">
-          <EmptyHeader><EmptyTitle>{{ filterChips.length ? '未找到符合条件的企业' : '基础库暂无企业' }}</EmptyTitle></EmptyHeader>
-          <EmptyContent v-if="filterChips.length">
-            <Button variant="outline" @click="reset">清除筛选</Button>
-          </EmptyContent>
-        </Empty>
-        <div v-else-if="isLoading && !error" class="h-36" />
-      </div>
+      </template>
 
-      <TablePagination
-        v-if="displayed && displayed.total > 0" in-card
-        :page="displayed.page" :page-size="displayed.request.pageSize" :total="displayed.total"
-        :loading="paginationDisabled" :max-page-size="100" unit="家"
-        @update:page="page = $event" @update:page-size="resize"
+      <p role="status" class="sr-only">{{ resultLabel }}</p>
+      <TableFailureState
+        v-if="error" title="企业列表暂时无法加载"
+        :compact="Boolean(rows.length)" :pending="isLoading" :description="rows.length ? '已保留上次查询结果。' : undefined" @retry="refetch()"
       />
-    </Card>
+      <div
+        v-if="rows.length" ref="enterprise-table" role="region" aria-label="企业列表" tabindex="0"
+        class="data-table-scroll @container focus-visible:outline-ring focus-visible:outline-2 focus-visible:-outline-offset-2"
+      >
+        <Table class="data-table min-w-[66rem] table-fixed">
+          <caption class="sr-only">企业基础库列表</caption>
+          <TableHeader>
+            <TableRow>
+              <TableHead
+                v-for="field in enterpriseLibrarySortFields" :key="field"
+                scope="col" class="px-0!" :class="columnWidths[field]"
+                :aria-sort="primarySort?.field === field ? primarySort.direction === 'desc' ? 'descending' : 'ascending' : undefined"
+              >
+                <Button type="button" variant="ghost" class="h-9 w-full justify-start gap-1 rounded-none px-3 text-table"
+                  @click="sortColumn(field)">
+                  {{ enterpriseLibraryColumnLabels[field] }}
+                  <component
+                    :is="directionsByField.has(field) ? directionsByField.get(field) === 'desc' ? ArrowDown : ArrowUp : ArrowDownUp"
+                    aria-hidden="true" class="size-3.5 shrink-0" :class="!directionsByField.has(field) && 'text-muted-foreground'"
+                  />
+                </Button>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="row in rows" :key="row.id">
+              <th scope="row" class="px-3 py-2.5 text-left align-middle font-medium whitespace-normal">
+                <button
+                  type="button"
+                  class="hover:text-primary cursor-pointer text-left font-medium wrap-anywhere hover:underline focus-visible:underline focus-visible:outline-none"
+                  :aria-label="`查看资料：${row.name}`"
+                  @click="openSource(row, $event)"
+                >
+                  {{ row.name }}
+                </button>
+                <span v-if="row.uscc || row.districtName" class="text-muted-foreground mt-0.5 flex flex-wrap gap-x-2 text-table font-normal @min-[48rem]:hidden">
+                  <span v-if="row.uscc" class="tabular-nums">{{ row.uscc }}</span>
+                  <span v-if="row.districtName">{{ row.districtName }}</span>
+                </span>
+              </th>
+              <TableCell class="tabular-nums">{{ row.uscc ?? '—' }}</TableCell>
+              <TableCell class="whitespace-normal">{{ row.districtName ?? '—' }}</TableCell>
+              <TableCell class="whitespace-normal">{{ row.townshipName ?? '—' }}</TableCell>
+              <TableCell class="whitespace-normal">{{ row.industryName ?? '—' }}</TableCell>
+              <TableCell class="wrap-anywhere whitespace-pre-line">{{ row.registeredAddress ?? '—' }}</TableCell>
+              <TableCell class="wrap-anywhere whitespace-pre-line">{{ row.operatingAddress ?? '—' }}</TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+      <Empty v-else-if="hasCurrentSnapshot && !isLoading && !error" class="min-h-44 gap-4 border-0">
+        <EmptyHeader><EmptyTitle>{{ filterChips.length ? '未找到符合条件的企业' : '基础库暂无企业' }}</EmptyTitle></EmptyHeader>
+        <EmptyContent v-if="filterChips.length">
+          <Button variant="outline" @click="reset">清除筛选</Button>
+        </EmptyContent>
+      </Empty>
+      <div v-else-if="isLoading && !error" class="h-36" />
+
+      <template #footer>
+        <TablePagination
+          v-if="displayed && displayed.total > 0" in-card
+          :page="displayed.page" :page-size="displayed.request.pageSize" :total="displayed.total"
+          :loading="paginationDisabled" :max-page-size="100" unit="家"
+          @update:page="page = $event" @update:page-size="resize"
+        />
+      </template>
+    </DataTableCard>
     <EnterpriseSourceSheet :enterprise="selected" :regions="regions" @saved="updateDetails" @close="selected = null" @restore-focus="restoreSourceFocus" />
-  </div>
+  </WorkspacePage>
 </template>

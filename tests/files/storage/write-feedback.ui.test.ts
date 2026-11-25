@@ -59,6 +59,14 @@ const stubs = {
     template: '<button data-testid="emit-confirm" @click="$emit(\'confirm\', false)">confirm</button>',
   },
   UploadDialog: true,
+  DropdownMenu: { template: '<div><slot /></div>' },
+  DropdownMenuTrigger: { template: '<div><slot /></div>' },
+  DropdownMenuContent: { template: '<div><slot /></div>' },
+  DropdownMenuSeparator: { template: '<hr />' },
+  DropdownMenuItem: {
+    emits: ['select'],
+    template: '<button type="button" @click="$emit(\'select\')"><slot /></button>',
+  },
 }
 
 describe('文件页写路径操作反馈', () => {

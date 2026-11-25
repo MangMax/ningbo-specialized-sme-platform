@@ -7,7 +7,7 @@ import {
 } from '#core/app/components/ui/dropdown-menu'
 import type { DictionaryEntry } from '#core/lib/dictionaries'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   id: string
   label: string
   kind: 'region' | 'industry'
@@ -15,7 +15,8 @@ const props = defineProps<{
   parentLabel?: string
   emptyLabel: string
   disabled?: boolean
-}>()
+  size?: 'default' | 'sm'
+}>(), { size: 'default' })
 const selection = defineModel<{ parent?: string; child?: string }>({ required: true })
 const branch = ref<string>()
 
@@ -78,12 +79,12 @@ function choose(parent?: string, child?: string) {
   <DropdownMenu :modal="false" @update:open="onOpen">
     <DropdownMenuTrigger as-child>
       <Button
-        :id="id" type="button" variant="outline" :aria-label="label" :aria-description="selectedPath || emptyLabel"
+        :id="id" type="button" variant="outline" :size="size" :aria-label="label" :aria-description="selectedPath || emptyLabel"
         :disabled="disabled || !entries" :title="selectedPath || undefined"
         class="w-full min-w-0 justify-between px-3 font-normal"
       >
         <span class="min-w-0 truncate">{{ selectedPath || emptyLabel }}</span>
-        <ChevronDown aria-hidden="true" class="mr-0 size-4 shrink-0 text-muted-foreground" />
+        <ChevronDown aria-hidden="true" class="mr-0 shrink-0 text-muted-foreground" />
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent

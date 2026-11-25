@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useQuery, useQueryCache } from '@pinia/colada'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { computed, ref, watch, type Component } from 'vue'
 import { useMediaQuery, watchDebounced } from '@vueuse/core'
-import { ChevronRight, FolderOpen, FolderUp, Search } from '@lucide/vue'
+import { ChevronRight, Eye, FolderOpen, FolderUp, MoreHorizontal, Pencil, Search, Trash2 } from '@lucide/vue'
 import { formatBytes } from '#core/lib/core/file-size'
 import { describeFetchError } from '#core/lib/file-content-status'
 import type { FileCategoryUi } from '#core/lib/core/file-category-ui'
@@ -12,10 +12,18 @@ import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composa
 import type { QueryRequestSnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
 import { useToastFeedback } from '#core/app/composables/useToastFeedback'
 import type { FileRow } from '#core/server/utils/file-store-contract'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
 import MultiSelectFilter from '#core/app/components/MultiSelectFilter.vue'
-import FilterChip from '#core/app/components/FilterChip.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '#core/app/components/ui/dropdown-menu'
 import {
   Empty,
   EmptyHeader,
@@ -62,7 +70,7 @@ const expandedPanels = registeredComponents('expandedPanel')
 const detailPanels = registeredComponents('detailPanel')
 const columnCount = computed(() => 2 + Number(props.showSize) + Number(expandedPanels.length > 0)
   + (compactDetails.value ? 0 : columns.length))
-const tableWidth = 176 + (props.showSize ? 70 : 0) + 132 + (expandedPanels.length ? 32 : 0)
+const tableWidth = 176 + (props.showSize ? 70 : 0) + 56 + (expandedPanels.length ? 32 : 0)
   + columns.reduce((total, column) => total + column.width, 0)
 
 const apiGet = $fetch as unknown as <T>(
@@ -131,23 +139,6 @@ const total = computed(() => displayedResult.value?.total ?? 0)
 const displayedPage = computed(() => displayedResult.value?.request.page ?? page.value)
 const displayedPageSize = computed(() => displayedResult.value?.request.pageSize ?? pageSize.value)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / displayedPageSize.value)))
-
-const tableScroller = ref<HTMLElement | null>(null)
-const isPinned = ref(false)
-function measureOverflow() {
-  const el = tableScroller.value
-  isPinned.value = el ? el.scrollWidth > el.clientWidth + 1 : false
-}
-onMounted(() => {
-  measureOverflow()
-  window.addEventListener('resize', measureOverflow)
-  window.addEventListener('pageshow', measureOverflow)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', measureOverflow)
-  window.removeEventListener('pageshow', measureOverflow)
-})
-watch([rows, pageSize, compactDetails], () => nextTick(measureOverflow))
 
 function refresh() {
   return queryCache.invalidateQueries({ key: ['files'] })
@@ -283,16 +274,9 @@ const previewSrc = computed(() =>
   previewFile.value ? fileUrl(previewFile.value.relPath) : '',
 )
 
-const TH_CLASS = 'bg-muted text-muted-foreground h-9 text-xs font-medium'
-
-const actionWidth = props.allowRemoval ? 'w-[132px] sm:w-44' : 'w-[132px]'
-const ACTION_TH = computed(
-  () => `${TH_CLASS} sticky right-0 z-30 ${actionWidth} ${isPinned.value ? 'pin-edge' : ''}`,
-)
-const ACTION_TD = computed(
-  () =>
-    `bg-card group-hover:bg-accent/70 sticky right-0 z-10 ${actionWidth} transition-colors ${isPinned.value ? 'pin-edge' : ''}`,
-)
+const actionWidth = 'w-14 text-right'
+const ACTION_TH = `table-sticky-action-head ${actionWidth}`
+const ACTION_TD = `table-sticky-action-cell ${actionWidth}`
 
 function setPage(n: number) {
   page.value = Math.min(Math.max(1, n), totalPages.value)
@@ -369,21 +353,20 @@ watch([selections, q, page, pageSize], async (values, previous) => {
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-col gap-3">
-    <PageHeader :title="title" />
-    <Card class="paginated-table-card min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-      <CardHeader class="table-toolbar gap-3">
+  <WorkspacePage :title="title">
+    <DataTableCard toolbar-class="gap-3">
+      <template #toolbar>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="relative min-w-0 flex-1 basis-52 sm:max-w-xs">
             <Search
               class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
               aria-hidden="true"
             />
-            <Input v-model="search" type="search" class="pl-8" aria-label="搜索文件名" placeholder="搜索文件名" />
+            <Input v-model="search" type="search" size="sm" class="pl-8" aria-label="搜索文件名" placeholder="搜索文件名" />
           </div>
           <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <Button v-if="allowRemoval" variant="ghost" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
-            <Button @click="uploading = true"><FolderUp aria-hidden="true" />{{ uploadLabel }}</Button>
+            <Button v-if="allowRemoval" variant="ghost" size="sm" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
+            <Button size="sm" @click="uploading = true"><FolderUp aria-hidden="true" />{{ uploadLabel }}</Button>
           </div>
         </div>
         <div v-if="criteria.length" class="flex flex-wrap items-center gap-2">
@@ -399,181 +382,181 @@ watch([selections, q, page, pageSize], async (values, previous) => {
           />
         </div>
 
-        <TransitionGroup
-          v-if="activeFilters.length"
-          tag="div"
-          class="flex flex-wrap items-center gap-1.5"
-          enter-active-class="transition duration-150 ease-snap motion-reduce:transition-none"
-          enter-from-class="scale-90 opacity-0"
-          leave-active-class="transition duration-100 ease-snap motion-reduce:transition-none"
-          leave-to-class="scale-90 opacity-0"
-          move-class="transition duration-150 ease-snap motion-reduce:transition-none"
-        >
-          <FilterChip v-for="filter in activeFilters" :key="filter.key" :label="filter.label" @remove="filter.clear()" />
-          <Button v-if="activeFilters.length > 1" variant="ghost" size="sm"
-            class="text-muted-foreground h-6 px-1.5 text-xs" @click="clearFilters">
-            清除全部
-          </Button>
-        </TransitionGroup>
-      </CardHeader>
+        <ActiveFilterBar
+          :items="activeFilters.map(({ key, label }) => ({ key, label }))"
+          clear-label="清除全部"
+          :show-clear-min="2"
+          @remove="key => activeFilters.find(filter => filter.key === key)?.clear()"
+          @clear="clearFilters"
+        />
+      </template>
 
-      <CardContent class="paginated-table-body relative flex min-h-0 flex-col p-0">
+      <template #status>
         <TableLoadingStatus kind="files" :loading="isLoading" label="正在筛选与加载文件…" />
-        <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="Boolean(displayedResult)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
-        <div
-          v-if="!error || displayedResult"
-          ref="tableScroller"
-          data-testid="files-table-scroll"
-          class="data-table-scroll [container-type:inline-size] focus-visible:outline-ring focus-visible:outline-2 focus-visible:-outline-offset-2"
-          :class="category ? '[--table-budget:25rem] xl:[--table-budget:20rem]' : '[--table-budget:19rem]'"
-          role="region"
-          tabindex="0"
-          :aria-label="`${title}列表`"
-          :aria-busy="isLoading"
-        >
-          <Table class="data-table table-fixed" :style="category && !compactDetails ? { minWidth: tableWidth + 'px' } : undefined">
-            <TableHeader>
-              <TableRow class="hover:bg-transparent">
-                <TableHead v-if="expandedPanels.length" scope="col" :class="[TH_CLASS, 'w-8']">
-                  <span class="sr-only">展开明细</span>
-                </TableHead>
-                <TableHead scope="col" :class="[TH_CLASS, category && !compactDetails && 'w-44']">文件名</TableHead>
-                <TableHead
-                  v-for="column in compactDetails ? [] : columns"
-                  :key="column.label"
-                  scope="col"
-                  :class="[TH_CLASS, column.align === 'right' && 'pr-3 text-right']"
-                  :style="{ width: column.width + 'px' }"
-                  :title="column.tooltip"
-                >
-                  {{ column.label }}
-                </TableHead>
-                <TableHead v-if="showSize" scope="col" :class="[TH_CLASS, 'w-[70px] pr-3 text-right']">大小</TableHead>
-                <TableHead scope="col" :class="[ACTION_TH]">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody :data-loading="isLoading ? 'true' : 'false'">
-              <TableRow v-if="isLoading && !displayedResult" class="hover:bg-transparent">
-                <TableCell :colspan="columnCount" class="p-0">
-                  <div class="flex flex-col">
-                    <div
-                      v-for="i in 8"
-                      :key="i"
-                      class="flex h-11 items-center gap-3 border-b px-3 last:border-b-0"
-                    >
-                      <Skeleton class="h-4 flex-1" />
-                      <Skeleton class="h-5 w-16 rounded-sm" />
-                      <Skeleton class="h-4 w-12" />
-                      <Skeleton class="h-5 w-16 rounded-sm" />
-                    </div>
+      </template>
+
+      <TableFailureState v-if="error" title="文件列表暂时无法加载" :compact="Boolean(displayedResult)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+      <div
+        v-if="!error || displayedResult"
+        data-testid="files-table-scroll"
+        class="data-table-scroll [container-type:inline-size] focus-visible:outline-ring focus-visible:outline-2 focus-visible:-outline-offset-2"
+        role="region"
+        tabindex="0"
+        :aria-label="`${title}列表`"
+        :aria-busy="isLoading"
+      >
+        <Table class="data-table table-fixed" :style="category && !compactDetails ? { minWidth: tableWidth + 'px' } : undefined">
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead v-if="expandedPanels.length" scope="col" class="w-8">
+                <span class="sr-only">展开明细</span>
+              </TableHead>
+              <TableHead scope="col" :class="category && !compactDetails && 'w-44'">文件名</TableHead>
+              <TableHead
+                v-for="column in compactDetails ? [] : columns"
+                :key="column.label"
+                scope="col"
+                :class="column.align === 'right' && 'pr-3 text-right'"
+                :style="{ width: column.width + 'px' }"
+                :title="column.tooltip"
+              >
+                {{ column.label }}
+              </TableHead>
+              <TableHead v-if="showSize" scope="col" class="w-[70px] pr-3 text-right">大小</TableHead>
+              <TableHead scope="col" :class="ACTION_TH">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody :data-loading="isLoading ? 'true' : 'false'">
+            <TableRow v-if="isLoading && !displayedResult" class="hover:bg-transparent">
+              <TableCell :colspan="columnCount" class="p-0">
+                <div class="flex flex-col">
+                  <div
+                    v-for="i in 8"
+                    :key="i"
+                    class="flex h-11 items-center gap-3 border-b px-3 last:border-b-0"
+                  >
+                    <Skeleton class="h-4 flex-1" />
+                    <Skeleton class="h-5 w-16 rounded-sm" />
+                    <Skeleton class="h-4 w-12" />
+                    <Skeleton class="h-5 w-16 rounded-sm" />
                   </div>
-                </TableCell>
-              </TableRow>
+                </div>
+              </TableCell>
+            </TableRow>
 
-              <template v-else-if="rows.length">
-                <template v-for="row in rows" :key="row.id">
-                  <TableRow class="group hover:bg-accent/70">
-                    <TableCell class="pr-0" v-if="expandedPanels.length">
-                      <Button
-                        v-if="expandedPanels.some(panel => panel.appliesTo?.(row) ?? true)"
-                        variant="ghost"
-                        size="icon"
-                        class="size-8"
-                        :aria-expanded="isExpanded(row.id)"
-                        :aria-controls="isExpanded(row.id) ? `file-details-${row.id}` : undefined"
-                        title="展开明细"
-                        @click="toggleDetails(row.id)"
-                      >
-                        <ChevronRight
-                          class="size-4 transition-transform duration-150"
-                          :class="isExpanded(row.id) && 'rotate-90'"
-                        />
-                        <span class="sr-only">展开明细</span>
-                      </Button>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        class="block whitespace-normal wrap-anywhere font-medium"
-                        :title="`${row.displayName}\n磁盘文件名:${row.filename}\n${row.relPath}`"
-                      >
-                        {{ row.displayName }}
-                      </span>
-                      <component v-if="compactDetails && category?.cells" :is="category.cells" :file="row" mode="summary" />
-                    </TableCell>
-                    <component :is="column.component" v-for="column in compactDetails ? [] : cellGroups" :key="column.id" :file="row" />
-                    <TableCell v-if="showSize" class="text-muted-foreground text-right text-xs tabular-nums">
-                      {{ sizeOf(row) }}
-                    </TableCell>
-                    <TableCell :class="ACTION_TD">
-                      <div class="flex flex-wrap items-center gap-1">
-
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="h-7 px-1.5 text-xs"
-                          @click="openEdit(row)"
-                        >
-                          {{ detailsLabel }}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          class="h-7 px-1.5 text-xs"
-                          @click="openPreview(row)"
-                        >
-                          预览
-                        </Button>
-                        <Button v-if="allowRemoval"
-                          variant="ghost"
-                          size="sm"
-                          class="text-muted-foreground hover:text-destructive h-7 px-1.5 text-xs"
-                          @click="openDelete(row)"
-                        >
-                          移出
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-
-                  <TableRow v-if="isExpanded(row.id)" :id="`file-details-${row.id}`" class="hover:bg-transparent" data-testid="file-parts-row">
-                    <TableCell :colspan="columnCount" class="bg-muted/40 p-0">
-                      <div class="sticky left-0 w-[100cqw] p-3 sm:p-4">
-                        <component v-if="compactDetails && category?.cells" :is="category.cells" :file="row" mode="details" />
-                        <component
-                          :is="panel.component"
-                          v-for="panel in expandedPanels.filter(panel => panel.appliesTo?.(row) ?? true)"
-                          :key="panel.id"
-                          :ref="(instance: unknown) => setExpandedPanel(row.id, panel.id, instance)"
-                          :open="true"
-                          :file="row"
-                          :refresh-list="refresh"
-                        />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                </template>
-              </template>
-
-              <TableRow v-else-if="displayedResult" class="hover:bg-transparent">
-                <TableCell :colspan="columnCount" class="p-0">
-                  <Empty class="sticky left-0 w-[100cqw] border-0">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon"><Search v-if="displayedHasFilters" /><FolderOpen v-else /></EmptyMedia>
-                      <EmptyTitle>{{ displayedHasFilters ? '没有匹配的文件' : '暂无文件' }}</EmptyTitle>
-                    </EmptyHeader>
-                    <Button v-if="hasFilters" variant="outline" size="sm" @click="clearFilters">
-                      清除全部筛选
+            <template v-else-if="rows.length">
+              <template v-for="row in rows" :key="row.id">
+                <TableRow>
+                  <TableCell v-if="expandedPanels.length" class="pr-0">
+                    <Button
+                      v-if="expandedPanels.some(panel => panel.appliesTo?.(row) ?? true)"
+                      variant="ghost"
+                      size="icon"
+                      class="size-8"
+                      :aria-expanded="isExpanded(row.id)"
+                      :aria-controls="isExpanded(row.id) ? `file-details-${row.id}` : undefined"
+                      title="展开明细"
+                      @click="toggleDetails(row.id)"
+                    >
+                      <ChevronRight
+                        class="size-4 transition-transform duration-150"
+                        :class="isExpanded(row.id) && 'rotate-90'"
+                      />
+                      <span class="sr-only">展开明细</span>
                     </Button>
-                  </Empty>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </div>
-      </CardContent>
-      <TablePagination v-if="displayedResult" in-card :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled"
-        unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
-    </Card>
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      type="button"
+                      class="hover:text-primary block cursor-pointer text-left whitespace-normal wrap-anywhere font-medium hover:underline focus-visible:underline focus-visible:outline-none"
+                      :title="`${row.displayName}\n磁盘文件名:${row.filename}\n${row.relPath}`"
+                      @click="openPreview(row)"
+                    >
+                      {{ row.displayName }}
+                    </button>
+                    <component v-if="compactDetails && category?.cells" :is="category.cells" :file="row" mode="summary" />
+                  </TableCell>
+                  <component :is="column.component" v-for="column in compactDetails ? [] : cellGroups" :key="column.id" :file="row" />
+                  <TableCell v-if="showSize" class="text-muted-foreground text-right text-xs tabular-nums">
+                    {{ sizeOf(row) }}
+                  </TableCell>
+                  <TableCell :class="ACTION_TD">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger as-child>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          class="text-muted-foreground hover:text-foreground size-7"
+                          :aria-label="`更多操作：${row.displayName}`"
+                        >
+                          <MoreHorizontal class="size-4" aria-hidden="true" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" class="w-36">
+                        <DropdownMenuItem @select="openPreview(row)">
+                          <Eye class="size-3.5" aria-hidden="true" />
+                          预览
+                        </DropdownMenuItem>
+                        <DropdownMenuItem @select="openEdit(row)">
+                          <Pencil class="size-3.5" aria-hidden="true" />
+                          {{ detailsLabel }}
+                        </DropdownMenuItem>
+                        <template v-if="allowRemoval">
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            class="text-destructive focus:text-destructive"
+                            @select="openDelete(row)"
+                          >
+                            <Trash2 class="size-3.5" aria-hidden="true" />
+                            移出
+                          </DropdownMenuItem>
+                        </template>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+
+                <TableRow v-if="isExpanded(row.id)" :id="`file-details-${row.id}`" class="hover:bg-transparent" data-testid="file-parts-row">
+                  <TableCell :colspan="columnCount" class="bg-muted/40 p-0">
+                    <div class="sticky left-0 w-[100cqw] p-3 sm:p-4">
+                      <component v-if="compactDetails && category?.cells" :is="category.cells" :file="row" mode="details" />
+                      <component
+                        :is="panel.component"
+                        v-for="panel in expandedPanels.filter(panel => panel.appliesTo?.(row) ?? true)"
+                        :key="panel.id"
+                        :ref="(instance: unknown) => setExpandedPanel(row.id, panel.id, instance)"
+                        :open="true"
+                        :file="row"
+                        :refresh-list="refresh"
+                      />
+                    </div>
+                  </TableCell>
+                </TableRow>
+              </template>
+            </template>
+
+            <TableRow v-else-if="displayedResult" class="hover:bg-transparent">
+              <TableCell :colspan="columnCount" class="p-0">
+                <Empty class="sticky left-0 w-[100cqw] border-0">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon"><Search v-if="displayedHasFilters" /><FolderOpen v-else /></EmptyMedia>
+                    <EmptyTitle>{{ displayedHasFilters ? '没有匹配的文件' : '暂无文件' }}</EmptyTitle>
+                  </EmptyHeader>
+                  <Button v-if="hasFilters" variant="outline" size="sm" @click="clearFilters">
+                    清除全部筛选
+                  </Button>
+                </Empty>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+
+      <template #footer>
+        <TablePagination v-if="displayedResult" in-card :page="displayedPage" :page-size="displayedPageSize" :total="total" :loading="paginationDisabled"
+          unit="个文件" @update:page="setPage" @update:page-size="setPageSize" />
+      </template>
+    </DataTableCard>
 
     <component :is="uploadDialog" v-model:open="uploading" @registered="refresh()" />
 
@@ -617,12 +600,6 @@ watch([selections, q, page, pageSize], async (values, previous) => {
       :src="previewSrc"
       :name="previewFile?.displayName ?? ''"
     />
-  </div>
+  </WorkspacePage>
 </template>
 
-<style scoped>
-/* Unlayered CSS would override the Tailwind hover backgrounds. An inset shadow adds the divider without widening the column. */
-.pin-edge {
-  box-shadow: inset 1px 0 0 var(--border);
-}
-</style>

@@ -30,36 +30,35 @@ onMounted(() => watch([() => props.evidence.sourceFile, checkAttempt], async ([p
 </script>
 
 <template>
-  <div class="bg-muted/25 flex h-full min-w-0 flex-col gap-3 rounded-lg border p-4 text-base leading-6" data-testid="official-evidence">
-    <div class="flex items-start gap-3">
-      <span class="bg-card text-primary flex size-9 shrink-0 items-center justify-center rounded-md border"><FileText class="size-5" aria-hidden="true" /></span>
+  <div class="bg-muted/25 flex h-full min-w-0 flex-col gap-2 rounded-md border border-border/60 px-3.5 py-3 text-sm leading-5" data-testid="official-evidence">
+    <div class="flex items-start gap-2.5">
+      <FileText class="text-primary mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div class="min-w-0 flex-1">
         <p class="font-medium break-words [overflow-wrap:anywhere]">{{ fileNameOf(evidence.sourceFile) }}</p>
-        <p v-if="evidence.publishedName" class="text-muted-foreground mt-1 text-sm break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
+        <p v-if="evidence.publishedName" class="text-muted-foreground mt-0.5 text-xs break-words [overflow-wrap:anywhere]" data-testid="published-name">{{ publishedNameText(evidence.publishedName) }}</p>
       </div>
     </div>
-    <dl v-if="evidence.attachment" class="grid min-w-0 gap-1 text-sm">
-      <dt class="text-muted-foreground">附件 / 名单段</dt>
-      <dd class="text-base break-words [overflow-wrap:anywhere]">{{ evidence.attachment }}</dd>
-    </dl>
-    <div class="mt-auto flex flex-wrap items-center gap-2 text-sm">
-      <span v-if="evidence.listNo != null" class="bg-card rounded-md border px-2.5 py-1 tabular-nums">序号 {{ evidence.listNo }}</span>
-      <Button v-if="pageState === 'assigned' && availability === 'available'" as-child variant="secondary" size="sm"><NuxtLink :to="previewHref" :data-evidence-return-focus="focusKey + 'page'" class="tabular-nums" @click="emit('page-open', $event)">第 {{ evidence.page }} 页<ArrowUpRight aria-hidden="true" /></NuxtLink></Button>
-      <span v-else-if="pageState === 'assigned'">已记录第 {{ evidence.page }} 页</span>
-      <span v-else-if="pageState === 'pending'">页码待核</span>
-      <span v-else>这类文件没有可复核的页码</span>
-      <div v-if="availability === 'available'" class="flex flex-wrap items-center gap-2">
-        <template v-if="isPreviewable(evidence.sourceFile)">
-          <Button variant="outline" size="sm" @click="emit('preview')">查看原文件<ArrowUpRight aria-hidden="true" /></Button>
-        </template>
-        <Button v-else as-child variant="outline" size="sm"><a :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener">下载原文件<Download aria-hidden="true" /></a></Button>
-      </div>
-    </div>
-    <p v-if="availability === 'checking'" role="status" class="text-muted-foreground text-sm">正在确认文件可用性…</p>
-    <p v-if="availability === 'missing'" class="text-muted-foreground">文件不可用；出处与已记录页码保留。</p>
-    <p v-else-if="availability === 'unknown'" class="text-muted-foreground">暂无法确认文件是否可用。</p>
-    <Button v-if="availability === 'unknown'" variant="outline" size="sm" @click="checkAttempt++">重新检查文件</Button>
 
-    <p class="text-muted-foreground border-t pt-2 text-sm break-words [overflow-wrap:anywhere]">原路径：{{ evidence.sourceFile }}</p>
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+      <span v-if="evidence.attachment" class="text-muted-foreground wrap-anywhere">附件：{{ evidence.attachment }}</span>
+      <span v-if="evidence.listNo != null" class="bg-card rounded-sm border px-1.5 py-0.5 font-medium tabular-nums">序号 {{ evidence.listNo }}</span>
+      <Button v-if="pageState === 'assigned' && availability === 'available'" as-child variant="secondary" size="xs"><NuxtLink :to="previewHref" :data-evidence-return-focus="focusKey + 'page'" class="tabular-nums" @click="emit('page-open', $event)">第 {{ evidence.page }} 页<ArrowUpRight aria-hidden="true" /></NuxtLink></Button>
+      <span v-else-if="pageState === 'assigned'" class="text-muted-foreground tabular-nums">已记录第 {{ evidence.page }} 页</span>
+      <span v-else-if="pageState === 'pending'" class="text-muted-foreground">页码待核</span>
+      <span v-else class="text-muted-foreground">这类文件没有可复核的页码</span>
+      <template v-if="availability === 'available'">
+        <Button v-if="isPreviewable(evidence.sourceFile)" variant="outline" size="xs" @click="emit('preview')">查看原文件<ArrowUpRight aria-hidden="true" /></Button>
+        <Button v-else as-child variant="outline" size="xs"><a :href="fileUrl(evidence.sourceFile)" target="_blank" rel="noopener">下载原文件<Download aria-hidden="true" /></a></Button>
+      </template>
+    </div>
+
+    <p v-if="availability === 'checking'" role="status" class="text-muted-foreground text-xs">正在确认文件可用性…</p>
+    <p v-else-if="availability === 'missing'" class="text-muted-foreground text-xs">文件不可用；出处与已记录页码保留。</p>
+    <div v-else-if="availability === 'unknown'" class="flex flex-wrap items-center gap-2 text-xs">
+      <span class="text-muted-foreground">暂无法确认文件是否可用。</span>
+      <Button variant="outline" size="xs" @click="checkAttempt++">重新检查文件</Button>
+    </div>
+
+    <p class="text-muted-foreground mt-auto truncate font-mono text-xs" :title="evidence.sourceFile">原路径：{{ evidence.sourceFile }}</p>
   </div>
 </template>

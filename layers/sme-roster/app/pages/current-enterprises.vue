@@ -2,15 +2,17 @@
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'
 import { createReusableTemplate, debounceFilter, useMediaQuery, watchWithFilter } from '@vueuse/core'
 import { useQuery } from '@pinia/colada'
-import { Search } from '@lucide/vue'
+import { ChevronRight, Search } from '@lucide/vue'
 import { CURRENT_STATUS_LABELS, type CurrentStatus } from '#sme-roster/lib/roster/current-status'
 import { CURRENT_ENTERPRISES_TITLE, TITLES } from '#sme-roster/lib/labels'
 import { CURRENT_TITLES, type CurrentTitle } from '#sme-roster/lib/roster/current-titles'
 import type { CurrentQualifiedRow as CurrentRow, CurrentQualifiedResult } from '#sme-roster/lib/roster/current-qualified-page'
 import { NINGBO_DISTRICTS, NINGBO_INDEPENDENT_ZONES } from '#sme-roster/lib/domain'
 import { captureQueryRequest, useRetainedQuerySnapshot } from '#core/app/composables/useRetainedQuerySnapshot'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Button } from '#core/app/components/ui/button'
-import { Card, CardContent } from '#core/app/components/ui/card'
 import { Empty, EmptyHeader, EmptyTitle } from '#core/app/components/ui/empty'
 import { Input } from '#core/app/components/ui/input'
 import { Label } from '#core/app/components/ui/label'
@@ -18,10 +20,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#core/app/components/ui/tabs'
-import PageHeader from '#core/app/components/PageHeader.vue'
 import RosterCurrentQualificationTimeline from '#sme-roster/app/components/CurrentQualificationTimeline.vue'
 import DisclosurePanel from '#core/app/components/DisclosurePanel.vue'
-import FilterChip from '#core/app/components/FilterChip.vue'
 import RosterCurrentRosterExportEntry from '#sme-roster/app/components/CurrentRosterExportEntry.vue'
 import DatePicker from '#core/app/components/DatePicker.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
@@ -136,6 +136,11 @@ const activeFilters = computed(() => {
   if (maintenanceBatch.value) filters.push({ key: 'maintenanceBatch', label: `维护批次：第 ${maintenanceBatch.value} 批`, clear: () => update({ maintenanceBatch: undefined, page: undefined }) })
   return filters
 })
+/** `ActiveFilterBar` 只认「键：值」文案，撤掉某一项时回到这里按 key 找动作。 */
+const filterItems = computed(() => activeFilters.value.map(({ key, label }) => ({ key, label })))
+function removeFilter(key: string) {
+  activeFilters.value.find((filter) => filter.key === key)?.clear()
+}
 const advancedFilterCount = computed(() => activeFilters.value.filter(filter => filter.key !== 'q' && filter.key !== 'status').length)
 function clearFilters() {
   search.value = ''
@@ -147,7 +152,7 @@ useHead({ title: CURRENT_ENTERPRISES_TITLE })
 </script>
 
 <template>
-  <div class="workspace-list flex min-w-0 flex-col gap-3">
+  <WorkspacePage :title="CURRENT_ENTERPRISES_TITLE">
     <DefineFilters>
       <Select v-model="districtModel">
         <SelectTrigger size="sm" class="bg-card w-32 shadow-none" aria-label="按区县筛选"><SelectValue /></SelectTrigger>
@@ -179,9 +184,9 @@ useHead({ title: CURRENT_ENTERPRISES_TITLE })
         <span v-if="dateError" class="text-destructive text-sm" role="alert">{{ dateError }}</span>
       </div>
     </DefineDates>
-    <PageHeader :title="CURRENT_ENTERPRISES_TITLE" />
-    <Card class="paginated-table-card min-w-0 gap-0 overflow-hidden py-0 shadow-none">
-      <section aria-label="名单查询条件" tabindex="0" class="table-toolbar workspace-list-filter flex min-w-0 flex-col gap-3">
+
+    <DataTableCard filter-scroll toolbar-label="名单查询条件">
+      <template #toolbar>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <Tabs v-model="titleModel" class="min-w-0">
             <TabsList class="h-auto max-w-full flex-wrap">
@@ -193,7 +198,7 @@ useHead({ title: CURRENT_ENTERPRISES_TITLE })
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative w-full sm:w-72">
             <Search class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" aria-hidden="true" />
-            <Input v-model="search" class="bg-card h-8 pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
+            <Input v-model="search" size="sm" class="bg-card pl-8 shadow-none" placeholder="名称、曾用名或信用代码" aria-label="搜索企业名称、已确认曾用名或统一社会信用代码" />
           </div>
           <Select v-model="statusModel">
             <SelectTrigger size="sm" class="bg-card w-36 shadow-none" aria-label="按有效状态筛选"><SelectValue /></SelectTrigger>
@@ -208,53 +213,52 @@ useHead({ title: CURRENT_ENTERPRISES_TITLE })
             <ReuseDates />
           </div>
         </DisclosurePanel>
-        <div v-if="activeFilters.length" class="flex flex-wrap items-center gap-1.5" role="group" aria-label="已选筛选条件">
-          <FilterChip v-for="filter in activeFilters" :key="filter.key" :label="filter.label" @remove="filter.clear()" />
-          <Button variant="ghost" size="sm" @click="clearFilters">清除筛选</Button>
-        </div>
-      </section>
+        <ActiveFilterBar aria-label="已选筛选条件" :items="filterItems" @remove="removeFilter" @clear="clearFilters" />
+      </template>
+
       <p v-if="displayed?.uncertainTotal && displayed.request.params.recognitionFrom" class="text-muted-foreground border-b px-3 py-2 text-sm sm:px-4">另有 {{ displayed.uncertainTotal }} 家仅有年份精度，与所选时间部分重叠或缺少日期事实，未计入确定结果。</p>
-      <CardContent class="paginated-table-body relative flex min-h-0 flex-col p-0">
-        <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询企业资格…" />
-        <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="企业资格查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
-        <div v-if="!error || displayed" class="data-table-scroll hidden sm:block">
-          <Table class="data-table min-w-[850px] table-fixed" aria-label="企业资格查询结果">
-            <TableHeader><TableRow class="hover:bg-transparent">
-              <TableHead class="bg-muted w-[24%]">企业名称</TableHead><TableHead class="bg-muted w-[19%]">统一社会信用代码</TableHead><TableHead class="bg-muted w-[12%]">区县</TableHead><TableHead class="bg-muted w-[31%]">认定与复核</TableHead><TableHead class="bg-muted w-[14%]">详情与出处</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              <TableRow v-for="row in rows" :key="row.enterpriseId">
-                <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><span class="font-medium">{{ row.name }}</span><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
-                <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
-                <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
-                <TableCell class="align-top"><RosterCurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" /></TableCell>
-                <TableCell class="align-top"><Button as-child variant="outline" size="sm" class="px-1 text-table whitespace-nowrap"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">查看详情与出处</NuxtLink></Button></TableCell>
-              </TableRow>
-              <TableRow v-if="isLoading && !displayed" aria-hidden="true"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
-              <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
-            </TableBody>
-          </Table>
-        </div>
-        <div v-if="isLoading && !displayed" class="flex flex-col gap-3 p-3 pt-8 sm:hidden" data-testid="current-mobile-loading" aria-hidden="true">
-          <Skeleton class="h-5 w-2/3" />
-          <Skeleton class="h-3 w-1/2" />
-          <Skeleton class="h-4 w-full" />
-          <Skeleton class="h-4 w-3/4" />
-        </div>
-        <ul v-if="rows.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="企业资格查询结果">
-          <li v-for="row in rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="current-enterprise-card">
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div>
-              <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
-            </div>
-            <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
-            <RosterCurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" />
-          </li>
-        </ul>
-        <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>
-      </CardContent>
-      <TablePagination in-card v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
-    </Card>
+      <TableLoadingStatus kind="ledger" :loading="isLoading" label="正在查询企业资格…" />
+      <TableFailureState v-if="error" class="[overflow-wrap:anywhere]" title="企业资格查询失败" :compact="Boolean(displayed)" :pending="isLoading" :description="failureDescription" @retry="refetch()" />
+      <div v-if="!error || displayed" class="data-table-scroll hidden sm:block">
+        <Table class="data-table min-w-[850px] table-fixed" aria-label="企业资格查询结果">
+          <TableHeader><TableRow class="hover:bg-transparent">
+            <TableHead class="w-[26%]">企业名称</TableHead><TableHead class="w-[20%]">统一社会信用代码</TableHead><TableHead class="w-[12%]">区县</TableHead><TableHead class="w-[36%]">认定与复核</TableHead><TableHead class="w-[6%] text-right"><span class="sr-only">详情与出处</span></TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            <TableRow v-for="row in rows" :key="row.enterpriseId">
+              <TableCell class="align-top whitespace-normal break-words [overflow-wrap:anywhere]"><NuxtLink :to="detailUrl(row.enterpriseId)" class="hover:text-primary font-medium hover:underline">{{ row.name }}</NuxtLink><span v-if="row.aliases.length" class="text-muted-foreground mt-1 block text-xs">已确认曾用名：{{ row.aliases.join('、') }}</span></TableCell>
+              <TableCell class="align-top break-all font-mono text-xs">{{ row.uscc ?? '未记录' }}</TableCell>
+              <TableCell class="align-top">{{ row.district ?? '未记录' }}</TableCell>
+              <TableCell class="align-top"><RosterCurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" /></TableCell>
+              <TableCell class="align-top text-right"><Button as-child variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground size-7"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`" title="查看详情与出处"><ChevronRight class="size-4" aria-hidden="true" /><span class="sr-only">查看详情与出处</span></NuxtLink></Button></TableCell>
+            </TableRow>
+            <TableRow v-if="isLoading && !displayed" aria-hidden="true"><TableCell v-for="n in 5" :key="n"><Skeleton class="h-3 w-full" /></TableCell></TableRow>
+            <TableRow v-if="displayed && !rows.length"><TableCell colspan="5" class="p-0"><Empty class="border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty></TableCell></TableRow>
+          </TableBody>
+        </Table>
+      </div>
+      <div v-if="isLoading && !displayed" class="flex flex-col gap-3 p-3 pt-8 sm:hidden" data-testid="current-mobile-loading" aria-hidden="true">
+        <Skeleton class="h-5 w-2/3" />
+        <Skeleton class="h-3 w-1/2" />
+        <Skeleton class="h-4 w-full" />
+        <Skeleton class="h-4 w-3/4" />
+      </div>
+      <ul v-if="rows.length" class="data-table-scroll flex flex-col divide-y sm:hidden" aria-label="企业资格查询结果">
+        <li v-for="row in rows" :key="row.enterpriseId" class="flex min-w-0 flex-col gap-1.5 p-3" data-testid="current-enterprise-card">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0"><p class="font-medium break-words">{{ row.name }}</p><p class="text-muted-foreground break-all font-mono text-xs">{{ row.uscc ?? '信用代码未记录' }}</p></div>
+            <Button as-child variant="outline" size="sm" class="min-h-11 shrink-0"><NuxtLink :to="detailUrl(row.enterpriseId)" :aria-label="`查看 ${row.name} 详情与出处`">详情与出处</NuxtLink></Button>
+          </div>
+          <p v-if="row.aliases.length" class="text-muted-foreground break-words text-sm leading-5">已确认曾用名：{{ row.aliases.join('、') }}</p>
+          <RosterCurrentQualificationTimeline :source="timelineAssessment(row)?.effectiveQualification?.source" :events="timelineAssessment(row)?.evidence" :inherited-from="selectedAssessment(row)?.effectiveQualification?.supportingTitle" :enterprise-id="row.enterpriseId" />
+        </li>
+      </ul>
+      <Empty v-if="displayed && !rows.length" class="sm:hidden border-0"><EmptyHeader><EmptyTitle>没有符合条件的企业</EmptyTitle></EmptyHeader></Empty>
+
+      <template #footer>
+        <TablePagination in-card v-if="displayed" :page="displayed.request.page" :page-size="displayed.request.pageSize" :total="displayed.total" :loading="paginationDisabled" unit="家" @update:page="updatePagination({ page: $event === 1 ? undefined : String($event) })" @update:page-size="updatePagination({ pageSize: String($event), page: undefined })" />
+      </template>
+    </DataTableCard>
     <p v-if="displayed && displayed.responseVersion !== 'current-qualified-478-v2'" class="text-muted-foreground text-sm" role="status">旧版响应未提供五类有效状态；请刷新后核对，不能据此将资料缺口认作待核。</p>
-  </div>
+  </WorkspacePage>
 </template>

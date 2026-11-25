@@ -6,10 +6,10 @@ import type { PlatformQueriesResult } from '#sme-roster/lib/platform/read'
 import { ROSTER_LEDGER_PATH } from '#sme-roster/lib/sme-roster/routes'
 import { Badge } from '#core/app/components/ui/badge'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '#core/app/components/ui/breadcrumb'
-import { Card, CardContent, CardHeader } from '#core/app/components/ui/card'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '#core/app/components/ui/empty'
-import PageHeader from '#core/app/components/PageHeader.vue'
+import SectionCard from '#core/app/components/SectionCard.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import RosterPlatformQueryEvidence from '#sme-roster/app/components/PlatformQueryEvidence.vue'
 import TablePagination from '#core/app/components/TablePagination.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
@@ -77,22 +77,20 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
 </script>
 
 <template>
-  <div class="flex min-w-0 flex-col gap-4" :aria-busy="isLoading">
-    <PageHeader title="平台查询历史">
-      <template #breadcrumb>
-        <Breadcrumb aria-label="页面路径">
-          <BreadcrumbList class="text-xs">
-            <BreadcrumbItem>
-              <BreadcrumbLink as-child class="hover:underline focus-visible:underline motion-reduce:transition-none">
-                <NuxtLink :to="parentPage.path">{{ parentPage.title }}</NuxtLink>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem><BreadcrumbPage>平台查询历史</BreadcrumbPage></BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-      </template>
-    </PageHeader>
+  <WorkspacePage title="平台查询历史" mode="scroll" :busy="isLoading">
+    <template #breadcrumb>
+      <Breadcrumb aria-label="页面路径">
+        <BreadcrumbList class="text-xs">
+          <BreadcrumbItem>
+            <BreadcrumbLink as-child class="hover:underline focus-visible:underline motion-reduce:transition-none">
+              <NuxtLink :to="parentPage.path">{{ parentPage.title }}</NuxtLink>
+            </BreadcrumbLink>
+          </BreadcrumbItem>
+          <BreadcrumbSeparator />
+          <BreadcrumbItem><BreadcrumbPage>平台查询历史</BreadcrumbPage></BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
+    </template>
     <div class="relative" :class="{ 'min-h-6': isLoading }">
       <TableLoadingStatus kind="platform-query" :loading="isLoading" label="正在加载平台查询历史…" />
       <p v-if="data || queryKey || enterpriseId || queryId" class="text-muted-foreground wrap-anywhere text-xs" aria-live="polite">
@@ -105,21 +103,23 @@ const identity = (row: PlatformQueriesResult['rows'][number]) => JSON.stringify(
     <TableFailureState v-if="error" :title="`查询摘要第 ${page} 页加载失败`" :description="`${error}${data ? `；保留第 ${sourcePage} 页结果。` : ''}`" :pending="isLoading" @retry="load" />
     <template v-if="isLoading && !rows.length"><Skeleton v-for="i in 3" :key="i" class="h-24 w-full" /></template>
     <Empty v-else-if="!error && !rows.length"><EmptyHeader><EmptyMedia variant="icon"><GitCompareArrows aria-hidden="true" /></EmptyMedia><EmptyTitle>{{ queryId ? '未找到原查询' : '暂无平台查询历史' }}</EmptyTitle></EmptyHeader></Empty>
-    <Card v-for="row in rows" :key="identity(row)" class="min-w-0 gap-0 overflow-hidden py-0" :data-query-id="row.query.id">
-      <CardHeader class="gap-2 border-b px-5 py-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{{ label(PLATFORM_INTERFACES, row.query.interface) }}</Badge>
-          <Badge variant="secondary">{{ PLATFORM_RDJBS[row.query.rdjb] ?? (row.query.rdjb || '未记录') }}</Badge>
-          <Badge :variant="statusVariant(row.query.status)">{{ label(PLATFORM_QUERY_STATUSES, row.query.status) }}</Badge>
-          <span class="text-muted-foreground break-all font-mono text-xs">{{ row.query.queryKey }}</span>
-          <span class="text-muted-foreground text-xs">查询 #{{ row.query.id }} · {{ row.query.queriedAt }} · {{ row.query.relationCount }} 条记录</span>
-          <NuxtLink v-if="row.query.interface === 'business_list'" :to="{ path: '/platform-business-processes', query: { q: row.query.queryKey } }" class="text-xs hover:underline">本地办理记录</NuxtLink>
-          <NuxtLink v-if="row.query.interface === 'recognized_list'" :to="{ path: '/platform-recognized-directory', query: recognizedDirectoryQuery(row.query.queryKey) }" class="text-xs hover:underline">本地目录记录</NuxtLink>
+    <SectionCard v-for="row in rows" :key="identity(row)" :padded="false" :data-query-id="row.query.id">
+      <template #header>
+        <div class="flex min-w-0 flex-col gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">{{ label(PLATFORM_INTERFACES, row.query.interface) }}</Badge>
+            <Badge variant="secondary">{{ PLATFORM_RDJBS[row.query.rdjb] ?? (row.query.rdjb || '未记录') }}</Badge>
+            <Badge :variant="statusVariant(row.query.status)">{{ label(PLATFORM_QUERY_STATUSES, row.query.status) }}</Badge>
+            <span class="text-muted-foreground break-all font-mono text-xs">{{ row.query.queryKey }}</span>
+            <span class="text-muted-foreground text-xs">查询 #{{ row.query.id }} · {{ row.query.queriedAt }} · {{ row.query.relationCount }} 条记录</span>
+            <NuxtLink v-if="row.query.interface === 'business_list'" :to="{ path: '/platform-business-processes', query: { q: row.query.queryKey } }" class="text-xs hover:underline">本地办理记录</NuxtLink>
+            <NuxtLink v-if="row.query.interface === 'recognized_list'" :to="{ path: '/platform-recognized-directory', query: recognizedDirectoryQuery(row.query.queryKey) }" class="text-xs hover:underline">本地目录记录</NuxtLink>
+          </div>
+          <p v-if="row.query.failureReason" class="text-destructive break-all text-xs">失败原因：{{ row.query.failureReason }}</p>
         </div>
-        <p v-if="row.query.failureReason" class="text-destructive break-all text-xs">失败原因：{{ row.query.failureReason }}</p>
-      </CardHeader>
-      <CardContent class="p-0"><RosterPlatformQueryEvidence :query-id="row.query.id" /></CardContent>
-    </Card>
+      </template>
+      <RosterPlatformQueryEvidence :query-id="row.query.id" />
+    </SectionCard>
     <TablePagination v-if="queryId === undefined && rows.length" :page="sourcePage" :page-size="sourcePageSize" :total="data?.total ?? 0" :loading="isLoading" unit="次查询" @update:page="page = $event" @update:page-size="pageSize = $event; page = 1" />
-  </div>
+  </WorkspacePage>
 </template>

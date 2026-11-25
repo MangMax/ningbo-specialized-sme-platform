@@ -7,14 +7,16 @@ import { describeLogRow, sourceLabel, outcomeLabel, logModuleLabel } from '#core
 import LogFilters from '#core/app/components/logs/LogFilters.vue'
 import LogDetail from '#core/app/components/logs/LogDetail.vue'
 import LogManagement from '#core/app/components/logs/LogManagement.vue'
-import FilterChip from '#core/app/components/FilterChip.vue'
-import PageHeader from '#core/app/components/PageHeader.vue'
+import ActiveFilterBar from '#core/app/components/ActiveFilterBar.vue'
+import DataTableCard from '#core/app/components/DataTableCard.vue'
+import DetailDrawer from '#core/app/components/DetailDrawer.vue'
+import SectionCard from '#core/app/components/SectionCard.vue'
 import TableLoadingStatus from '#core/app/components/TableLoadingStatus.vue'
 import TableFailureState from '#core/app/components/TableFailureState.vue'
+import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '#core/app/components/ui/tabs'
 import { Button } from '#core/app/components/ui/button'
 import { Badge } from '#core/app/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '#core/app/components/ui/card'
 import { Skeleton } from '#core/app/components/ui/skeleton'
 import {
   Table,
@@ -25,13 +27,6 @@ import {
   TableRow
 } from '#core/app/components/ui/table'
 import TablePagination from '#core/app/components/TablePagination.vue'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription
-} from '#core/app/components/ui/sheet'
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from '#core/app/components/ui/empty'
 useHead({ title: '运行日志' })
 const route = useRoute(),
@@ -297,8 +292,7 @@ function restoreFocus(event: Event) {
 }
 </script>
 <template>
-  <div class="workspace-list flex min-w-0 flex-1 flex-col gap-2 sm:gap-3">
-    <PageHeader class="shrink-0" title="日志" />
+  <WorkspacePage title="日志" class="gap-2 sm:gap-3">
     <Tabs v-model="activeTab" class="workspace-list-body min-h-0 flex-1 gap-3">
       <TabsList class="shrink-0" aria-label="日志功能">
         <TabsTrigger value="logs" class="min-h-11 sm:min-h-0">运行日志</TabsTrigger>
@@ -311,21 +305,30 @@ function restoreFocus(event: Event) {
       class="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <h2 id="log-list-heading" class="sr-only scroll-mt-16" tabindex="-1">日志列表</h2>
-      <Card
-        class="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0 shadow-none"
+      <DataTableCard
+        toolbar-label="日志筛选区"
+        filter-scroll
+        toolbar-class="gap-3"
       >
-        <CardHeader class="table-toolbar workspace-list-filter gap-3" role="region" aria-label="日志筛选区" tabindex="0">
+        <template #toolbar>
           <LogFilters :filter="filter" @apply="apply">
             <template #actions>
               <Button v-if="activeTab === 'logs'" type="button" variant="outline" size="sm" :disabled="loading" @click="fresh">刷新最新日志</Button>
             </template>
           </LogFilters>
-          <div v-if="chips.length" class="flex min-w-0 flex-wrap gap-1.5" role="group" aria-label="已应用筛选">
-            <FilterChip v-for="chip in chips" :key="chip.key" :label="chip.label" @remove="removeFilter(chip.key)" />
-          </div>
-        </CardHeader>
-        <CardContent class="relative flex min-h-0 flex-1 flex-col p-0">
-        <TableLoadingStatus :loading="loading" kind="files" label="正在读取运行日志…" />
+          <ActiveFilterBar
+            aria-label="已应用筛选"
+            :items="chips.map(({ key, label }) => ({ key, label }))"
+            :show-clear-min="2"
+            @remove="removeFilter"
+            @clear="apply({})"
+          />
+        </template>
+
+        <template #status>
+          <TableLoadingStatus :loading="loading" kind="files" label="正在读取运行日志…" />
+        </template>
+
         <p
           v-if="storageWarning.length"
           role="status"
@@ -647,7 +650,10 @@ function restoreFocus(event: Event) {
               aria-hidden="true"
             />
           </div>
-          <!-- 分页：复用 cursor 表达与它自己的尺寸所有权；接口没有 total，不编造总页数。 -->
+        </template>
+
+        <!-- 分页：复用 cursor 表达与它自己的尺寸所有权；接口没有 total，不编造总页数。 -->
+        <template #footer>
           <TablePagination
               in-card mode="cursor"
               :page="source?.page ?? page"
@@ -664,36 +670,25 @@ function restoreFocus(event: Event) {
               >{{ firstLoad ? '正在读取…' : `本页 ${rows.length} 条 · 第 ${source?.page ?? page} 页` }}</TablePagination
           >
         </template>
-        </CardContent>
-      </Card>
+      </DataTableCard>
     </section>
       </TabsContent>
       <TabsContent value="settings" force-mount v-show="activeTab === 'settings'" class="min-h-0 overflow-y-auto">
-        <!-- 配置四个区域共用这一层 Card 表面；标题已经在 tab 上，不再重复“日志配置”。 -->
-        <Card data-testid="log-settings-card" class="w-full gap-0 py-0 shadow-none">
-          <CardContent class="p-4 sm:p-6">
-            <LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" />
-          </CardContent>
-        </Card>
+        <!-- 配置四个区域共用这一层卡片表面；标题已经在 tab 上，不再重复“日志配置”。 -->
+        <SectionCard data-testid="log-settings-card" class="w-full" body-class="p-4 sm:p-6">
+          <LogManagement v-if="settingsVisited" :filter="filter" @changed="fresh" />
+        </SectionCard>
       </TabsContent>
     </Tabs>
-    <Sheet
+    <DetailDrawer
       :open="!!selected"
-      @update:open="
-        (value) => {
-          if (!value) selected = ''
-        }
-      "
-      ><SheetContent floating-size="standard" class="min-w-0 gap-0" @close-auto-focus="restoreFocus"
-        ><SheetHeader class="shrink-0 border-b px-6 py-5 pr-12"
-          ><SheetTitle>运行日志详情</SheetTitle
-          ><SheetDescription
-            >按需读取脱敏字段；审计与回执标识仅为引用。</SheetDescription
-          ></SheetHeader
-        >
-        <div
-          class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]"
-        ><LogDetail v-if="selected" :id="selected" /></div></SheetContent
-    ></Sheet>
-  </div>
+      title="运行日志详情"
+      description="按需读取脱敏字段；审计与回执标识仅为引用。"
+      floating-size="standard"
+      @update:open="value => { if (!value) selected = '' }"
+      @close-auto-focus="restoreFocus"
+    >
+      <LogDetail v-if="selected" :id="selected" />
+    </DetailDrawer>
+  </WorkspacePage>
 </template>

@@ -10,7 +10,7 @@ const props = defineProps<{
 <template>
   <thead
     data-slot="table-header"
-    :class="cn('bg-muted sticky top-0 z-20 [&_tr]:border-b', props.class)"
+    :class="cn('bg-surface-sunken/95 sticky top-0 z-20 backdrop-blur-xs [&_tr]:border-b [&_tr]:border-border', props.class)"
   >
     <slot />
   </thead>

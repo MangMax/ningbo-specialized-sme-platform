@@ -16,8 +16,6 @@ const props = withDefaults(defineProps<SidebarProps>(), {
   collapsible: 'icon',
 })
 
-const colorMode = useAppColorMode()
-
 const modules = getAppModules()
 const businessModules = modules.flatMap(({ id, name, nav }) =>
   id !== 'core' && nav?.length ? [{ id, name, nav }] : [],
@@ -39,13 +37,19 @@ const platformNav = coreNav.filter(item => item.placement !== 'business')
             class="group-data-[collapsible=icon]:justify-center"
           >
             <NuxtLink to="/" aria-label="返回首页">
-              <img
-                :src="colorMode === 'dark' ? '/brand/symbol-small-white.svg' : '/brand/symbol-small.svg'"
-                alt=""
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
                 width="24"
                 height="24"
-                class="size-6 shrink-0"
-              />
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                class="text-primary size-6 shrink-0"
+              >
+                <path
+                  fill="currentColor"
+                  d="M3 3H11V8L8 11H3ZM3 13H8L11 17V21H3ZM13 21V17L17 13H21V21ZM18 1L23 6L18 11L13 6Z"
+                />
+              </svg>
               <span class="truncate text-sm font-medium group-data-[collapsible=icon]:hidden">
                 专精特新
               </span>

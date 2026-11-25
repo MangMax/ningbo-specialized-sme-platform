@@ -104,7 +104,7 @@ function fileMeta(file: OcrWorkbenchFile) {
       class="flex min-h-0 flex-col gap-0 overflow-hidden p-0 max-sm:max-h-dvh"
       @close-auto-focus="emit('closeAutoFocus', $event)"
     >
-      <SheetHeader class="shrink-0 border-b px-4 py-4">
+      <SheetHeader class="shrink-0 border-b px-4 py-4 pr-12">
         <SheetTitle>选择 PDF</SheetTitle>
         <SheetDescription>
           只列已登记的 PDF；年份仅指文件公布年，不替代认定/复核年份。

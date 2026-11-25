@@ -3,14 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Loader2, Upload } from '@lucide/vue'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
 import { Button } from '#core/app/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import { Label } from '#core/app/components/ui/label'
 import {
   Select,
@@ -114,77 +107,78 @@ function submit() {
 </script>
 
 <template>
-  <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-2xl">
-      <DialogHeader>
-        <DialogTitle>导入识别结果</DialogTitle>
-        <DialogDescription>
-          把人工在 PaddleOCR 跑好的结果导回<template v-if="filename">「{{ filename }}」</template>。
-          已有结果的页会被<span class="text-foreground font-medium">覆盖</span>,没列出的页不动。
-        </DialogDescription>
-      </DialogHeader>
+  <ModalDialog
+    v-model:open="open"
+    title="导入识别结果"
+    size="lg"
+    :prevent-close="pending"
+    body-class="flex flex-col gap-4"
+  >
+    <template #description>
+      把人工在 PaddleOCR 跑好的结果导回<template v-if="filename">「{{ filename }}」</template>。
+      已有结果的页会被<span class="text-foreground font-medium">覆盖</span>,没列出的页不动。
+    </template>
 
-      <Tabs v-model="mode" class="min-w-0">
-        <TabsList aria-label="结果文件的装法">
-          <TabsTrigger value="jsonl">结果文件 (JSONL)</TabsTrigger>
-          <TabsTrigger value="markdown">Markdown</TabsTrigger>
-        </TabsList>
+    <Tabs v-model="mode" class="min-w-0">
+      <TabsList aria-label="结果文件的装法">
+        <TabsTrigger value="jsonl">结果文件 (JSONL)</TabsTrigger>
+        <TabsTrigger value="markdown">Markdown</TabsTrigger>
+      </TabsList>
 
-        <TabsContent value="jsonl" class="flex flex-col gap-2 pt-2">
-          <Label for="ocr-import-jsonl">结果文件全文</Label>
-          <Textarea
-            id="ocr-import-jsonl"
-            v-model="jsonlText"
-            class="max-h-72 min-h-40 overflow-auto font-mono text-xs"
-            placeholder='{"result":{"layoutParsingResults":[{"markdown":{"text":"第一页…"}}]}}'
-          />
-          <p class="text-muted-foreground text-xs leading-relaxed">{{ JSONL_IMPORT_HINT }}</p>
-        </TabsContent>
+      <TabsContent value="jsonl" class="flex flex-col gap-2 pt-2">
+        <Label for="ocr-import-jsonl">结果文件全文</Label>
+        <Textarea
+          id="ocr-import-jsonl"
+          v-model="jsonlText"
+          class="max-h-72 min-h-40 overflow-auto font-mono text-xs"
+          placeholder='{"result":{"layoutParsingResults":[{"markdown":{"text":"第一页…"}}]}}'
+        />
+        <p class="text-muted-foreground text-xs leading-relaxed">{{ JSONL_IMPORT_HINT }}</p>
+      </TabsContent>
 
-        <TabsContent value="markdown" class="flex flex-col gap-2 pt-2">
-          <div class="flex flex-col gap-1.5">
-            <Label for="ocr-import-page">写到哪一页</Label>
-            <Select v-model="targetPage">
-              <SelectTrigger id="ocr-import-page" class="w-full sm:w-56">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="WHOLE">整份(按正文里的页标记)</SelectItem>
-                <SelectItem v-for="num in pageNumbers" :key="num" :value="String(num)">
-                  {{ pageLabel(num) }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Label for="ocr-import-markdown">识别结果正文</Label>
-          <Textarea
-            id="ocr-import-markdown"
-            v-model="markdownText"
-            class="max-h-72 min-h-40 overflow-auto font-mono text-xs"
-            placeholder="<!-- page: 1 -->&#10;&#10;### 附件1&#10;&#10;| 序号 | 属地 | 企业名称 |"
-          />
-          <p class="text-muted-foreground text-xs leading-relaxed">{{ singlePageHint }}</p>
-        </TabsContent>
-      </Tabs>
+      <TabsContent value="markdown" class="flex flex-col gap-2 pt-2">
+        <div class="flex flex-col gap-1.5">
+          <Label for="ocr-import-page">写到哪一页</Label>
+          <Select v-model="targetPage">
+            <SelectTrigger id="ocr-import-page" class="w-full sm:w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="WHOLE">整份(按正文里的页标记)</SelectItem>
+              <SelectItem v-for="num in pageNumbers" :key="num" :value="String(num)">
+                {{ pageLabel(num) }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <Label for="ocr-import-markdown">识别结果正文</Label>
+        <Textarea
+          id="ocr-import-markdown"
+          v-model="markdownText"
+          class="max-h-72 min-h-40 overflow-auto font-mono text-xs"
+          placeholder="<!-- page: 1 -->&#10;&#10;### 附件1&#10;&#10;| 序号 | 属地 | 企业名称 |"
+        />
+        <p class="text-muted-foreground text-xs leading-relaxed">{{ singlePageHint }}</p>
+      </TabsContent>
+    </Tabs>
 
-      <p class="text-muted-foreground text-xs leading-relaxed">{{ scopeHint }}</p>
+    <p class="text-muted-foreground text-xs leading-relaxed">{{ scopeHint }}</p>
 
-      <Alert v-if="failure" variant="destructive">
-        <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
-      </Alert>
-      <!-- 成功结果就地留在弹窗里:「读回一致」是这次导入的结论,关掉弹窗之前该看得见。 -->
-      <Alert v-else-if="result">
-        <AlertDescription>{{ result }}</AlertDescription>
-      </Alert>
+    <Alert v-if="failure" variant="destructive">
+      <AlertDescription class="text-destructive! font-medium">{{ failure }}</AlertDescription>
+    </Alert>
+    <!-- 成功结果就地留在弹窗里:「读回一致」是这次导入的结论,关掉弹窗之前该看得见。 -->
+    <Alert v-else-if="result">
+      <AlertDescription>{{ result }}</AlertDescription>
+    </Alert>
 
-      <DialogFooter>
-        <Button variant="ghost" :disabled="pending" @click="open = false">关闭</Button>
-        <Button :disabled="!canSubmit || pending" @click="submit">
-          <Loader2 v-if="pending" class="motion-safe:animate-spin" />
-          <Upload v-else />
-          {{ pending ? '导入中…' : '导入' }}
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
+    <template #footer>
+      <Button variant="outline" :disabled="pending" @click="open = false">关闭</Button>
+      <Button :disabled="!canSubmit || pending" @click="submit">
+        <Loader2 v-if="pending" class="motion-safe:animate-spin" />
+        <Upload v-else />
+        {{ pending ? '导入中…' : '导入' }}
+      </Button>
+    </template>
+  </ModalDialog>
 </template>

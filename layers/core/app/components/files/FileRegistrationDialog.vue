@@ -1,13 +1,7 @@
 <script setup lang="ts" generic="Uploaded extends { name: string; relPath: string }">
 import { ref, shallowReactive, watch } from 'vue'
 import { Alert, AlertDescription } from '#core/app/components/ui/alert'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '#core/app/components/ui/dialog'
+import ModalDialog from '#core/app/components/ModalDialog.vue'
 import { Button } from '#core/app/components/ui/button'
 import { describeFetchError } from '#core/lib/file-content-status'
 import type { UploadFailure } from '#core/lib/upload-transport'
@@ -61,22 +55,22 @@ function onUploadError({ name, failure: uploadFailure }: { name: string; failure
 </script>
 
 <template>
-  <Dialog v-model:open="open">
-    <DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
-      <DialogHeader>
-        <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription class="sr-only">{{ description }}</DialogDescription>
-      </DialogHeader>
-
-      <Alert v-if="failure" variant="destructive">
-        <AlertDescription>{{ failure }}</AlertDescription>
-      </Alert>
-      <Button v-for="file in retryFiles.values()" :key="file.relPath" variant="outline"
-        class="h-auto justify-start whitespace-normal wrap-anywhere"
-        :disabled="registering.includes(file.relPath)" @click="onUploaded(file)">
-        重试登记 {{ file.name }}
-      </Button>
-      <slot :on-uploaded="onUploaded" :on-upload-error="onUploadError" />
-    </DialogContent>
-  </Dialog>
+  <ModalDialog
+    v-model:open="open"
+    :title="title"
+    :description="description"
+    hide-description
+    size="lg"
+    body-class="space-y-4"
+  >
+    <Alert v-if="failure" variant="destructive">
+      <AlertDescription>{{ failure }}</AlertDescription>
+    </Alert>
+    <Button v-for="file in retryFiles.values()" :key="file.relPath" variant="outline"
+      class="h-auto justify-start whitespace-normal wrap-anywhere"
+      :disabled="registering.includes(file.relPath)" @click="onUploaded(file)">
+      重试登记 {{ file.name }}
+    </Button>
+    <slot :on-uploaded="onUploaded" :on-upload-error="onUploadError" />
+  </ModalDialog>
 </template>

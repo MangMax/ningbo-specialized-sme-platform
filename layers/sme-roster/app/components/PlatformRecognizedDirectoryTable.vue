@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { projectionDisplay } from '#sme-roster/lib/platform/projection-display'
 import { computed } from 'vue'
-import { ExternalLink, FileText } from '@lucide/vue'
+import { ChevronRight, ExternalLink, FileText } from '@lucide/vue'
 import type { RecognizedDirectoryRow } from '#sme-roster/lib/platform/recognized-directory'
 import { RDJB_TITLE_CODES } from '#sme-roster/lib/platform/recognized-evidence'
 import { PLATFORM_RDJBS } from '#sme-roster/lib/labels'
 import { formatFetchTime } from '#sme-roster/lib/reconcile-time'
+import { Badge } from '#core/app/components/ui/badge'
 import { Button } from '#core/app/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '#core/app/components/ui/table'
 
@@ -43,12 +44,12 @@ const conflictLabel: Record<string, string> = {
         <Table class="data-table min-w-[880px] table-fixed 2xl:min-w-[1160px]" aria-label="平台认定目录">
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[22%]">企业</TableHead>
-              <TableHead class="w-[14%] whitespace-nowrap">有效期</TableHead>
-              <TableHead class="w-[10%] whitespace-nowrap">维护批次</TableHead>
+              <TableHead class="w-[30%]">企业</TableHead>
+              <TableHead class="w-[16%] whitespace-nowrap">有效期</TableHead>
+              <TableHead class="w-[11%] whitespace-nowrap">维护批次</TableHead>
               <TableHead class="w-[11%] whitespace-nowrap">属地</TableHead>
-              <TableHead class="w-[15%] whitespace-nowrap">称号</TableHead>
-              <TableHead class="sticky right-0 z-20 w-[18%] border-l bg-muted">详情</TableHead>
+              <TableHead class="w-[26%] whitespace-nowrap">称号</TableHead>
+              <TableHead class="table-sticky-action-head w-[6%] text-right"><span class="sr-only">详情</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -61,11 +62,23 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal font-mono text-xs [overflow-wrap:anywhere]">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.validityDateRaw) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.maintenanceBatch) }}</TableCell>
               <TableCell class="whitespace-normal break-all font-mono text-xs">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.district) }}</TableCell>
-              <TableCell class="whitespace-normal text-xs leading-5">{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</TableCell>
-              <TableCell class="sticky right-0 z-10 border-l bg-card">
-                <Button variant="ghost" size="sm" :disabled="loading" @click="emit('open-record', row.record.id)"><FileText data-icon="inline-start" />查看详情</Button>
-                <NuxtLink v-if="currentQuery(row).titleCode || currentQuery(row).q" :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }" class="mt-1 block text-xs hover:underline" data-testid="platform-recognized-current-link">当前有效资格</NuxtLink>
-                <span v-for="conflict in row.conflicts.filter(value => value !== 'title_conflict')" :key="conflict" class="text-muted-foreground mt-1 block text-xs">{{ conflictLabel[conflict] ?? conflict }}</span>
+              <TableCell class="whitespace-normal text-xs leading-5">
+                <NuxtLink
+                  v-if="currentQuery(row).titleCode || currentQuery(row).q"
+                  :to="{ path: '/current-enterprises', query: { ...(currentQuery(row).titleCode ? { titleCode: currentQuery(row).titleCode } : {}), ...(currentQuery(row).q ? { q: currentQuery(row).q } : {}) } }"
+                  class="hover:text-primary font-medium hover:underline"
+                  title="查看当前有效资格"
+                  data-testid="platform-recognized-current-link"
+                >
+                  {{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}
+                </NuxtLink>
+                <span v-else>{{ projectionDisplay(row.matchedVersion, row.matchedVersion.titleRaw, projectionTitle) }}</span>
+                <div v-if="row.conflicts.filter(value => value !== 'title_conflict').length" class="mt-1 flex flex-wrap gap-1">
+                  <Badge v-for="conflict in row.conflicts.filter(value => value !== 'title_conflict')" :key="conflict" variant="warning">{{ conflictLabel[conflict] ?? conflict }}</Badge>
+                </div>
+              </TableCell>
+              <TableCell class="table-sticky-action-cell text-right">
+                <Button variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground size-7" :disabled="loading" title="查看详情" @click="emit('open-record', row.record.id)"><ChevronRight class="size-4" aria-hidden="true" /><span class="sr-only">查看详情</span></Button>
               </TableCell>
             </TableRow>
           </TableBody>
@@ -96,11 +109,11 @@ const conflictLabel: Record<string, string> = {
           <TableHeader>
             <TableRow class="hover:bg-transparent">
               <TableHead class="w-[14%]">原行 / 查询</TableHead>
-              <TableHead class="w-[22%]">企业原值</TableHead>
+              <TableHead class="w-[24%]">企业原值</TableHead>
               <TableHead class="w-[18%] whitespace-nowrap">称号</TableHead>
-              <TableHead class="w-[12%] whitespace-nowrap">采集时间</TableHead>
-              <TableHead class="w-[18%]">隔离原因</TableHead>
-              <TableHead class="sticky right-0 z-20 w-[12%] border-l bg-muted">查询证据</TableHead>
+              <TableHead class="w-[13%] whitespace-nowrap">采集时间</TableHead>
+              <TableHead class="w-[15%]">隔离原因</TableHead>
+              <TableHead class="table-sticky-action-head w-[16%]">查询证据</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -110,11 +123,13 @@ const conflictLabel: Record<string, string> = {
               <TableCell class="whitespace-normal">{{ PLATFORM_RDJBS[row.titleRaw ?? ''] ?? missing(row.titleRaw) }}</TableCell>
               <TableCell class="whitespace-nowrap tabular-nums">{{ time(row.queriedAt) }}</TableCell>
               <TableCell class="text-xs">
-                <span v-if="row.identityState === 'missing_key'">缺少平台业务编号</span>
-                <span v-else-if="row.identityState === 'conflict'">平台编号冲突</span>
-                <span v-if="row.contentState === 'unverifiable'">原文内容无法核实</span>
+                <div class="flex flex-wrap gap-1">
+                  <Badge v-if="row.identityState === 'missing_key'" variant="warning">缺少平台业务编号</Badge>
+                  <Badge v-else-if="row.identityState === 'conflict'" variant="error">平台编号冲突</Badge>
+                  <Badge v-if="row.contentState === 'unverifiable'" variant="warning">原文内容无法核实</Badge>
+                </div>
               </TableCell>
-              <TableCell class="sticky right-0 z-10 border-l bg-card">
+              <TableCell class="table-sticky-action-cell">
                 <NuxtLink :to="{ path: '/platform-queries', query: { queryId: row.queryId } }" class="inline-flex items-center gap-1 text-xs hover:underline">查看原查询<ExternalLink class="size-3" aria-hidden="true" /></NuxtLink>
               </TableCell>
             </TableRow>
