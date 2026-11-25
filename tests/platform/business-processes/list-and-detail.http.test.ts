@@ -14,7 +14,7 @@ import { platformBusinessRecord, platformCollection } from '../../../db/postgres
 import { platformQueryTitleScope } from '../../../db/postgresql/platform-query-scope-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import type { RosterImportPlatformQuery,RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 
 const dir = mkdtempSync(join(tmpdir(), 'business-processes-http-'))
 let db: ReturnType<typeof usePostgresDirectoryDb>
@@ -82,7 +82,7 @@ beforeAll(async () => {
 }, 60000)
 
 afterAll(async () => {
-  await stopPostgresJobs()
+  await stopJobs()
   await closeApplicationLogging()
   await closePostgresDirectoryDb()
   postgres?.close()

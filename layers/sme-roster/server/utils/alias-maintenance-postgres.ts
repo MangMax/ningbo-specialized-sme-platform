@@ -9,7 +9,7 @@ import { sourceDocument } from '../../../../db/postgresql/official-evidence-tabl
 import { platformBusinessObservation as observation, platformCollection as collection,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
 import { z } from 'zod'
-import { lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { lockReviewedEnterpriseBatch, canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
 import { failAlias, parse as parseAliasInput, positiveId as positiveAliasId } from './alias-maintenance-model'
 import { aliasDecisionSchema, aliasListInput, aliasPageInput, boundedAliasPage, decideEnterpriseAlias } from './alias-maintenance-model'
@@ -27,7 +27,7 @@ const snapshot = { isolationLevel: 'repeatable read', accessMode: 'read only' } 
 
 async function enterprise(db: Db, rawId: unknown) {
   const requested = parseAliasInput(positiveAliasId, rawId)
-  const id = await postgresCanonicalEnterpriseId(db, requested)
+  const id = await canonicalEnterpriseId(db, requested)
   if (id === null) return failAlias(404, 'enterprise_not_found', '企业不存在')
   return { id, requested }
 }
@@ -98,7 +98,7 @@ async function checkSource(db: Db, alias: Alias) {
   if (source.interface !== expectedInterface || !source.uscc || normalizeUscc(source.originalUscc) !== source.uscc || source.originalName !== name) {
     failAlias(400, 'alias_source_evidence_mismatch', '平台关系的接口、统一社会信用代码或 qymc 与该别名不一致')
   }
-  if (source.enterpriseId !== null && await postgresCanonicalEnterpriseId(db, Number(source.enterpriseId)) !== enterpriseId) {
+  if (source.enterpriseId !== null && await canonicalEnterpriseId(db, Number(source.enterpriseId)) !== enterpriseId) {
     failAlias(400, 'alias_source_evidence_mismatch', '平台关系已归属的企业与该别名归属企业不一致')
   }
 }
@@ -129,7 +129,7 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
   return db.transaction(async tx => {
     const { id: owner, requested } = await enterprise(tx, enterpriseId)
     await tx.select({ id: enterpriseTable.id }).from(enterpriseTable).where(eq(enterpriseTable.id, owner)).for('update')
-    if (owner !== await postgresCanonicalEnterpriseId(tx, requested)) failAlias(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
+    if (owner !== await canonicalEnterpriseId(tx, requested)) failAlias(409, 'alias_version_conflict', '别名版本已改变，请重新读取')
     const before = await readAlias(tx, owner, aliasId)
     const [prior] = await tx.select({ hash: audit.requestHash, after: audit.after }).from(audit)
       .where(and(eq(audit.aliasId, before.id), eq(audit.idempotencyKey, request.idempotencyKey)))
@@ -139,7 +139,7 @@ export function maintainPostgresEnterpriseAlias(db: Db, enterpriseId: unknown, a
     }
     const next = decideEnterpriseAlias(before, request)
     if (request.action !== 'withdraw') {
-      await lockPostgresReviewedEnterpriseBatch(tx, [owner], [{ name: before.name }, { name: next.name }])
+      await lockReviewedEnterpriseBatch(tx, [owner], [{ name: before.name }, { name: next.name }])
       await checkSource(tx, next)
       await checkConflict(tx, next)
     }

@@ -1,4 +1,4 @@
-import { savePostgresEnterpriseDetails } from '../../../../utils/enterprise-directory-postgres-write'
+import { saveEnterpriseDetails } from '../../../../utils/enterprise-directory-postgres-write'
 import { requireApiToken } from '../../../../utils/api-guard'
 import { sameOriginBrowserAccess } from '../../../../utils/browser-page-access'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb, enterpriseId } from '../../../../utils/enterprise-directory-route'
@@ -25,6 +25,6 @@ export default defineEventHandler(async event => {
   const input = directoryInput(enterpriseDetailsSchema, await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return savePostgresEnterpriseDetails(db, id, input)
+    return saveEnterpriseDetails(db, id, input)
   })
 })

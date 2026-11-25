@@ -1,8 +1,7 @@
 import { sendStream } from 'h3'
 import { isJobId } from '../../../../core/lib/job'
 import { requireTaskCenterAccess } from '../../../../core/server/utils/task-center-access'
-import { usePostgresJobsDb } from '../../../../core/server/utils/postgres-jobs'
-import { getPostgresJob } from '../../../../core/server/utils/job-store-postgres'
+import { getJob, useJobsDb } from '../../../../core/server/public'
 import { artifactStream, currentArtifact, EXPORT_MIME, postgresExportDirectory } from '../../utils/current-export-artifact'
 import { appLog, requestLogContext } from '../../../../core/lib/logging'
 defineRouteMeta({openAPI:{tags:['当前名录导出'],summary:'下载后台导出产物',security:[{bearerAuth:[]}],description:'与提交同一API token边界。只接受受控产物ULID；不接受文件路径。保留7天，过期410，缺失404，任务历史保留。同源页面请求通过浏览器标记、Fetch Metadata 及 Origin/Referer 校验后可直接操作，POST 还需 JSON；其他请求仍需 API token。此检查不识别用户。',parameters:[{in:'path',name:'id',required:true,schema:{type:'string'}}],responses:{200:{description:'Excel字节',content:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':{schema:{type:'string',format:'binary'}}}},401:{description:'需要token'},404:{description:'无可用产物'},410:{description:'已过期，请重新导出'}}}})
@@ -18,8 +17,8 @@ export default defineEventHandler(async event => {
   requireTaskCenterAccess(event)
   const id = getRouterParam(event,'id')
   if (!isJobId(id)) throw createError({statusCode:400,message:'产物ID非法'})
-  const postgres = usePostgresJobsDb()
-  const job = (await getPostgresJob(postgres, id))?.row
+  const postgres = useJobsDb()
+  const job = (await getJob(postgres, id))?.row
   const directory = postgresExportDirectory()
   // A syntactically valid URL parameter alone does not establish a known job.
   if (job?.kind === 'current-roster-export') taskId = job.id

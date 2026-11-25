@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/utils/platform-batch-http'
-import { runningPostgresJobRunner, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { runningJobRunner, stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
@@ -13,7 +13,7 @@ let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const dir = mkdtempSync(join(tmpdir(), 'pagination-regressions-'))
 const cookie = 'session=synthetic-pagination-secret'
 const upstream = vi.fn()
-const whenIdle = () => runningPostgresJobRunner(usePostgresDirectoryDb())?.wake()
+const whenIdle = () => runningJobRunner(usePostgresDirectoryDb())?.wake()
 
 beforeEach(async () => {
   await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': cookie })
@@ -54,7 +54,7 @@ beforeAll(async () => {
 }, 60_000)
 
 afterAll(async () => {
-  await stopPostgresJobs()
+  await stopJobs()
   await closePostgresDirectoryDb()
   postgres?.close()
   vi.unstubAllGlobals()

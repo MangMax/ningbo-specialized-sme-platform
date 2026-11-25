@@ -4,7 +4,7 @@ import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/l
 import { officialEvidenceRowRevision, sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import { rosterFileClassification } from '../../../../db/postgresql/roster-file-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { registerPostgresEnterpriseSource } from '../../../core/server/public'
+import { registerEnterpriseSource } from '../../../core/server/public'
 import type { RosterImportRequest, RosterImportItemResult } from '../../lib/roster-import-client'
 import { readPostgresAnnouncementEvents, repointPostgresAnnouncementEvidence } from './announcement-evidence-postgres'
 import { announcementEvidenceCoordinate, evidenceRepointPlanFingerprint, eventCoordinates, matchesEventCoordinates } from './roster-import-model'
@@ -133,7 +133,7 @@ export async function attachPostgresAnnouncementSources(tx: Tx, intakeId: number
     .orderBy(capturedRevision.evidenceId, capturedRevision.revision)
   const sourceIds = new Set<number>(), capturedOwners = new Set<string>()
   for (const row of captured) {
-    sourceIds.add(await registerPostgresEnterpriseSource(tx, { module: 'sme-roster', businessTable: 'source_document',
+    sourceIds.add(await registerEnterpriseSource(tx, { module: 'sme-roster', businessTable: 'source_document',
       versionKey: row.id+':'+row.sha256, channel: row.source, listType: 'announcement',
       series: row.title, acquiredOn: null, fileId: row.fileId, sha256: row.sha256 }, [row.owner]))
     capturedOwners.add(row.owner+':'+row.source)
@@ -149,7 +149,7 @@ export async function attachPostgresAnnouncementSources(tx: Tx, intakeId: number
     )).limit(2) : []
     const versionKey = docs.length === 1 ? docs[0]!.id + ':' + registered!.sha256 : intakeId + ':' + channel
     const digest = registered?.sha256 ?? (/^[a-f0-9]{64}$/.test(request.sourceSha256 ?? '') ? request.sourceSha256! : null)
-    sourceIds.add(await registerPostgresEnterpriseSource(tx, { module: 'sme-roster', businessTable: docs.length === 1 ? 'source_document' : 'roster_announcement_intake',
+    sourceIds.add(await registerEnterpriseSource(tx, { module: 'sme-roster', businessTable: docs.length === 1 ? 'source_document' : 'roster_announcement_intake',
       versionKey, channel, listType: 'announcement', series: title, acquiredOn: null, fileId: registered?.id ?? null, sha256: digest }, [owner]))
   }
   return [...sourceIds].sort((a,b) => a-b)

@@ -1,5 +1,5 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
-import { usePostgresJobsDb } from '../../utils/postgres-jobs'
+import { useJobsDb } from '../../utils/postgres-jobs'
 import { listPostgresJobs, listPostgresJobSummaries } from '../../utils/job-store-postgres'
 import { parseCsvQuery } from '#core/lib/csv'
 import { JOB_STATES, type JobState } from '#core/lib/job'
@@ -126,7 +126,7 @@ export default defineEventHandler(async (event) => {
     limit,
   }
 
-  const db = usePostgresJobsDb()
+  const db = useJobsDb()
   const config = useRuntimeConfig(event)
   if (q.view === 'summary') return listPostgresJobSummaries(db, query)
   const { rows, total } = await listPostgresJobs(db, query)

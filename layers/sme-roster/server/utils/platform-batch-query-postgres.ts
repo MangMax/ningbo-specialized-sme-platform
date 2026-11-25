@@ -11,7 +11,7 @@ import { runPlatformLiveQuery } from './platform-live-query'
 import { appLog, newLogContext, type LogContext } from '../../../core/lib/logging'
 import { logPlatformResult, platformOperation } from '../../lib/platform/logging'
 import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
-import { getPostgresJob, reopenPostgresJob } from '../../../core/server/public'
+import { getJob, reopenJob } from '../../../core/server/public'
 import type { JobRow } from '../../../core/server/utils/job-contract'
 import { summarizePostgresBatches } from './jobs/batch-summary-postgres'
 import {
@@ -156,7 +156,7 @@ export const batchSpec: JobSpec = {
     async run(ctx, params, inputSnapshot) {
       const cookie = (await resolvePostgresCredential(ctx.db, 'sme-roster.miitCookie')).value
       validatePlatformBatchConditions(params, cookie)
-      const row = (await getPostgresJob(ctx.db, ctx.jobId))!.row
+      const row = (await getJob(ctx.db, ctx.jobId))!.row
       const prior = await readPostgresPlatformBatchResult(ctx.db, row.id, row.result as PlatformBatchCheckpoint | null)
       const completion = await runPlatformBatch({
         ...ctx,
@@ -199,7 +199,7 @@ export async function getPostgresPlatformBatch(db: NodePgDatabase, input: unknow
   const parsed = platformBatchStatusSchema.safeParse(input)
   if (!parsed.success) return platformBatchFailure(400, 'Invalid batch ID')
   return db.transaction(async tx => {
-    const row = requirePlatformBatchJob((await getPostgresJob(tx, parsed.data.batchId))?.row)
+    const row = requirePlatformBatchJob((await getJob(tx, parsed.data.batchId))?.row)
     const result = await readPostgresPlatformBatchResult(tx, row.id, row.result as PlatformBatchCheckpoint | null)
     return projectBatchState(row, result)
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
@@ -209,7 +209,7 @@ export async function getPostgresPlatformBatchItem(db: NodePgDatabase, input: un
   const parsed = platformBatchItemSchema.safeParse(input)
   if (!parsed.success) return platformBatchFailure(400, 'Invalid batch or item ID')
   return db.transaction(async tx => {
-    const row = requirePlatformBatchJob((await getPostgresJob(tx, parsed.data.batchId))?.row)
+    const row = requirePlatformBatchJob((await getJob(tx, parsed.data.batchId))?.row)
     const checkpoint = row.result as PlatformBatchCheckpoint | null
     const item = projectBatchState(row, checkpoint).items.find(item => item.itemId === parsed.data.itemId)
     if (!item) return platformBatchFailure(404, 'Platform batch item not found')
@@ -223,7 +223,7 @@ export async function retryPostgresPlatformBatch(db: NodePgDatabase, input: unkn
   if (!parsed.success) return platformBatchFailure(400, 'Invalid batch retry parameters')
   const retry = parsed.data
   const receipt = await db.transaction(async tx => {
-    const previous = await getPostgresJob(tx, retry.batchId)
+    const previous = await getJob(tx, retry.batchId)
     const row = requirePlatformBatchJob(previous?.row)
     const batch = projectBatchState(row, row.result as PlatformBatchCheckpoint | null)
     validatePlatformBatchRetry(batch, retry.itemIds)
@@ -231,7 +231,7 @@ export async function retryPostgresPlatformBatch(db: NodePgDatabase, input: unkn
     if (row.state === 'queued' || row.state === 'running') return platformBatchFailure(409, 'Platform batch is still active')
     const params = { ...row.params, retryItemIds: retry.itemIds }
     const snapshot = await preparePostgresBatch(tx, params)
-    const reopened = await reopenPostgresJob(tx, row.id, row.kind, { state: row.state, claimToken }, params, snapshot)
+    const reopened = await reopenJob(tx, row.id, row.kind, { state: row.state, claimToken }, params, snapshot)
     if (!reopened) return platformBatchFailure(409, 'Platform batch is still active')
     return { batchId: batch.batchId, itemIds: batch.itemIds, state: 'queued' as const }
   })

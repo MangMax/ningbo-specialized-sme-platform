@@ -16,7 +16,7 @@ import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import type { RosterImportPlatformQuery } from '../../../layers/sme-roster/lib/roster-import-client'
@@ -92,7 +92,7 @@ beforeAll(async () => {
   await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
 }, 60_000)
 afterAll(async () => {
-  await stopPostgresJobs(); await client?.close()
+  await stopJobs(); await client?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await closePostgresDirectoryDb()

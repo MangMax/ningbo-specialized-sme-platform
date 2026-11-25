@@ -3,7 +3,7 @@ import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterpris
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { sourceDocument } from '../../../../db/postgresql/official-evidence-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { diagnoseOfficialEventFields } from '../../lib/roster/current-qualification-model'
 import { readPostgresLegacyQualification } from '../../lib/roster/current-qualification-postgres'
@@ -42,7 +42,7 @@ async function readIdentities(tx: Tx, records: Announcement['records']) {
   const byUscc = new Map<string, number>()
   for (const row of rows) {
     if (!row.usccNorm) continue
-    const owner = row.merged ? await postgresCanonicalEnterpriseId(tx, row.id) : row.id
+    const owner = row.merged ? await canonicalEnterpriseId(tx, row.id) : row.id
     if (owner !== null) byUscc.set(row.usccNorm, owner)
   }
   const batchCodes = Map.groupBy(input.filter(row => row.name && row.requestedUscc), row => row.nameNorm)

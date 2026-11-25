@@ -1,5 +1,5 @@
 import { postgresJobHandler } from '../../utils/job-runner-postgres'
-import { requirePostgresJobsWritable, submitWritablePostgresJob } from '../../utils/postgres-jobs'
+import { requireJobsWritable, submitWritableJob } from '../../utils/postgres-jobs'
 import { requestLogContext } from '../../../lib/logging'
 import { normalizeJobParams } from '#core/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
@@ -95,7 +95,7 @@ export default defineEventHandler(async (event) => {
       message: `未知的任务种类:${kind}。已登记:${known || '(无)'}`,
     })
   }
-  requirePostgresJobsWritable()
+  requireJobsWritable()
   const handler = postgresJobHandler(kind)
   if (!handler) {
     // **501 而不是 400**:名字是对的,只是活还没接。这个区分对代理很要紧 ——
@@ -117,7 +117,7 @@ export default defineEventHandler(async (event) => {
     logContext: requestLogContext(event),
     params: parsed.params,
   }
-  const row = await submitWritablePostgresJob(useRuntimeConfig(event).filesDir, input)
+  const row = await submitWritableJob(useRuntimeConfig(event).filesDir, input)
 
   setResponseStatus(event, 202)
   setHeader(event, 'location', `/api/jobs/${row.id}`)

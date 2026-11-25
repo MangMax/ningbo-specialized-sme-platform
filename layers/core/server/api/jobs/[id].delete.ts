@@ -1,6 +1,6 @@
 import { postgresJobReadProjector } from '../../utils/job-read-postgres'
-import { requirePostgresJobsWritable, usePostgresJobsDb } from '../../utils/postgres-jobs'
-import { cancelPostgresJob, getPostgresJobDetail } from '../../utils/job-store-postgres'
+import { requireJobsWritable, useJobsDb } from '../../utils/postgres-jobs'
+import { cancelPostgresJob, getJobDetail } from '../../utils/job-store-postgres'
 import { requestLogContext } from '../../../lib/logging'
 import { isJobId } from '#core/lib/job'
 import { requireApiToken } from '../../utils/api-guard'
@@ -50,14 +50,14 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: `任务 id 非法(应为 26 位 ULID):${id}` })
 
-  const db = usePostgresJobsDb()
-  requirePostgresJobsWritable()
+  const db = useJobsDb()
+  requireJobsWritable()
   const config = useRuntimeConfig(event)
   const project = await postgresJobReadProjector(db, config)
   const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
   if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
   const { state: _stateAtCancellation, ...outcome } = cancelled
-  const job = await getPostgresJobDetail(db, id)
+  const job = await getJobDetail(db, id)
   if (!job) throw createError({ statusCode: 404, message: `任务不存在:${id}` })
   if (outcome.cancelRequested) setResponseStatus(event, 202)
   return { ...await project(job, false), ...outcome }

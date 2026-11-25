@@ -7,7 +7,7 @@ import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/l
 import { platformBusinessObservation, platformCollection, platformExportBatch, platformExportRow,
   platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeUscc } from '../../lib/domain'
 import { formerPlatformMembers } from '../../lib/roster/enterprise-list-postgres'
 import { duplicateCandidatesFromBatch } from '../../lib/roster/duplicate-merge'
@@ -181,7 +181,7 @@ export async function readPostgresDuplicateMerge(db: NodePgDatabase, batchKey: s
       )).orderBy(desc(importBatch.id)).limit(1)
     const evidence = await readEvidence(tx, duplicateCandidates.map(candidate => normalizeUscc(candidate.newUscc)))
     async function byId(id: number) {
-      const canonical = Number.isSafeInteger(id) ? await postgresCanonicalEnterpriseId(tx, id) : null
+      const canonical = Number.isSafeInteger(id) ? await canonicalEnterpriseId(tx, id) : null
       if (canonical == null) return null
       const [owner] = await tx.select({ id: enterprise.id, name: enterprise.name, usccNorm: enterprise.usccNorm })
         .from(enterprise).where(eq(enterprise.id, canonical))

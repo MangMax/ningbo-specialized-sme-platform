@@ -6,8 +6,8 @@ import { expect, it, vi } from 'vitest'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { closeApplicationLogging } from '../../../layers/core/lib/logging'
 import { registerJob } from '../../../layers/core/server/utils/job-spec-registry'
-import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
-import { startPostgresJobs, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { getJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { startJobs, stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import type { RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -44,9 +44,9 @@ it('persists job completion while another connection waits to import and retains
       kind: 'synthetic-import-contention', status: 'ready', summary: 'Import contention',
       parse: params => ({ ok: true, params }), postgres: { async run() { return { result: { retained: true } } } },
     })
-    const id = (await startPostgresJobs(dir)!.runner.submit({ kind: 'synthetic-import-contention', params: {} })).id
-    await expect.poll(async () => (await getPostgresJob(db, id))?.row.state).toBe('done')
-    expect((await getPostgresJob(db, id))?.row).toMatchObject({
+    const id = (await startJobs(dir)!.runner.submit({ kind: 'synthetic-import-contention', params: {} })).id
+    await expect.poll(async () => (await getJob(db, id))?.row.state).toBe('done')
+    expect((await getJob(db, id))?.row).toMatchObject({
       state: 'done', result: { retained: true },
     })
     await blocker.query('ROLLBACK')
@@ -59,7 +59,7 @@ it('persists job completion while another connection waits to import and retains
       blocker.release()
     }
     await imported?.catch(() => {})
-    await stopPostgresJobs()
+    await stopJobs()
     await closeApplicationLogging()
     await closePostgresDirectoryDb()
     await pool?.end()

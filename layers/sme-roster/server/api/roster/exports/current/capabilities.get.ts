@@ -1,5 +1,5 @@
 import routes from '#current-export-routes'
-import { postgresJobsEnabled } from '../../../../../../core/server/utils/postgres-jobs'
+import { jobsEnabled } from '../../../../../../core/server/utils/postgres-jobs'
 import { getJobSpec } from '../../../../../../core/server/utils/job-spec-registry'
 import { registerJobSpecs } from '../../../../../../../server/utils/job-specs'
 import { postgresExportDirectory } from '../../../../utils/current-export-artifact'
@@ -12,6 +12,6 @@ export default defineEventHandler(event => {
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
   const spec = getJobSpec('current-roster-export')
-  const ready = spec?.status === 'ready' && postgresJobsEnabled() && Boolean(spec.postgres) && Boolean(postgresExportDirectory())
+  const ready = spec?.status === 'ready' && jobsEnabled() && Boolean(spec.postgres) && Boolean(postgresExportDirectory())
   return { exports: routes.map(route => ({ ...route, ready })) }
 })

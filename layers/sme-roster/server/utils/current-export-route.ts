@@ -1,7 +1,7 @@
 import { defineEventHandler, readBody, getQuery, createError, setResponseStatus, setHeader } from 'h3'
 import { useRuntimeConfig } from '#imports'
 import type { CurrentTitle } from '../../lib/roster/current-qualification'
-import { startPostgresJobs } from '../../../core/server/public'
+import { startJobs } from '../../../core/server/public'
 import { requireTaskCenterAccess } from '../../../core/server/utils/task-center-access'
 import { getJobSpec } from '../../../core/server/utils/job-spec-registry'
 import { registerJobSpecs } from '../../../../server/utils/job-specs'
@@ -20,7 +20,7 @@ export function currentExportRoute(titleCode: CurrentTitle) {
     if (!parsed.ok) throw createError({statusCode:400,message:parsed.message})
     if (parsed.params.regenerateOf) operation = 'export.current.regenerate'
     const input = {kind:'current-roster-export',params:parsed.params,filesDir:useRuntimeConfig(event).filesDir,logContext}
-    const runtime = startPostgresJobs(input.filesDir)
+    const runtime = startJobs(input.filesDir)
     if (!runtime) throw createError({ statusCode: 503, message: '需要启用 PostgreSQL 任务中心' })
     const job = await runtime.runner.submit(input)
     appLog({ module: 'sme-roster', source: 'export', operation, outcome: 'success', taskId: job.id, ...(parsed.params.regenerateOf ? { resourceType: 'export_job', resourceId: String(parsed.params.regenerateOf) } : {}) }, logContext)

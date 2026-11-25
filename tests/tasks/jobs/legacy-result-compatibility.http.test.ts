@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import type { PostgresJobSpec } from '../../../layers/core/server/utils/job-runner-postgres'
 import { currentRosterExportSpec } from '../../../layers/sme-roster/server/utils/jobs/current-roster-export'
 import { observeJobSelects } from './fixtures/query-observation'
@@ -46,7 +46,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   release?.(); release = undefined
-  await stopPostgresJobs()
+  await stopJobs()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   clearJobSpecs()
   await closePostgresDirectoryDb()

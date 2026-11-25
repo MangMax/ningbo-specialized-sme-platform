@@ -10,7 +10,7 @@ import type { TaskList, TaskSummary, TaskSummaryProjection } from '../../lib/tas
 import { readApiToken, resolveApiAuth } from './api-auth'
 import { postgresJobHandler } from './job-runner-postgres'
 import { cancelPostgresJob, getPostgresTaskCenterRow, listPostgresTaskCenter, type PostgresTaskCenterRow } from './job-store-postgres'
-import { postgresJobsEnabled, requirePostgresJobsWritable, usePostgresJobsDb } from './postgres-jobs'
+import { jobsEnabled, requireJobsWritable, useJobsDb } from './postgres-jobs'
 import { taskCenterBrowserAccess } from './task-center-access'
 import { taskSummaryBase, taskSummaryCapabilities, taskSummaryError } from './task-summary'
 
@@ -64,9 +64,9 @@ export async function handlePostgresTaskCenter(action: TaskCenterAction, event: 
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
   const config = useRuntimeConfig(event)
-  const db = usePostgresJobsDb()
-  const writable = postgresJobsEnabled()
-  if (action === 'cancel' || action === 'retry') requirePostgresJobsWritable()
+  const db = useJobsDb()
+  const writable = jobsEnabled()
+  if (action === 'cancel' || action === 'retry') requireJobsWritable()
   const apiAuthorized = resolveApiAuth({ given: readApiToken({
     authorization: getHeader(event, 'authorization'), 'x-api-token': getHeader(event, 'x-api-token'),
   }), configured: config.apiToken }).writeAuthorized

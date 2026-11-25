@@ -4,15 +4,15 @@ import { enterprise, enterpriseProfileAudit as audit } from '../../../../db/post
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { z } from 'zod'
 import {
-  applyPostgresEnterpriseProfileChange, enterpriseProfileVersion, lockPostgresReviewedEnterpriseBatch,
-  postgresCanonicalEnterpriseId, postgresEnterpriseProfileState, type EnterpriseProfile,
+  applyEnterpriseProfileChange, enterpriseProfileVersion, lockReviewedEnterpriseBatch,
+  canonicalEnterpriseId, enterpriseProfileState, type EnterpriseProfile,
 } from '../../../core/server/public'
 import { EnterpriseProfileError } from './enterprise-profile-model'
 import { boundedEnterpriseProfileHistory, enterpriseProfilePatchSchema, parseEnterpriseProfileHistoryQuery } from './enterprise-profile-model'
 
 export function getPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId: number) {
   return db.transaction(async tx => {
-    const current = await postgresEnterpriseProfileState(tx, await postgresCanonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId)
+    const current = await enterpriseProfileState(tx, await canonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId)
     return { profile: current.profile, version: enterpriseProfileVersion(current) }
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' })
 }
@@ -31,7 +31,7 @@ export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId:
   if (!parsed.success) throw new EnterpriseProfileError(400, 'invalid_request', z.prettifyError(parsed.error))
   const input = parsed.data
   return db.transaction(async tx => {
-    const owner = await postgresCanonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId
+    const owner = await canonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId
     const requestHash = createHash('sha256').update(JSON.stringify({ enterpriseId: owner, ...input })).digest('hex')
     // Drizzle has no transaction advisory lock or hashtextextended builder.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`enterprise-profile:${input.idempotencyKey}`}, 0))`)
@@ -43,16 +43,16 @@ export function patchPostgresEnterpriseProfile(db: NodePgDatabase, enterpriseId:
         retainedAlias: view.retainedAliasId === null ? null : { id: view.retainedAliasId, name: view.before.name, created: view.aliasCreated },
         committedAt: view.createdAt }
     }
-    await lockPostgresReviewedEnterpriseBatch(tx, [owner], [input.changes])
-    if (owner !== (await postgresCanonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId)) throw new EnterpriseProfileError(409, 'version_conflict', 'Enterprise profile changed; read it again')
-    const current = await postgresEnterpriseProfileState(tx, owner)
+    await lockReviewedEnterpriseBatch(tx, [owner], [input.changes])
+    if (owner !== (await canonicalEnterpriseId(tx, enterpriseId) ?? enterpriseId)) throw new EnterpriseProfileError(409, 'version_conflict', 'Enterprise profile changed; read it again')
+    const current = await enterpriseProfileState(tx, owner)
     if (input.expectedVersion !== enterpriseProfileVersion(current)) {
       throw new EnterpriseProfileError(409, 'version_conflict', 'Enterprise profile changed; read it again')
     }
     for (const [key, value] of Object.entries(input.expectedValues ?? {})) {
       if (current.profile[key as keyof EnterpriseProfile] !== value) throw new EnterpriseProfileError(409, 'old_value_conflict', `Unexpected old ${key}`)
     }
-    const result = await applyPostgresEnterpriseProfileChange(tx, current, input.changes, {
+    const result = await applyEnterpriseProfileChange(tx, current, input.changes, {
       idempotencyKey: input.idempotencyKey, requestHash, actor: input.actor, basis: input.basis, previousName: input.previousName?.name,
     })
     return result

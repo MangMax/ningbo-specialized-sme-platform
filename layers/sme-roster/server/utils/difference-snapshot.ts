@@ -21,8 +21,8 @@ import { platformResultToImport } from '../../lib/platform/recognized-evidence'
 
 import { commitPostgresPlatformCollection } from './collection-import-postgres'
 import { resolvePostgresCredential } from '../../../core/server/utils/credential-state-postgres'
-import { requirePostgresJobsWritable, startPostgresJobs, usePostgresJobsDb } from '../../../core/server/utils/postgres-jobs'
-import { createPostgresJob, findPostgresJobRequest, getPostgresJob, lockPostgresJobAdmission, reopenPostgresJob, setPostgresJobResult } from '../../../core/server/utils/job-store-postgres'
+import { requireJobsWritable, startJobs, useJobsDb } from '../../../core/server/utils/postgres-jobs'
+import { createPostgresJob, findPostgresJobRequest, getJob, lockPostgresJobAdmission, reopenJob, setPostgresJobResult } from '../../../core/server/utils/job-store-postgres'
 import { summarizePostgresSnapshots } from './jobs/snapshot-summary'
 
 export const SNAPSHOT_KIND = 'difference-snapshot'
@@ -126,7 +126,7 @@ export const differenceSnapshotSpec: JobSpec = {
   postgres: {
     taskCenter: { summaries:summarizePostgresSnapshots },
     async run(ctx) {
-      const job = (await getPostgresJob(ctx.db,ctx.jobId))!.row
+      const job = (await getJob(ctx.db,ctx.jobId))!.row
       const cookie = (await resolvePostgresCredential(ctx.db,'sme-roster.miitCookie')).value
       return runSnapshot({ ...ctx, async admit(stored,owner,request,result) {
         if (!request) return ctx.checkpoint(result)
@@ -201,11 +201,11 @@ async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, r
   if (!parsed.success) return fail(400,'Invalid snapshot action or parameters')
   const input = parsed.data
   if (input.action !== 'read') {
-    requirePostgresJobsWritable()
-    startPostgresJobs(filesDir)
+    requireJobsWritable()
+    startJobs(filesDir)
   }
   if (input.action!=='create') {
-    const snapshot = await getPostgresJob(db,input.jobId)
+    const snapshot = await getJob(db,input.jobId)
     if (!snapshot || snapshot.row.kind!==SNAPSHOT_KIND) return fail(404,'Snapshot not found')
     const row = snapshot.row
     if (input.action==='read') return row
@@ -213,7 +213,7 @@ async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, r
     const actual = await fileDigest(receipt.path).catch(()=>null)
     if (actual!==receipt.sha256) return fail(409,'Backup checksum mismatch')
     if (row.state!=='done' && row.state!=='failed' && row.state!=='cancelled') return fail(409,'Snapshot is active')
-    const reopened = await reopenPostgresJob(db,row.id,row.kind,{ state:row.state,claimToken:snapshot.claimToken },row.params)
+    const reopened = await reopenJob(db,row.id,row.kind,{ state:row.state,claimToken:snapshot.claimToken },row.params)
     return reopened?.row ?? fail(409,'Snapshot is active')
   }
   return db.transaction(async tx => {
@@ -239,6 +239,6 @@ async function postgresSnapshotOperation(db: NodePgDatabase, filesDir: string, r
 }
 
 export function snapshotRuntimeOperation(filesDir: string, raw: unknown) {
-  const pg = usePostgresJobsDb()
+  const pg = useJobsDb()
   return postgresSnapshotOperation(pg, filesDir, raw)
 }

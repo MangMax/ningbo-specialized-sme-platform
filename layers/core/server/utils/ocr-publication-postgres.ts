@@ -5,7 +5,7 @@ import { job } from '../../../../db/postgresql/job-tables'
 import { isJobId } from '../../lib/job'
 import { lockPostgresFile } from './file-store-postgres'
 import type { PostgresJobContext } from './job-runner-postgres'
-import { getPostgresJob } from './job-store-postgres'
+import { getJob } from './job-store-postgres'
 import {
   applyOcrAttemptUpdate, currentOcrClaim, freezeOcrFile, ocrFileFingerprint, ocrPageFingerprint,
   ocrProviderFingerprint, recoveryError, resumeOcrPublication, seedPage, terminalOcrJob,
@@ -35,7 +35,7 @@ export async function preparePostgresOcrPublication(
 ): Promise<OcrPublication> {
   const providerFingerprint = ocrProviderFingerprint(providerUrl)
   if (resumeJobId) {
-    const anchor = isJobId(resumeJobId) ? (await getPostgresJob(db, resumeJobId))?.row : undefined
+    const anchor = isJobId(resumeJobId) ? (await getJob(db, resumeJobId))?.row : undefined
     const publication = validateOcrResume(anchor, files, model, variant, providerFingerprint)
     let source = anchor!
     const seen = new Set<string>()
@@ -45,7 +45,7 @@ export async function preparePostgresOcrPublication(
       const value = (source.result as { publication?: OcrPublication } | null)?.publication
       const parentId = value?.recovery?.sourceJobId ?? value?.resumedFrom
       if (!parentId) return resumeOcrPublication(publication, source, resumeJobId)
-      const parent = isJobId(parentId) ? (await getPostgresJob(db, parentId))?.row : undefined
+      const parent = isJobId(parentId) ? (await getJob(db, parentId))?.row : undefined
       if (!parent || parent.kind !== 'ocr' || !terminalOcrJob(parent.state)) throw recoveryError('恢复来源任务不可核实')
       source = parent
     }
@@ -61,7 +61,7 @@ export async function preparePostgresOcrPublication(
 
 async function recoverySource(db: NodePgDatabase, publication: OcrPublication, file: OcrPublicationFile, lock: boolean) {
   if (!publication.recovery) throw recoveryError('没有共享恢复来源')
-  return validateOcrRecoverySource((await getPostgresJob(db, publication.recovery.sourceJobId, lock))?.row, publication, file)
+  return validateOcrRecoverySource((await getJob(db, publication.recovery.sourceJobId, lock))?.row, publication, file)
 }
 
 type RecoverySource = Awaited<ReturnType<typeof recoverySource>>
@@ -111,7 +111,7 @@ export function postgresOcrStorage(ctx: PostgresJobContext) {
         let claim = currentOcrClaim(record, publication, file, page)
         let action: SharedOcrAttempt['action'] = claim.state === 'complete' ? 'complete' : claim.state === 'accepted' ? 'poll' : 'blocked'
         if (['unsubmitted', 'rejected', 'failed'].includes(claim.state) && publication.recovery!.anchorJobId === claim.ownerTaskId) {
-          const anchor = (await getPostgresJob(tx, claim.ownerTaskId))?.row
+          const anchor = (await getJob(tx, claim.ownerTaskId))?.row
           if (!anchor || anchor.kind !== 'ocr' || !terminalOcrJob(anchor.state)) throw recoveryError('明确重试锚点尚未结束')
           claim = { attemptId: ctx.jobId, ownerTaskId: ctx.jobId, anchorJobId: anchor.id, state: 'claimed' }
           record.attempts.push(claim)
@@ -136,7 +136,7 @@ export function postgresOcrStorage(ctx: PostgresJobContext) {
           await writePageRecord(tx, source, shared.fingerprint, record)
           return claim.capture
         }
-        const row = (await getPostgresJob(tx, ctx.jobId, true))?.row
+        const row = (await getJob(tx, ctx.jobId, true))?.row
         if (!row || row.kind !== 'ocr' || publication.recovery || publication.resumedFrom) throw recoveryError('原 OCR 执行来源不可核实')
         if (row.state === 'running') {
           await ctx.checkpoint(snapshot(), tx)
@@ -155,7 +155,7 @@ export function postgresOcrStorage(ctx: PostgresJobContext) {
     },
     publish(publication: OcrPublication, file: OcrPublicationFile, input: OcrWriteInput, snapshot: () => unknown) {
       return serial(() => ctx.db.transaction(async tx => {
-        const job = await getPostgresJob(tx, ctx.jobId, true)
+        const job = await getJob(tx, ctx.jobId, true)
         if (job?.row.state !== 'running') throw recoveryError('原 OCR 执行器已结束;原付费结果保留待显式恢复,禁止发布')
         await lockPostgresFile(tx, input.fileId)
         await verify(tx, file)

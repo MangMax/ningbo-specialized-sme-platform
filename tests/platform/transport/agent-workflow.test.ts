@@ -8,7 +8,7 @@ import { updatePostgresCredentialState } from '../../../layers/core/server/utils
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { startPlatformBatchApi } from './fixtures/batch-api'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 const dir = mkdtempSync(join(tmpdir(), 'platform-agent-'))
 let db: ReturnType<typeof usePostgresDirectoryDb>
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
@@ -46,7 +46,7 @@ beforeAll(async () => {
 }, 30_000)
 afterAll(async () => {
   await api?.close()
-  await stopPostgresJobs()
+  await stopJobs()
   await closeApplicationLogging()
   await closePostgresDirectoryDb()
   postgres?.close()

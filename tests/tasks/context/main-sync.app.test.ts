@@ -7,9 +7,9 @@ import { newJobId } from '../../../layers/core/lib/job'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 import { registerJob } from '../../../layers/core/server/utils/job-spec-registry'
-import { stagePostgresJob } from '../../../layers/core/server/utils/job-runner-postgres'
-import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
-import { startPostgresJobs, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stageJob } from '../../../layers/core/server/utils/job-runner-postgres'
+import { getJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { startJobs, stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { operationLogContext } from '../../../layers/core/server/utils/operation-log-context'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -26,7 +26,7 @@ beforeAll(async () => {
   initializeWorkerLogging()
 }, 90_000)
 afterEach(async () => {
-  await stopPostgresJobs()
+  await stopJobs()
   await pool?.query('DELETE FROM business.job')
 }, 150_000)
 afterAll(async () => {
@@ -41,7 +41,7 @@ afterAll(async () => {
   }
 }, 30_000)
 async function terminal(id: string) {
-  const read = async () => (await getPostgresJob(db(), id))?.row
+  const read = async () => (await getJob(db(), id))?.row
   await expect.poll(async () => (await read())?.state).toMatch(/^(done|failed|cancelled)$/)
   return (await read())!
 }
@@ -68,7 +68,7 @@ it('adopts persisted jobs with an immutable own task context and does not reattr
     postgres: { async run(ctx) { captured = ctx.logContext; await gate.promise; return { result: { kept: true } } } },
   })
   const context = { requestId: 'request-adopt-main-sync', traceId: 'trace-main-sync', taskId: 'parent-task' }
-  const runner = startPostgresJobs(root)!.runner
+  const runner = startJobs(root)!.runner
   const input = { kind: 'adopt-context', params: { clientRequestId: 'one-adoption' } }
   const row = await runner.submit({ ...input, logContext: context })
   try {
@@ -81,11 +81,11 @@ it('adopts persisted jobs with an immutable own task context and does not reattr
   expect((await runner.submit(input)).id).toBe(row.id)
   const rolledBackId = newJobId()
   await expect(runner.trackSubmission(remember => db().transaction(async tx => {
-    const { row: pending } = await stagePostgresJob(tx, { id: rolledBackId, kind: input.kind, params: { clientRequestId: 'rolled-back' } })
+    const { row: pending } = await stageJob(tx, { id: rolledBackId, kind: input.kind, params: { clientRequestId: 'rolled-back' } })
     remember([pending])
     throw new Error('fixture rollback')
   }), context)).rejects.toThrow('fixture rollback')
-  expect(await getPostgresJob(db(), rolledBackId)).toBeNull()
+  expect(await getJob(db(), rolledBackId)).toBeNull()
   await applicationLogs().flush()
   expect((await applicationLogs().list({ taskId: rolledBackId })).rows).toEqual([])
 })
@@ -95,8 +95,8 @@ it('adopts legacy queued jobs without inventing request identity', async () => {
     kind: 'legacy-adopt', status: 'ready', summary: 'synthetic', parse: params => ({ ok: true, params }),
     postgres: { async run(ctx) { expect(ctx.logContext).toEqual({ module: null, taskId: id }); return { result: null } } },
   })
-  await db().transaction(tx => stagePostgresJob(tx, { id, kind: 'legacy-adopt', params: {} }))
-  startPostgresJobs(root)
+  await db().transaction(tx => stageJob(tx, { id, kind: 'legacy-adopt', params: {} }))
+  startJobs(root)
   expect((await terminal(id)).state).toBe('done')
   await applicationLogs().flush()
   const rows = (await applicationLogs().list({ taskId: id })).rows

@@ -1,4 +1,4 @@
-import { addPostgresEnterprise } from '../../../utils/enterprise-directory-postgres-write'
+import { addEnterprise } from '../../../utils/enterprise-directory-postgres-write'
 import { requireApiToken } from '../../../utils/api-guard'
 import { enterpriseFieldsSchema } from '../../../utils/enterprise-contract'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb } from '../../../utils/enterprise-directory-route'
@@ -18,6 +18,6 @@ export default defineEventHandler(async event => {
   const fields = directoryInput(enterpriseFieldsSchema.required({ name: true }), await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return addPostgresEnterprise(db, fields)
+    return addEnterprise(db, fields)
   })
 })

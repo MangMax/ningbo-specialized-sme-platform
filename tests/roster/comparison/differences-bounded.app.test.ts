@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import pg from 'pg'
 import { createApp, defineEventHandler, getQuery, setHeader, toNodeListener } from 'h3'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { completeInProcessPostgresIntake } from '../imports/fixtures/in-process-intake-postgres'
 import { runPostgresMixedImport } from '../../../layers/sme-roster/server/utils/roster-mixed-import-postgres'
@@ -16,7 +16,7 @@ const cleanup: (() => void | Promise<void>)[] = []
 afterEach(async () => {
   try {
     // Complete background candidates while their isolated database still exists.
-    await stopPostgresJobs()
+    await stopJobs()
   } finally {
     for (const close of cleanup.splice(0).reverse()) await close()
     vi.restoreAllMocks()

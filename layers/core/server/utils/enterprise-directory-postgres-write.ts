@@ -79,7 +79,7 @@ function lockIdentity(tx: Transaction, kind: 'name' | 'uscc', value: string) {
   return tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`enterprise:${kind}:${value}`}, 0))`)
 }
 
-export async function lockPostgresReviewedEnterpriseBatch(
+export async function lockReviewedEnterpriseBatch(
   tx: Transaction,
   enterpriseIds: readonly number[],
   fields: readonly EnterpriseFields[],
@@ -95,7 +95,7 @@ export async function lockPostgresReviewedEnterpriseBatch(
   for (const code of [...codes].sort()) await lockIdentity(tx, 'uscc', code)
 }
 
-export async function registerPostgresEnterpriseSource(tx: Transaction, input: EnterpriseSource, enterpriseIds: readonly number[]) {
+export async function registerEnterpriseSource(tx: Transaction, input: EnterpriseSource, enterpriseIds: readonly number[]) {
   const { module, businessTable, versionKey, channel, listType, acquiredOn, series, fileId, sha256 } = input
   const [{ id: insertedId } = {}] = await tx.insert(enterpriseSource).values({
     module, businessTable, versionKey, channelCode: channel, listTypeCode: listType, acquiredOn, series, fileId, sha256,
@@ -122,7 +122,7 @@ export async function registerPostgresEnterpriseSource(tx: Transaction, input: E
   return id
 }
 
-export async function createPostgresReviewedEnterprise(tx: Transaction, fields: EnterpriseFields & { name: string }) {
+export async function createReviewedEnterprise(tx: Transaction, fields: EnterpriseFields & { name: string }) {
   await validateCodes(tx, fields)
   const name = normalizeEnterpriseName(fields.name)
   const uscc = fields.uscc ?? null
@@ -141,7 +141,7 @@ export async function createPostgresReviewedEnterprise(tx: Transaction, fields: 
   return inserted!.id
 }
 
-async function retainPostgresPreviousName(tx: Transaction, profile: EnterpriseProfile, nameNorm: string, idempotencyKey: string) {
+async function retainPreviousName(tx: Transaction, profile: EnterpriseProfile, nameNorm: string, idempotencyKey: string) {
   const { enterpriseId: id, name } = profile
   const oldNorm = normalizeEnterpriseName(name)
   if (!nameNorm || !oldNorm) throw new EnterpriseKernelError(422, 'invalid_name', 'Normalized enterprise name must not be empty')
@@ -172,7 +172,7 @@ async function retainPostgresPreviousName(tx: Transaction, profile: EnterprisePr
   return { id: alias!.id, created: 1 }
 }
 
-export async function insertPostgresEnterpriseAlias(tx: Transaction, values: Pick<typeof enterpriseAlias.$inferInsert,
+export async function insertEnterpriseAlias(tx: Transaction, values: Pick<typeof enterpriseAlias.$inferInsert,
   'enterpriseId' | 'name' | 'nameNorm' | 'sourceKind' | 'sourceRefId' | 'validFrom' | 'validTo' | 'verificationStatus' | 'note'
 > & { sourceRefId: number }) {
   const { enterpriseId, nameNorm, sourceKind, sourceRefId } = values
@@ -187,14 +187,14 @@ export async function insertPostgresEnterpriseAlias(tx: Transaction, values: Pic
   return { id: existing!.id, created: false }
 }
 
-export async function backfillPostgresEnterpriseUscc(tx: Transaction, id: number, uscc: string, qualityFlags: readonly string[]) {
+export async function backfillEnterpriseUscc(tx: Transaction, id: number, uscc: string, qualityFlags: readonly string[]) {
   const flags = qualityFlags.filter(flag=>flag!=='uscc_missing')
   await tx.update(enterprise).set({ usccNorm: uscc, qualityFlags: JSON.stringify(flags) }).where(eq(enterprise.id, id))
 }
 
 type ReviewedAttachment = Extract<ReviewedSubject, { action: 'attach' }>
 
-export async function postgresEnterpriseProfileState(tx: Transaction, id: number) {
+export async function enterpriseProfileState(tx: Transaction, id: number) {
   const latestAudit = tx.select({
     enterpriseId: enterpriseProfileAudit.enterpriseId, key: enterpriseProfileAudit.idempotencyKey,
   }).from(enterpriseProfileAudit)
@@ -209,8 +209,8 @@ export async function postgresEnterpriseProfileState(tx: Transaction, id: number
   return { profile: { enterpriseId: id, name, city, district }, row, key }
 }
 
-export async function applyPostgresEnterpriseProfileChange(
-  tx: Transaction, current: Awaited<ReturnType<typeof postgresEnterpriseProfileState>>,
+export async function applyEnterpriseProfileChange(
+  tx: Transaction, current: Awaited<ReturnType<typeof enterpriseProfileState>>,
   changes: Partial<Pick<EnterpriseProfile, 'name' | 'city' | 'district'>> & { uscc?: string | null },
   audit: ReviewedAttachment['audit'] & { previousName?: string },
 ) {
@@ -227,7 +227,7 @@ export async function applyPostgresEnterpriseProfileChange(
     throw new EnterpriseKernelError(422, 'unexpected_previous_name', 'Previous-name confirmation is only valid for a name change')
   }
   const nameNorm = renamed ? normalizeEnterpriseName(after.name) : row.nameNorm
-  const alias = renamed ? await retainPostgresPreviousName(tx, profile, nameNorm, audit.idempotencyKey) : { id: null, created: 0 }
+  const alias = renamed ? await retainPreviousName(tx, profile, nameNorm, audit.idempotencyKey) : { id: null, created: 0 }
   const updates: Partial<typeof enterprise.$inferInsert> = {}
   if (renamed) Object.assign(updates, { name: after.name, nameNorm })
   if (changes.city !== undefined) updates.city = after.city
@@ -255,17 +255,17 @@ export async function applyPostgresEnterpriseProfileChange(
     committedAt }
 }
 
-async function revisePostgresReviewedProfile(tx: Transaction, before: NonNullable<Awaited<ReturnType<typeof readPostgresEnterpriseDetails>>>,
+async function reviseReviewedProfile(tx: Transaction, before: NonNullable<Awaited<ReturnType<typeof readPostgresEnterpriseDetails>>>,
   next: typeof before, audit: ReviewedAttachment['audit']) {
   const renamed = next.name !== before.name
   if (!renamed && next.uscc === before.uscc) return null
-  const current = await postgresEnterpriseProfileState(tx, before.id)
-  return (await applyPostgresEnterpriseProfileChange(tx, current, {
+  const current = await enterpriseProfileState(tx, before.id)
+  return (await applyEnterpriseProfileChange(tx, current, {
     name: next.name, uscc: next.uscc,
   }, { ...audit, previousName: renamed ? before.name : undefined })).auditId
 }
 
-export async function attachPostgresReviewedEnterprise(tx: Transaction, subject: ReviewedAttachment) {
+export async function attachReviewedEnterprise(tx: Transaction, subject: ReviewedAttachment) {
   const before = await checkedEnterprise(tx, subject.enterpriseId, subject.expectedRevision, 'membership')
   const fields = subject.fields ?? {}
   if (Object.keys(fields).length === 0) return { id: before.id, auditId: null }
@@ -279,15 +279,15 @@ export async function attachPostgresReviewedEnterprise(tx: Transaction, subject:
   }
   const next = { ...before, ...fields }
   await validateCodes(tx, next)
-  const auditId = await revisePostgresReviewedProfile(tx, before, next, subject.audit)
+  const auditId = await reviseReviewedProfile(tx, before, next, subject.audit)
   await saveCodes(tx, before.id, before.revision + 1, next)
   return { id: before.id, auditId }
 }
 
-export function addPostgresEnterprise(db: NodePgDatabase, fields: EnterpriseFields & { name: string }) {
+export function addEnterprise(db: NodePgDatabase, fields: EnterpriseFields & { name: string }) {
   return db.transaction(async tx => {
-    const id = await createPostgresReviewedEnterprise(tx, fields)
-    await registerPostgresEnterpriseSource(tx, {
+    const id = await createReviewedEnterprise(tx, fields)
+    await registerEnterpriseSource(tx, {
       module: 'core', businessTable: 'enterprise', versionKey: String(id), channel: 'direct', listType: 'direct',
       acquiredOn: new Date().toISOString().slice(0, 10), series: '直接添加', fileId: null, sha256: null,
     }, [id])
@@ -295,7 +295,7 @@ export function addPostgresEnterprise(db: NodePgDatabase, fields: EnterpriseFiel
   })
 }
 
-export function savePostgresEnterpriseDetails(db: NodePgDatabase, id: number, input: z.infer<typeof enterpriseDetailsSchema>) {
+export function saveEnterpriseDetails(db: NodePgDatabase, id: number, input: z.infer<typeof enterpriseDetailsSchema>) {
   return db.transaction(async tx => {
     const { expectedRevision, registeredAddress, operatingAddress, ...fields } = input
     const before = await checkedEnterprise(tx, id, expectedRevision, 'details')
@@ -312,7 +312,7 @@ export function savePostgresEnterpriseDetails(db: NodePgDatabase, id: number, in
   })
 }
 
-export function setPostgresEnterpriseRemoved(db: NodePgDatabase, id: number, revision: number, reason: string | null) {
+export function setEnterpriseRemoved(db: NodePgDatabase, id: number, revision: number, reason: string | null) {
   return db.transaction(async tx => {
     const before = await checkedEnterprise(tx, id, revision, 'membership')
     const membership = { revision: before.revision + 1, removedReason: reason }

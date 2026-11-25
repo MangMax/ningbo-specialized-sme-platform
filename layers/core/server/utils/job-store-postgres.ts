@@ -71,17 +71,17 @@ async function readJob(query: PromiseLike<StoredJob[]>) {
   return row ? decodeJob(row) : null
 }
 
-export function getPostgresJob(db: Executor, id: string, lock = false) {
+export function getJob(db: Executor, id: string, lock = false) {
   const query = db.select(jobColumns).from(job).where(eq(job.id, id))
   return readJob(lock ? query.for('update') : query)
 }
 
-export async function getPostgresJobDetail(db: Executor, id: string) {
-  const job = await getPostgresJob(db, id)
+export async function getJobDetail(db: Executor, id: string) {
+  const job = await getJob(db, id)
   return job ? toJobDto(job.row) : null
 }
 
-export async function getPostgresJobSummary(db: Executor, id: string) {
+export async function getJobSummary(db: Executor, id: string) {
   const [row] = await db.select(summaryColumns()).from(job).where(eq(job.id, id))
   return row ? decodeSummary(row) : null
 }
@@ -189,7 +189,7 @@ function encodeResult(result: unknown) {
   return encoded
 }
 
-export function reopenPostgresJob(
+export function reopenJob(
   db: Executor, id: string, kind: string, expected: PostgresJobExpectation<TerminalState>, params: Record<string, unknown>,
   inputSnapshot?: unknown,
 ) {

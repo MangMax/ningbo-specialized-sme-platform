@@ -17,7 +17,7 @@ const pairedAliases = and(
 const sourceAudit = alias(enterpriseAliasAudit, 'source_audit')
 const survivorAudit = alias(enterpriseAliasAudit, 'survivor_audit')
 
-export async function findPostgresEnterpriseMergeAliasConflict(tx: Transaction, from: number, into: number) {
+export async function findEnterpriseMergeAliasConflict(tx: Transaction, from: number, into: number) {
   const audited = exists(tx.select({ id: enterpriseAliasAudit.id }).from(enterpriseAliasAudit).where(or(
     eq(enterpriseAliasAudit.aliasId, sourceAlias.id), eq(enterpriseAliasAudit.aliasId, survivorAlias.id),
   )))
@@ -78,7 +78,7 @@ interface EnterpriseMergeInput {
   basis: string
 }
 
-export async function applyPostgresEnterpriseMerge(tx: Transaction, input: EnterpriseMergeInput) {
+export async function applyEnterpriseMerge(tx: Transaction, input: EnterpriseMergeInput) {
   const { fromEnterpriseId: from, intoEnterpriseId: into, rename, sourceAlias, sourceKind, sourceRefId, basis } = input
   let renameAlias: { id: number | null; created: boolean } = { id: null, created: false }
   if (rename !== null) {
@@ -88,7 +88,7 @@ export async function applyPostgresEnterpriseMerge(tx: Transaction, input: Enter
   const alias = sourceAlias === null ? { id: null, created: false }
     : await ensureMergeAlias(tx, into, sourceAlias.name, sourceKind, sourceRefId, sourceAlias.note)
   if (alias.created || renameAlias.created) {
-    const generatedAliasConflict = await findPostgresEnterpriseMergeAliasConflict(tx, from, into)
+    const generatedAliasConflict = await findEnterpriseMergeAliasConflict(tx, from, into)
     if (generatedAliasConflict) return { ok: false as const, error: generatedAliasConflict }
   }
   const aliasesMoved = await moveAliases(tx, from, into)

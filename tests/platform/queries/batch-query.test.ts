@@ -6,7 +6,7 @@ import { handlePlatformBatchRequest } from '../../../layers/sme-roster/server/ut
 import { MAX_BATCH_ATTEMPTS } from '../../../layers/sme-roster/lib/platform/batch-query'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { runningPostgresJobRunner, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { runningJobRunner, stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
 
 const dir = mkdtempSync(join(tmpdir(), 'platform-batch-'))
@@ -14,7 +14,7 @@ const cookie = 'session=synthetic-batch-secret'
 const db = usePostgresDirectoryDb
 const token = 'synthetic-task-token'
 const upstream = vi.fn()
-const whenIdle = () => runningPostgresJobRunner(usePostgresDirectoryDb())?.wake()
+const whenIdle = () => runningJobRunner(usePostgresDirectoryDb())?.wake()
 
 beforeEach(async () => {
   await updatePostgresCredentialState(usePostgresDirectoryDb(), { 'sme-roster.miitCookie': cookie })
@@ -37,7 +37,7 @@ beforeAll(async () => {
   vi.stubEnv('MIIT_COOKIE_FILE', '')
 }, 30_000)
 afterAll(async () => {
-  await stopPostgresJobs()
+  await stopJobs()
   await closePostgresDirectoryDb()
   postgres?.close()
   vi.unstubAllGlobals()

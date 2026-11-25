@@ -2,7 +2,7 @@ import pg from 'pg'
 import { and, eq, inArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { namespaces, relations, triggers } from '../../../../db/postgresql/system-catalog'
-import { usePostgresJobsDb } from './postgres-jobs'
+import { useJobsDb } from './postgres-jobs'
 
 const channel = 'task_center_changed'
 
@@ -52,7 +52,7 @@ async function listen(current: Listener) {
 
 export function subscribeTaskCenterEvents(subscriber: Subscriber) {
   if (!listener) {
-    usePostgresJobsDb()
+    useJobsDb()
     const url = new URL(process.env.NUXT_POSTGRES_DIRECTORY_URL!)
     url.searchParams.delete('options')
     url.searchParams.set('application_name', 'task-center-events')
