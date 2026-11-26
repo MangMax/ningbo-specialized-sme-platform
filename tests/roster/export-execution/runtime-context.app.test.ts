@@ -14,7 +14,7 @@ import { importPostgresReceiptRedactor } from '../../../layers/sme-roster/server
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
-import { createRequire } from 'node:module'
+import { build } from 'esbuild'
 import { resolve } from 'node:path'
 import ExcelJS from 'exceljs'
 import { createCurrentExportWorker } from '../../../layers/sme-roster/server/utils/current-export-worker-location'
@@ -148,8 +148,6 @@ const workerArtifactEntry409 = join(workerArtifactRoot409,'current-export-worker
 let artifactManifestSha409 = ''
 beforeAll(async () => {
   const cwd = resolve(import.meta.dirname,'../../..')
-  const require = createRequire(import.meta.resolve('nitropack/package.json'))
-  const { build } = require('esbuild')
   symlinkSync(join(cwd,'node_modules'),join(workerArtifactRoot409,'node_modules'),'dir')
   const result = await build({ absWorkingDir: cwd, entryPoints: ['layers/sme-roster/lib/roster/current-export-worker.ts'], outfile: workerArtifactEntry409, bundle: true, packages: 'external', platform: 'node', format: 'esm', target: 'node24', sourcemap: true, metafile: true })
   const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')

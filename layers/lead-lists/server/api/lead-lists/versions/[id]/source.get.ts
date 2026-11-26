@@ -16,7 +16,7 @@ export default defineEventHandler(async event => {
   const id = leadListId.safeParse(Number(getRouterParam(event, 'id')))
   if (!id.success) throw createError({ statusCode: 400, message: '名单版本编号有误' })
   const source = await readPostgresLeadVersionSource(usePostgresDirectoryDb(), id.data)
-  const root = useRuntimeConfig(event).filesDir
+  const root = useRuntimeConfig().filesDir
   const path = resolveInsideRoot(root, source.relPath)
   if (!path) throw createError({ statusCode: 403, message: '原文件位置无效' })
   let actualPath: string
@@ -38,6 +38,6 @@ export default defineEventHandler(async event => {
   setHeader(event, 'Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(source.filename).replaceAll("'", '%27')}`)
   setHeader(event, 'X-Content-Type-Options', 'nosniff')
   setHeader(event, 'Cache-Control', 'private, no-store')
-  setHeader(event, 'Content-Length', registered.bytes)
+  setHeader(event, 'Content-Length', String(registered.bytes))
   return sendStream(event, createReadStream(actualPath))
 })

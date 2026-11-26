@@ -6,7 +6,7 @@ export async function registerLeadVersionRequest(event: H3Event) {
   const parsed = versionInput.safeParse(await readBody(event))
   if (!parsed.success) throw createError({ statusCode: 400, message: '名单版本资料有误', data: parsed.error.issues })
   const db = usePostgresLeadWriteDb()
-  const root = useRuntimeConfig(event).filesDir
+  const root = useRuntimeConfig().filesDir
   const result = await registerPostgresLeadVersion(db, root, parsed.data)
   if (result.created) setResponseStatus(event, 201)
   return result

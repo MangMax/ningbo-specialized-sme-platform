@@ -18,7 +18,7 @@ export function physicalRecoveryRoute(action: 'read' | 'recover') {
         return await readPostgresPhysicalIntent(pg, id, intentId)
       }
       const body = await readBody(event)
-      if (!body || typeof body !== 'object' || typeof body.intentId !== 'string' || !body.intentId || body.intentId.length > 100) throw createError({ statusCode: 400, message: 'intentId 必须为有界非空文本' })
+      if (!body || typeof body !== 'object' || !('intentId' in body) || typeof body.intentId !== 'string' || !body.intentId || body.intentId.length > 100) throw createError({ statusCode: 400, message: 'intentId 必须为有界非空文本' })
       const { intentId, ...controls } = body
       const { options } = splitFileMaintenanceBody(controls, 'restore')
       const root = useRuntimeConfig().filesDir

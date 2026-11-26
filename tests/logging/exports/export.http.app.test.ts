@@ -121,8 +121,9 @@ async function start() {
     },
   })
   for (const stream of [child.stdout!, child.stderr!]) stream.on('data', data => { output += data.toString() })
-  await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child })
-  expect(output).toContain(`127.0.0.1:${port}`)
+  const readiness = await waitForHttp(url('/api/jobs/kinds'), { timeoutMs: 60000, child })
+  const { kinds } = await readiness.json()
+  expect(kinds).toContainEqual(expect.objectContaining({ kind: 'current-roster-export', status: 'ready' }))
   writeFileSync(join(root, 'fixture.txt'), root)
 }
 beforeAll(async () => {

@@ -87,7 +87,11 @@ beforeAll(async () => {
     .get('/api/platform/declarations', (await import('../../../layers/sme-roster/server/api/platform/declarations.get')).default)
     .get('/api/platform/declarations/:recordId', (await import('../../../layers/sme-roster/server/api/platform/declarations/[recordId].get')).default)
     .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
-  request = toWebHandler(createApp().use(router))
+  const app = createApp({ onError: (_error, event) => {
+    const cacheControl = event.res.headers.get('cache-control')
+    if (cacheControl) event.res.errHeaders.set('cache-control', cacheControl)
+  } })
+  request = toWebHandler(app.use(router))
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_declarations')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_declaration')).default
 }, 60_000)

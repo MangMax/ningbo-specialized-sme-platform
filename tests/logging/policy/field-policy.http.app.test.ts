@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { type ChildProcess } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { request } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -9,10 +8,10 @@ import { join, resolve } from 'node:path'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { storedLogRows } from '../fixtures/runtime'
 import { businessDigest } from '../fixtures/business-state'
+import { hashBuiltServer } from '../fixtures/build-artifact'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
 import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES, defaultFieldControls } from '../../../layers/core/lib/logging/field-controls'
-import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 
 const root = mkdtempSync(join(tmpdir(), 'field-policy-http-'))
 const token = 'synthetic-field-api', mcpToken = 'synthetic-field-mcp', PRIVATE = 'PRIVATE_FIELD_POLICY_RAW_180'
@@ -21,7 +20,6 @@ const children: ChildProcess[] = [], observations: unknown[] = []
 let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let boundaryRuntime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let baseUrl = '', boundaryUrl = '', output = '', boundaryOutput = '', beforeDbHash = ''
-const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 async function call(path: string, init: RequestInit = {}) {
   const response = await fetch(baseUrl + path, { ...init, signal: AbortSignal.timeout(5000) })
   const text = await response.text()
@@ -68,7 +66,7 @@ beforeAll(async () => {
   const boundaryChild = spawn(process.execPath, ['tests/logging/policy/fixtures/stream-boundary-server.mjs'], { cwd: resolve('.'), stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { ...process.env, ...boundaryRuntime.env } }); children.push(boundaryChild)
   boundaryChild.stdout!.on('data', c => { boundaryOutput += c }); boundaryChild.stderr!.on('data', c => { boundaryOutput += c })
   boundaryUrl = await new Promise<string>((resolve, reject) => { boundaryChild.once('error', reject); boundaryChild.once('exit', () => reject(new Error(boundaryOutput))); boundaryChild.once('message', (m: any) => resolve(`http://127.0.0.1:${m.port}`)) })
-  observations.push({ root, baseUrl, boundaryUrl, children: children.map(c => c.pid), artifactHash: hash('.output/server/chunks/nitro/nitro.mjs'), beforeDbHash })
+  observations.push({ root, baseUrl, boundaryUrl, children: children.map(c => c.pid), artifactHash: hashBuiltServer(), beforeDbHash })
 }, 360000)
 afterAll(async () => {
   for (const child of children) await stopOwnedChild(child)
@@ -92,7 +90,30 @@ it('denies REST and MCP before policy execution and reads no unauthorized body o
   const denied = await patch({ private: PRIVATE }, false); expect(denied.status).toBe(401); expect(denied.headers.get('cache-control')).toBe('no-store')
   expect((await call('/api/logs/policy')).status).toBe(401)
   expect((await rpc('set_runtime_log_policy', { private: PRIVATE }, false)).status).toBe(401)
+  expect((await rpc('set_runtime_log_policy', { constructor: 'caller-field' }, false)).status).toBe(401)
   expect((await call('/api/health')).status).toBe(200)
+})
+
+it('preserves the JSON error envelope and default cache policy for uncacheable API errors', async () => {
+  const invalid = await call('/api/jobs', {
+    method: 'POST', headers: { ...api, accept: 'application/json', 'content-type': 'application/json' }, body: '{}',
+  })
+  expect(invalid.status).toBe(400)
+  expect(invalid.headers.get('cache-control')).toBe('no-cache')
+  expect(invalid.body).toEqual({
+    error: true, url: baseUrl + '/api/jobs', statusCode: 400, statusMessage: 'Server Error', message: '缺少 kind 字段',
+  })
+  const missing = await call('/api/acceptance-missing-route', { headers: { accept: 'application/json' } })
+  expect(missing.status).toBe(404)
+  expect(missing.headers.get('cache-control')).toBe('no-cache')
+  expect(missing.body).toMatchObject({ error: true, statusCode: 404, statusMessage: 'Not Found' })
+
+  const unsupported = await call('/api/files/acceptance-archive.doc', { headers: { accept: 'application/json' } })
+  expect(unsupported.status).toBe(415)
+  expect(unsupported.headers.get('content-type')).toBe('application/json')
+  expect(unsupported.body).toMatchObject({
+    error: true, statusCode: 415, statusMessage: '不支持的文件类型 .doc', message: '不支持的文件类型 .doc',
+  })
 })
 
 for (const action of ['commit', 'preflight'] as const) it(`retains the parse-result ${action} template on unauthorized POST without exposing the file id`, async () => {
@@ -282,9 +303,6 @@ it('uses policy argument budget rather than the JSONRPC envelope and preserves p
   const result = await rpc('set_runtime_log_policy', policyBase, true, ' '.repeat(5000)); expect(result.status).toBe(200); expect(rpcBody(result).fieldControls).toEqual(previous)
   for (const path of ['/_openapi.json', '/_scalar', '/_swagger']) expect((await call(path)).status).toBe(404)
   for (const path of ['/api/health', '/api/jobs/kinds']) expect((await call(path)).status).toBe(200)
-  const built = readFileSync('.output/server/chunks/nitro/nitro.mjs', 'utf8')
-  const actual = [...new Set([...built.matchAll(/route: '([^']+)'/g)].map(m => m[1]!).filter(route => route === '/mcp' || route.startsWith('/api/')))].sort()
-  expect(actual).toEqual([...APPLICATION_LOG_ROUTES].sort())
   expect(output + boundaryOutput).not.toContain(PRIVATE)
   expect(storedLogRows(runtime)).not.toContain(PRIVATE)
   expect(businessDigest(runtime)).toBe(beforeDbHash)

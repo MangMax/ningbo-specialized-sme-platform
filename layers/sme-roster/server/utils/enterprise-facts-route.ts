@@ -1,5 +1,5 @@
 import { readRuntimeEnterpriseFacts, preflightRuntimeEnterpriseFact, commitRuntimeEnterpriseFact } from './enterprise-facts-runtime'
-import { getRouterParam, readBody, setHeader } from 'h3'
+import { getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
 import { EnterpriseProfileError } from './enterprise-profile-model'
@@ -16,7 +16,7 @@ export function enterpriseFactsRoute(action: 'get' | 'preflight' | 'commit') {
       try { body = await readBody(event) } catch { throw new EnterpriseProfileError(400, 'invalid_request', 'Malformed JSON') }
       return action === 'preflight' ? await preflightRuntimeEnterpriseFact(id, body) : await commitRuntimeEnterpriseFact(id, body)
     } catch (error) {
-      if (error instanceof EnterpriseProfileError) { event.node.res.statusCode = error.statusCode; return { error: { code: error.code, message: error.message } } }
+      if (error instanceof EnterpriseProfileError) { setResponseStatus(event, error.statusCode); return { error: { code: error.code, message: error.message } } }
       throw error
     }
   })

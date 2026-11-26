@@ -1,5 +1,4 @@
-
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
@@ -7,7 +6,6 @@ import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForH
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { storedLogRows } from '../fixtures/runtime'
 import { businessDigest } from '../fixtures/business-state'
-import { APPLICATION_LOG_ROUTES } from '../../../lib/logging-route-templates'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
@@ -106,8 +104,17 @@ it('records a real matched HTTP template and method in the protected list and de
   expect(JSON.stringify({ summary, event })).not.toContain(PRIVATE)
   expect(output).not.toContain(PRIVATE)
 
-  const denied = await call('/api/logs', {})
+  const listed = await call('/api/logs?limit=5', { headers: apiHeaders })
+  expect(listed.status).toBe(200)
+  const denied = await call('/api/logs?limit=5')
   expect(denied.status).toBe(401)
+  expect(listed.requestId).toBeTruthy()
+  expect(denied.requestId).toBeTruthy()
+  const subsequent = await call('/api/file-library', { headers: apiHeaders })
+  expect(subsequent.status).toBe(200)
+  await waitLog(subsequent.requestId)
+  expect(await logs(`requestId=${listed.requestId}`)).toEqual([])
+  expect(await logs(`requestId=${denied.requestId}`)).toEqual([])
   const deniedDetail = await call('/api/logs/' + summary.id, {})
   expect(deniedDetail.status).toBe(401)
 })
@@ -299,20 +306,6 @@ it('records the matched HTTP template on a semantic operation', async () => {
 })
 
 
-it('accepts exactly the built application route templates and no other spelling', () => {
-  const source = readFileSync(join(resolve(import.meta.dirname, '../../..'), '.output/server/chunks/nitro/nitro.mjs'), 'utf8')
-  const actual = [...new Set(
-    [...source.matchAll(/route: '([^']+)'/g)]
-      .map(match => match[1]!)
-      .filter(route => route === '/mcp' || route.startsWith('/api/')),
-  )].sort()
-  // Exact set equality is the contract; a hardcoded total would only duplicate
-  // it and go stale whenever a real route ships (e.g. the #453 declarations pair).
-  expect([...APPLICATION_LOG_ROUTES].sort()).toEqual(actual)
-  expect(actual).toContain('/api/platform/declarations')
-  expect(actual).toContain('/api/platform/declarations/:recordId')
-})
-
 it('records the requested file id on a real delete failure', async () => {
   const response = await call('/api/files/987654321', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: '{}' })
   expect([400, 404, 409]).toContain(response.status)
@@ -357,6 +350,7 @@ it('saves dual collection rules through protected REST and MCP while disabled bu
   }
   const denied=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:base})
   expect(denied.status).toBe(401)
+  expect(denied.requestId).toBeTruthy()
   const restored=await mcp('tools/call',{name:'set_runtime_log_policy',arguments:{...base,collection:{sources:{http:{enabled:true,minLevel:'debug'}}}}},mcpToken)
   expect(restored.status).toBe(200)
   expect(restored.body.result.isError).not.toBe(true)

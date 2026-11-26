@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { businessDigest } from '../fixtures/business-state'
+import { hashBuiltServer } from '../fixtures/build-artifact'
 import { LOG_LEVELS } from '../../../layers/core/lib/logging/contract'
 import { LOG_FIELD_PROFILES } from '../../../layers/core/lib/logging/field-controls'
 import { spawnOwnedChild as spawn, reserveLoopbackPort, stopOwnedChild, waitForHttp } from '../../support/owned-process.mjs'
@@ -20,7 +21,6 @@ const fields = ['tus.method', 'tus.uploadId', 'tus.size', 'tus.offset'] as const
 let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
 let child: ChildProcess, url = '', output = '', beforeHash = '', initialHealth: unknown
 const observations: unknown[] = []
-const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 async function call(path: string, init: RequestInit = {}) {
   const response = await fetch(url + path, { ...init, signal: AbortSignal.timeout(5000) })
   const text = await response.text(); let body: any
@@ -50,7 +50,7 @@ beforeAll(async () => {
   child = spawn(process.execPath, ['.output/server/index.mjs'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...runtime.env, HOST: '127.0.0.1', PORT: String(port), NODE_ENV: 'production', NUXT_DB_READONLY: '0', NUXT_FILES_DIR: files, NUXT_INCOMING_DIR: incoming, NUXT_API_TOKEN: token, NUXT_MCP_TOKEN: mcpToken, NUXT_RECONCILE_PATH: join(root, 'reconcile.json') } })
   child.stdout!.on('data', c => { output += c }); child.stderr!.on('data', c => { output += c })
   const ready = await waitForHttp(url + '/api/health', { child }); initialHealth = await ready.json()
-  observations.push({ root, url, pid: child.pid, beforeHash, artifactHash: hash('.output/server/chunks/nitro/nitro.mjs') })
+  observations.push({ root, url, pid: child.pid, beforeHash, artifactHash: hashBuiltServer() })
 }, 90000)
 afterAll(async () => {
   await stopOwnedChild(child)
@@ -102,7 +102,7 @@ async function roundTrip(disabled?: typeof fields[number]) {
   }
   if (disabled === 'tus.uploadId') expect(output).not.toContain(id)
   expect((await call('/api/health')).body).toEqual(initialHealth); expect(businessDigest(runtime)).toBe(beforeHash)
-  observations.push({ disabled: disabled ?? 'none', uploadId: id, statuses: [created.status, rejected.status, completed.status], landed: path, fileSHA256: hash(join(files, path)), events })
+  observations.push({ disabled: disabled ?? 'none', uploadId: id, statuses: [created.status, rejected.status, completed.status], landed: path, fileSHA256: createHash('sha256').update(readFileSync(join(files, path))).digest('hex'), events })
 }
 it('real TUS defaults preserve creation failure completion context and original file placement without registration', async () => { await roundTrip() })
 for (const field of fields) it(`real TUS ${field} off preserves phase response bytes and registration separation`, async () => { await roundTrip(field) })

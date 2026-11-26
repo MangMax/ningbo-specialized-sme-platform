@@ -1,41 +1,51 @@
-import { closeApplicationLogging, newLogContext } from '../../lib/logging'
-import { setHeader, type H3Event } from 'h3'
+import type { RequestLogger } from 'evlog'
+import type { LogContext } from '../../lib/logging/contract'
+import { definePlugin } from 'nitro'
+import { getEventContext, isEvent, type HTTPEvent } from 'nitro/h3'
+import { closeApplicationLogging, matchedHttpRoute, newLogContext } from '../../lib/logging'
 
-type MatchedRoute = { path?: unknown }
+type RequestContext = ReturnType<typeof getEventContext> & {
+  applicationLogContext?: LogContext
+  applicationLogEnriched?: boolean
+  log?: Pick<RequestLogger, 'set'>
+  matchedRoute?: { route?: string; path?: string }
+}
 
-/** Copy only the framework-matched template; `event.path` may contain concrete IDs or secrets. */
-function attachHttpRoute(event: H3Event) {
+function requestContextOf(event: HTTPEvent): RequestContext {
+  return getEventContext(event)
+}
+
+function enrichRequestLog(event: HTTPEvent) {
   try {
-    const route = (event.context.matchedRoute as MatchedRoute | undefined)?.path
-    if (typeof route === 'string') event.context.log?.set({ httpRoute: route })
+    const requestContext = requestContextOf(event)
+    if (!requestContext.log || requestContext.applicationLogEnriched) return
+    const context = requestContext.applicationLogContext
+    const route = matchedHttpRoute(requestContext)
+    requestContext.log.set({
+      ...context,
+      ...(route ? { httpRoute: route } : {}),
+      ...(context?.module !== undefined ? { applicationLogModule: context.module } : {}),
+    })
+    requestContext.applicationLogEnriched = true
   } catch {
     /* Runtime diagnostics must never change the business response. */
   }
 }
 
-export default defineNitroPlugin(app => {
+export default definePlugin(app => {
   app.hooks.hook('request', event => {
+    const requestContext = requestContextOf(event)
     const context = newLogContext()
-    event.context.applicationLogContext = context
-    event.context.requestId = context.requestId
-    // evlog may already have created its request logger (plugin order is framework-owned).
-    event.context.log?.set(context)
-    setHeader(event, 'x-request-id', context.requestId!)
+    requestContext.applicationLogContext = context
+    requestContext.requestId = context.requestId
+    if (context.requestId && isEvent(event)) {
+      event.res.headers.set('x-request-id', context.requestId)
+      event.res.errHeaders.set('x-request-id', context.requestId)
+    }
   })
-  app.hooks.hook('beforeResponse', event => {
-    // The router has matched by now; success/denied responses emit after this hook.
-    attachHttpRoute(event)
-    const context = event.context.applicationLogContext
-    event.context.log?.set({
-      ...context,
-      ...(context?.module !== undefined ? { applicationLogModule: context.module } : {}),
-    })
-    const path = event.path.split('?')[0]!
-    if (path === '/api/logs' || path.startsWith('/api/logs/')) event.context._evlogShouldEmit = false
-  })
-  // Thrown errors emit from evlog's own error hook; attach the template as early as possible.
+  app.hooks.hook('response', (_response, event) => enrichRequestLog(event))
   app.hooks.hook('error', (_error, context) => {
-    if (context?.event) attachHttpRoute(context.event)
+    if (context?.event) enrichRequestLog(context.event)
   })
   app.hooks.hook('close', closeApplicationLogging)
 })

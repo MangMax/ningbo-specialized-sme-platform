@@ -1,10 +1,11 @@
+import { createNodeEvent } from '../../support/h3-node-event'
 import { singlePostgresFixtureRow, useIsolatedPostgresCases } from '../../support/isolated-postgres-cases'
 import { seedPostgresPlatformQuery } from '../../platform/fixtures/postgres-query'
 import { failEventUpdate } from './fixtures/postgres'
 import { createServer, IncomingMessage, ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import type { AddressInfo } from 'node:net'
-import { createApp, createEvent, createRouter, defineEventHandler, toNodeListener } from 'h3'
+import { createApp, createRouter, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -120,10 +121,10 @@ async function fixture() {
   const op = (id: number, patch: EventCorrectionRequest['operations'][number]['patch'], expectedRevision = 1) => ({ eventId: id, recordId: record.id, enterpriseId: enterprise.id, expectedRevision, patch })
   const { eventCorrectionRoute } = await import('../../../layers/sme-roster/server/utils/roster-event-correction-route')
   const router = createRouter(), app = createApp()
-  router.use('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
-  router.use('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
-  router.use('/api/roster/events/:id/audit', eventCorrectionRoute('audit'))
-  router.use('/api/roster/events/:id', eventCorrectionRoute('get'))
+  router.post('/api/roster/events/corrections/preflight', eventCorrectionRoute('preflight'))
+  router.post('/api/roster/events/corrections/commit', eventCorrectionRoute('commit'))
+  router.get('/api/roster/events/:id/audit', eventCorrectionRoute('audit'))
+  router.get('/api/roster/events/:id', eventCorrectionRoute('get'))
   app.use(router)
   const [{ default: preflight }, { default: commit }, { default: get }, { default: auditTool }] = await Promise.all([
     import('../../../layers/sme-roster/server/mcp/tools/preflight_event_corrections'),
@@ -132,7 +133,7 @@ async function fixture() {
     import('../../../layers/sme-roster/server/mcp/tools/get_event_correction_audit'),
   ])
   const sessions: McpServer[] = []
-  const serveMcp = async (req: Parameters<typeof listener>[0], res: Parameters<typeof listener>[1]) => {
+  const serveMcp = async (req: IncomingMessage, res: ServerResponse) => {
     // The SDK requires a fresh stateless transport for every HTTP request.
     const mcp = new McpServer({ name: 'issue304-isolated', version: '1' }); sessions.push(mcp)
     mcp.registerTool(preflight.name!, { inputSchema: preflight.inputSchema }, async (args, extra) => normalizeFixtureToolResult(await preflight.handler(args, extra)))
@@ -286,7 +287,7 @@ it('rejects an invalid committed MCP receipt as an internal error without swallo
     const stale = f.request('stale-before-result-guard', [f.op(f.first.event.id, { reviewOutcome: 'failed' })])
     await expect(dispatchPostgresEventCorrectionMcp('preflight', stale)).rejects.toThrowError(expect.objectContaining({ code: 'stale_revision', statusCode: 409 }))
     const incoming = new IncomingMessage(new Socket())
-    const event = createEvent(incoming, new ServerResponse(incoming))
+    const event = createNodeEvent(incoming, new ServerResponse(incoming))
     expect(await (f.preflightTool.enabled as (request: typeof event) => boolean)(event)).toBe(false)
     event.context.mcpAuth = { writeAuthorized: true }
     expect(await (f.preflightTool.enabled as (request: typeof event) => boolean)(event)).toBe(true)

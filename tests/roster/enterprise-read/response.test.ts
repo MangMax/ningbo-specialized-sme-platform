@@ -1,4 +1,4 @@
-import { createServer } from 'node:http'
+import { createServer, ServerResponse } from 'node:http'
 import { once } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
@@ -14,7 +14,9 @@ it('reclaims responses disconnected before readiness and cancels already termina
   let starts = 0, allStarted!: () => void
   const started = new Promise<void>(resolve => { allStarted = resolve })
   const app = createApp().use(defineEventHandler(async event => {
-    closed.push(once(event.node.res, 'close'))
+    const res = event.node?.res
+    if (!(res instanceof ServerResponse)) throw new Error('Expected a Node response')
+    closed.push(once(res, 'close'))
     if (++starts === 17) allStarted()
     await readiness
     // The real Nitro readiness hook used to permit this exact ordering.
@@ -54,9 +56,11 @@ it('backpressures slow HTTP responses until finish or disconnect releases an ent
   const app = createApp().use(defineEventHandler(event => {
     admitEnterpriseResponse(event)
     const body = new PassThrough()
-    streams.push(body); responses.push(event.node.res)
-    event.node.res.setHeader('content-type', 'text/plain')
-    event.node.res.flushHeaders()
+    const res = event.node?.res
+    if (!(res instanceof ServerResponse)) throw new Error('Expected a Node response')
+    streams.push(body); responses.push(res)
+    res.setHeader('content-type', 'text/plain')
+    res.flushHeaders()
     return body
   }))
   const server = createServer(toNodeListener(app))

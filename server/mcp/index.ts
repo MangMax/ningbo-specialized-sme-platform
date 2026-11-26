@@ -1,7 +1,5 @@
 import { rosterMcp } from '../../layers/sme-roster/server/modules/sme-roster/mcp'
 import toolkitConfig from '#nuxt-mcp-toolkit/config.mjs'
-import { useEvent } from 'nitropack/runtime'
-import { isSessionEvent } from '../../layers/core/server/utils/mcp-session-runtime'
 import { runtimeLogPolicyRpcError } from '../../layers/core/server/utils/logging-mcp'
 import { getHeader, getMethod, readBody, setHeader } from 'h3'
 import { defineMcpHandler, getMcpTools, getMcpResources, getMcpPrompts } from '@nuxtjs/mcp-toolkit/server'
@@ -9,7 +7,7 @@ import { requestLogContext } from '../../layers/core/lib/logging'
 import { mcpToolLogModule } from '../../layers/core/lib/logging/module'
 import { applyMcpLogMetadata } from '../../layers/core/server/utils/mcp-log-context'
 import { logSemanticOperation, semanticErrorCode } from '../../layers/core/server/utils/semantic-operation-log'
-import { MCP_WRITE_TOOLS, writeToolCallIn, type McpWriteTool, sessionReadTools } from '../mcp-access-policy'
+import { MCP_WRITE_TOOLS, writeToolCallIn, type McpWriteTool } from '../mcp-access-policy'
 import { readMcpToken, resolveMcpAuth, unauthorizedMessage, type McpAuthState, type McpAuthReason } from '../../layers/core/server/utils/mcp-auth'
 
 /**
@@ -37,20 +35,18 @@ import { readMcpToken, resolveMcpAuth, unauthorizedMessage, type McpAuthState, t
  * 缓存取的(见 `providers/node.js` 的 `toWebRequest`),所以下游仍能拿到完整 body。
  */
 export default defineMcpHandler({
-  resources: event => isSessionEvent(event) ? [] : getMcpResources({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
-  prompts: event => isSessionEvent(event) ? [] : getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
-  tools: async configuredEvent => (await getMcpTools())
+  resources: event => getMcpResources({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
+  prompts: event => getMcpPrompts({ event, orphansOnly: toolkitConfig.defaultHandlerStrategy === 'orphans' }),
+  tools: async event => (await getMcpTools())
     // Keep the original discovery order when the toolkit collects multiple layers.
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'en'))
-    .filter(tool => !isSessionEvent(configuredEvent) || sessionReadTools.includes(tool.name ?? '')).map(tool => {
+    .map(tool => {
     const inputSchema = rosterMcp.inputSchema(tool.name)
     return {
       ...tool,
       // Toolkit forwards full schema objects to the SDK despite its narrower type.
       ...(inputSchema ? { inputSchema: inputSchema as unknown as NonNullable<typeof tool.inputSchema> } : {}),
       handler: async (...args: Parameters<typeof tool.handler>) => {
-        const event = isSessionEvent(configuredEvent) ? useEvent() : configuredEvent
-        if (isSessionEvent(configuredEvent) && !isSessionEvent(event)) throw new Error('session_context_missing')
         const operation = `mcp.tool.${tool.name}`
         const started = performance.now()
         try {
@@ -144,30 +140,32 @@ export default defineMcpHandler({
     })
     event.context.mcpAuth = auth
 
-    if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
-      const body = await readBody(event, { strict: false }).catch(() => undefined)
+    const hasJsonBody = METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')
+    const body = hasJsonBody ? await readBody<McpRequest | McpRequest[]>(event, MCP_BODY_OPTIONS).catch(() => undefined) : undefined
+    if (hasJsonBody) {
       const knownTools = new Set((await getMcpTools()).flatMap(def => typeof def.name === 'string' ? [def.name] : []))
       // One place knows the actual initialize body and the static registry; the
       // toolkit's evlog metadata remains the transport/method source of truth.
       applyMcpLogMetadata(event, body, knownTools)
-      const tool = body?.method === 'tools/call' ? body?.params?.name : undefined
-      if (LOG_TOOLS.has(tool)) {
+      const request = Array.isArray(body) ? undefined : body
+      const tool = request?.method === 'tools/call' ? request.params?.name : undefined
+      if (typeof tool === 'string' && LOG_TOOLS.has(tool)) {
         event.context._evlogShouldEmit = false
       } else if (typeof tool === 'string') {
         // Match a static registered name; unknown client-supplied names never enter logs.
         operation = knownTools.has(tool) ? `mcp.tool.${tool}` : 'mcp.tool.unknown'
-      } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name))) {
+      } else if (Array.isArray(body) && body.some(entry => entry?.method === 'tools/call' && !LOG_TOOLS.has(entry?.params?.name ?? ''))) {
         operation = 'mcp.tool.batch'
       }
-      const invalidRoster = rosterMcp.validateRequest(body, auth.writeAuthorized, event)
+      const invalidRoster = rosterMcp.validateRequest(request, auth.writeAuthorized, event)
       if (invalidRoster) return finish(invalidRoster, invalidRoster.status === 401 ? 'unauthorized' : 'invalid_request')
     }
     if (!auth.writeAuthorized) {
-      const called = await writeToolCalledIn(event)
+      const called = writeToolCallIn(body)
       if (called) return finish(unauthorizedResponse(called, auth.reason), 'unauthorized')
     }
-    if (METHODS_WITH_BODY.has(getMethod(event)) && (getHeader(event, 'content-type') ?? '').toLowerCase().includes('json')) {
-      const invalidPolicy = runtimeLogPolicyRpcError(await readBody(event, { strict: false }).catch(() => undefined))
+    if (hasJsonBody) {
+      const invalidPolicy = runtimeLogPolicyRpcError(body)
       if (invalidPolicy) return invalidPolicy
     }
     try {
@@ -188,20 +186,13 @@ function headerOf(event: Parameters<typeof getHeader>[0], name: string): string 
 }
 
 /** 有 body 的方法(与 h3 的 `PayloadMethods` 同集:GET 的 SSE 流不进这里)。 */
+// The toolkit still runs through Nuxt's H3 v1 bridge. Keep its tolerant RPC
+// inspection so malformed tool arguments cannot change the pre-dispatch auth response.
+const MCP_BODY_OPTIONS: NonNullable<Parameters<typeof readBody>[1]> & { strict: false } = { strict: false }
 const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const LOG_TOOLS = new Set(['list_runtime_logs', 'get_runtime_log', 'get_runtime_log_policy', 'set_runtime_log_policy', 'clear_runtime_logs'])
 
-/**
- * 这次请求是不是在调写入 tool。读不出来(方法/类型不对、JSON 坏了)**一律返回 `null`** ——
- * 见 `writeToolCallIn` 的注释:这一处宁可漏判,交给 tool 自己的守卫兜底,不要误判。
- */
-async function writeToolCalledIn(event: Parameters<typeof getMethod>[0]): Promise<McpWriteTool | null> {
-  if (!METHODS_WITH_BODY.has(getMethod(event))) return null
-  const contentType = getHeader(event, 'content-type') ?? ''
-  if (!contentType.toLowerCase().includes('json')) return null
-  const body = await readBody(event, { strict: false }).catch(() => undefined)
-  return writeToolCallIn(body)
-}
+type McpRequest = { method?: string; params?: { name?: string } }
 
 /**
  * 未鉴权写入的拒绝:HTTP **401** + 一条 JSON-RPC 错误(客户端既看得到状态码,

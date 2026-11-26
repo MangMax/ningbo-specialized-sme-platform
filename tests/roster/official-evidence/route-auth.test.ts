@@ -1,6 +1,7 @@
+import { createNodeEvent } from '../../support/h3-node-event'
 import { IncomingMessage, ServerResponse, type IncomingHttpHeaders } from 'node:http'
 import { Socket } from 'node:net'
-import { createEvent } from 'h3'
+
 import { afterEach, expect, it, vi } from 'vitest'
 
 const cold = vi.hoisted(() => ({ calls: 0 }))
@@ -13,7 +14,7 @@ afterEach(() => { cold.calls = 0; vi.unstubAllGlobals() })
 function request(path: string, headers: IncomingHttpHeaders) {
   const socket = new Socket(), incoming = new IncomingMessage(socket)
   incoming.method = 'GET'; incoming.url = path; incoming.headers = headers
-  const event = createEvent(incoming, new ServerResponse(incoming))
+  const event = createNodeEvent(incoming, new ServerResponse(incoming))
   event.context.params = { id: '1' }
   return event
 }
@@ -29,9 +30,9 @@ for (const [name, factory, message] of [
     vi.stubGlobal('useRuntimeConfig', () => ({ apiToken: configured }))
     const event = request('/?official=latest', headers)
     const result = await factory('get')(event)
-    expect(event.node.res.statusCode).toBe(401)
+    expect(event.res.status).toBe(401)
     expect(result).toEqual({ error: { code: 'unauthorized', message } })
-    expect(event.node.res.getHeader('cache-control')).toBe('no-store')
+    expect(event.res.headers.get('cache-control')).toBe('no-store')
     expect(cold.calls).toBe(0)
   })
   it.each([

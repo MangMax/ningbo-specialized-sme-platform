@@ -6,15 +6,15 @@
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const directory = '.output/server/chunks/nitro'
+const directory = '.output/server'
 const target = 'lib/logging-route-templates.ts'
-const source = readdirSync(directory)
-  .filter(file => file.endsWith('.mjs'))
+const source = readdirSync(directory, { recursive: true })
+  .filter(file => file.endsWith('.mjs') && !file.split('/').includes('node_modules'))
   .map(file => readFileSync(join(directory, file), 'utf8'))
   .join('\n')
 const routes = [...new Set(
-  [...source.matchAll(/route: '([^']+)'/g)]
-    .map(match => match[1])
+  [...source.matchAll(/^\s*route: (['"])([^'"]+)\1,?$/gm)]
+    .map(match => match[2].replace(/\/:([A-Za-z_][A-Za-z_0-9]*)\(\.\*\)$/, '/**:$1'))
     .filter(route => route === '/mcp' || route.startsWith('/api/')),
 )].sort()
 if (routes.length < 100) throw new Error(`refusing to write ${routes.length} route templates; build first`)

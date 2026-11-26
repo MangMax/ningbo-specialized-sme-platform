@@ -1,12 +1,14 @@
+import { createNodeEvent } from '../../support/h3-node-event'
 import { once } from 'node:events'
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { createServer, get, type IncomingMessage } from 'node:http'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import ExcelJS from 'exceljs'
-import { createEvent, createError, defineEventHandler, getQuery, sendStream, setHeader } from 'h3'
+import { createError, defineEventHandler, getQuery, setHeader } from 'h3'
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 
 const jszip = createRequire(createRequire(import.meta.url).resolve('exceljs/package.json'))('jszip')
@@ -17,10 +19,10 @@ const source = vi.hoisted(() => ({ rows: [] as object[], read: 0 }))
 vi.mock('../../../layers/sme-roster/server/utils/postgres-roster-db', () => ({ usePostgresRosterDb: () => ({}) }))
 vi.mock('../../../layers/sme-roster/lib/query-postgres', () => ({ allPostgresLedgerRecords: async () => source.rows }))
 
-let handler: (event: ReturnType<typeof createEvent>) => Promise<unknown>
+let handler: (event: ReturnType<typeof createNodeEvent>) => Promise<unknown>
 
 beforeAll(async () => {
-  for (const [name, value] of Object.entries({ createError, createEvent, defineEventHandler, getQuery, sendStream, setHeader })) {
+  for (const [name, value] of Object.entries({ createError, defineEventHandler, getQuery, setHeader })) {
     vi.stubGlobal(name, value)
   }
   handler = (await import('../../../layers/sme-roster/server/api/export.get')).default
@@ -48,9 +50,13 @@ async function server() {
   const completed = new Promise<unknown>(resolve => { resolveCompleted = resolve })
   const http = createServer(async (req, res) => {
     try {
-      const event = createEvent(req, res)
+      const event = createNodeEvent(req, res)
       const result = await handler(event)
-      if (result instanceof Readable) { downloads.push(result); await sendStream(event, result) }
+      if (result instanceof Readable) {
+        downloads.push(result)
+        for (const [name, value] of event.res.headers) res.setHeader(name, value)
+        await pipeline(result, res)
+      }
       results.push(result)
     }
     catch (error) {

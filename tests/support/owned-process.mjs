@@ -88,7 +88,7 @@ export async function waitForHttp(url, { timeoutMs = 60_000, child } = {}) {
   throw new Error(`Timed out waiting for ${url}${lastError ? `: ${lastError.message}` : ''}`)
 }
 
-export async function stopOwnedChild(child) {
+export async function stopOwnedChild(child, graceMs = CHILD_EXIT_GRACE_MS) {
   const owner = ownedGroups.get(child)
   if (!owner) {
     if (!child.pid || !childIsRunning(child)) return
@@ -115,7 +115,7 @@ export async function stopOwnedChild(child) {
     while (members().length && Date.now() < deadline) await sleep(25)
   }
   if (members().length) signal('SIGTERM')
-  await wait(CHILD_EXIT_GRACE_MS)
+  await wait(graceMs)
   if (members().length) signal('SIGKILL')
   await wait(1_000)
   if (members().length) throw new Error('Owned service process group did not exit: ' + group)

@@ -1,4 +1,4 @@
-import { sendStream } from 'h3'
+import { Readable } from 'node:stream'
 import { isJobId } from '../../../../core/lib/job'
 import { requireTaskCenterAccess } from '../../../../core/server/utils/task-center-access'
 import { getJob, useJobsDb } from '../../../../core/server/public'
@@ -27,7 +27,7 @@ export default defineEventHandler(async event => {
   if (!directory || artifact?.availability !== 'available') throw createError({statusCode:404,message:'产物不存在或尚未发布'})
   setHeader(event,'content-type',EXPORT_MIME)
   setHeader(event,'content-disposition',`attachment; filename="${artifact.filename}"`)
-  setHeader(event,'content-length',artifact.size)
+  setHeader(event,'content-length',String(artifact.size))
   setHeader(event,'etag',`"${artifact.sha256}"`)
   setHeader(event,'cache-control','private, no-store')
   const stream = artifactStream(directory,id)
@@ -40,7 +40,7 @@ export default defineEventHandler(async event => {
     stream.destroy(new Error('Export artifact download disconnected'))
   })
   stream.once('error', () => record('failure', 500, 'artifact_read_failed'))
-  return await sendStream(event,stream)
+  return Readable.toWeb(stream)
   } catch (error) {
     const status = (error as { statusCode?: number })?.statusCode ?? 500
     record(status < 500 ? 'denied' : 'failure', status, status === 401 ? 'artifact_access_denied' : status === 410 ? 'artifact_expired' : status === 404 ? 'artifact_unavailable' : status === 400 ? 'invalid_artifact_id' : 'artifact_read_failed')

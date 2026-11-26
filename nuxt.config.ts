@@ -1,9 +1,6 @@
-import { dirname, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { defineNuxtConfig } from 'nuxt/config'
-import { addTypeTemplate } from 'nuxt/kit'
-import { actualSessionEntryProfile, configureSessionVirtuals, installSessionOverlay, registerSessionFrontend } from './layers/core/mcp-session-nuxt'
 import { installRosterWorkers } from './layers/sme-roster/nuxt-workers'
 import tailwindcss from '@tailwindcss/vite'
 import { LOG_ICON_IDS } from './layers/core/app/components/logs/logIcons'
@@ -53,15 +50,6 @@ export default defineNuxtConfig({
     '@nuxtjs/mcp-toolkit',
     'evlog/nuxt',
     '@nuxt/icon',
-    function sessionToolkitTypes() {
-      // Public addTypeTemplate registers prepare:types / nitro:prepare:types
-      // references to a generated ambient file, not a runtime alias or module.
-      const handler = resolve(dirname(fileURLToPath(import.meta.resolve('@nuxtjs/mcp-toolkit'))), 'runtime/server/mcp/handler.js')
-      addTypeTemplate({
-        filename: 'types/mcp-session-toolkit.d.ts',
-        getContents: () => `declare module '#mcp-session-toolkit' {\n  const handler: typeof import(${JSON.stringify(handler)}).default\n  export default handler\n}\n`,
-      }, { nuxt: true, node: true, nitro: true })
-    },
   ],
 
   // 日志配置页的折叠面板图标（#180）。provider: 'none' + serverBundle: false
@@ -81,6 +69,7 @@ export default defineNuxtConfig({
   },
 
   evlog: {
+    errorHandler: false, client: false,
     silent: true, pretty: false, console: false, sourceLocation: false, strip: [],
     transport: { enabled: false }, stream: false,
   },
@@ -158,23 +147,30 @@ export default defineNuxtConfig({
    * (两者的 UI 都从公共 CDN 拉前端脚本,只在开发期、由人主动打开时才发生。)
    */
   hooks: {
-    ready: registerSessionFrontend,
     'nitro:init'(nitro) {
-      configureSessionVirtuals(nitro)
+      if (nitro.options.dev) {
+        nitro.options.handlers.push({
+          route: nitro.options.openAPI?.route || '/_openapi.json',
+          middleware: true,
+          handler: fileURLToPath(new URL('./server/development-openapi.ts', import.meta.url)),
+        })
+      }
+      const applicationLogging = fileURLToPath(new URL('./layers/core/server/plugins/application-logging.ts', import.meta.url))
+      nitro.options.plugins = [applicationLogging, ...nitro.options.plugins.filter(plugin => plugin !== applicationLogging)]
       // The logging module's response formatter changes native API error JSON.
       // Keep its real request/error hooks, but preserve the existing error contract.
       const errorHandlers = Array.isArray(nitro.options.errorHandler) ? nitro.options.errorHandler : [nitro.options.errorHandler]
       nitro.options.errorHandler = [
         fileURLToPath(new URL('./layers/core/server/logging-error-handler.ts', import.meta.url)),
-        ...errorHandlers.filter((handler): handler is string => !!handler && !(handler.includes('/evlog/') && handler.includes('/nitro/errorHandler'))),
+        ...errorHandlers.filter((handler): handler is string => !!handler),
       ]
     },
   },
   nitro: {
     hooks: {
-      'rollup:before'(nitro, config) {
-        installSessionOverlay(nitro, config, undefined, actualSessionEntryProfile(nitro))
-        installRosterWorkers(config)
+      'build:config'(nitro, { rolldown }) {
+        if (!rolldown) return
+        installRosterWorkers(rolldown)
       },
     },
     experimental: { openAPI: true, tasks: true },

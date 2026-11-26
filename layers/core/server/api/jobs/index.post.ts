@@ -117,7 +117,7 @@ export default defineEventHandler(async (event) => {
     logContext: requestLogContext(event),
     params: parsed.params,
   }
-  const row = await submitWritableJob(useRuntimeConfig(event).filesDir, input)
+  const row = await submitWritableJob(useRuntimeConfig().filesDir, input)
 
   setResponseStatus(event, 202)
   setHeader(event, 'location', `/api/jobs/${row.id}`)
