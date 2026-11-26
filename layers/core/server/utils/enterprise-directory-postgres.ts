@@ -180,6 +180,11 @@ export async function matchPostgresDirectoryCandidates(
     }
     const candidates = [...byId.values()].sort((a, b) =>
       Number(b.matchReasons.includes('uscc')) - Number(a.matchReasons.includes('uscc')) || a.id - b.id)
-    return { key: row.key, status: candidates.length > 1 ? 'ambiguous' : candidates.length ? 'matched' : 'unmatched', candidates }
+    const usccConflict = Boolean(row.uscc && candidates.length === 1 && candidates[0]!.uscc && candidates[0]!.uscc !== row.uscc)
+    return {
+      key: row.key,
+      status: candidates.length > 1 || usccConflict ? 'ambiguous' : candidates.length ? 'matched' : 'unmatched',
+      candidates,
+    }
   }) }
 }

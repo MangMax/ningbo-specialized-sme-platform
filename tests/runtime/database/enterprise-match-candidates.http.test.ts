@@ -73,6 +73,7 @@ describe('PostgreSQL batch candidate matching over HTTP', () => {
       { key: 'agree', name: '正源宁波', uscc: '91330110MA2GMDFH58' },
       { key: 'conflict', name: '正源宁波', uscc: '91330211255994458Q' },
       { key: 'same-name', name: '重名', uscc: 'CCCCCCCCCCCCCCCCCC' },
+      { key: 'uscc-mismatch', name: '正源（宁波）', uscc: '91330200000000000Z' },
     ] })
     expect(response.status).toBe(200)
     const alpha = {
@@ -91,6 +92,7 @@ describe('PostgreSQL batch candidate matching over HTTP', () => {
       { key: 'agree', status: 'matched', candidates: [{ ...alpha, matchReasons: ['uscc', 'name', 'alias'] }] },
       { key: 'conflict', status: 'ambiguous', candidates: [{ ...beta, matchReasons: ['uscc'] }, { ...alpha, matchReasons: ['name', 'alias'] }] },
       { key: 'same-name', status: 'ambiguous', candidates: [{ ...alpha, matchReasons: ['alias'] }, { ...beta, matchReasons: ['alias'] }] },
+      { key: 'uscc-mismatch', status: 'ambiguous', candidates: [{ ...alpha, matchReasons: ['name', 'alias'] }] },
     ] })
   })
 

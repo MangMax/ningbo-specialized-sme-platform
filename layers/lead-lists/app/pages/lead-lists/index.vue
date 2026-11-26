@@ -125,10 +125,18 @@ async function supplement(decisions: BatchSupplementDecision[]) {
   submitting.value = true
   submitError.value = ''
   try {
+    const revisionBumps = new Map<number, number>()
+    const payload = decisions.map(({ key, ...decision }) => {
+      if (decision.action !== 'attach') return { ...decision, rowId: Number(key) }
+      const bump = revisionBumps.get(decision.enterpriseId) ?? 0
+      const hasFields = Object.keys(decision.fields ?? {}).length > 0
+      if (hasFields) revisionBumps.set(decision.enterpriseId, bump + 1)
+      return { ...decision, expectedRevision: decision.expectedRevision + bump, rowId: Number(key) }
+    })
     const result = await $fetch<{ rows: { rowId: number; enterpriseId: number }[] }>(
       `/api/lead-lists/versions/${review.versionId}/supplement`, {
         method: 'POST', headers: { 'X-Lead-List-Browser': '1' },
-        body: { decisions: decisions.map(({ key, ...decision }) => ({ ...decision, rowId: Number(key) })) },
+        body: { decisions: payload },
       },
     )
     void queryCache.invalidateQueries({ key: ['enterprise-library', 'results'] })

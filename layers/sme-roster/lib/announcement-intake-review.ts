@@ -1,4 +1,4 @@
-import { normalizeReviewedUscc } from '#core/lib/enterprise-uscc'
+import { normalizeReviewedUscc } from '#core/public'
 import type { BatchSupplementDecision } from '#core/lib/core/enterprise-batch-supplement'
 import { normalizeName } from './domain'
 import type { SupplementAnnouncementRequest } from './roster-import-client'
@@ -9,10 +9,17 @@ export function announcementSubjectDecisions(decisions: readonly BatchSupplement
   const attached = new Map<number, { row: number; fields: string }>()
   return decisions.map(({ key: _key, ...decision }, index) => {
     if (decision.action === 'attach') {
-      const fields = JSON.stringify(decision.fields)
+      const fields = JSON.stringify(decision.fields ?? {})
       const previous = attached.get(decision.enterpriseId)
-      if (previous?.fields === fields && fields !== '{}') return { action: 'same_subject', row: previous.row }
-      if (!previous) attached.set(decision.enterpriseId, { row: index, fields })
+      if (previous) {
+        if (fields === '{}' || previous.fields === fields) return { action: 'same_subject', row: previous.row }
+        if (previous.fields === '{}') {
+          attached.set(decision.enterpriseId, { row: index, fields })
+          return decision
+        }
+        throw new Error(`第 ${previous.row + 1}、${index + 1} 行为同一企业，请统一核对要修改的资料字段。`)
+      }
+      attached.set(decision.enterpriseId, { row: index, fields })
       return decision
     }
 

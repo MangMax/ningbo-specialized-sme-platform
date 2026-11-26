@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useQuery, useQueryCache } from '@pinia/colada'
+import TableFailureState from '#core/app/components/TableFailureState.vue'
 import WorkspacePage from '#core/app/components/WorkspacePage.vue'
 import EnterpriseBatchSupplementDrawer from '#core/app/components/enterprise-library/EnterpriseBatchSupplementDrawer.vue'
 import { Badge } from '#core/app/components/ui/badge'
@@ -161,10 +162,8 @@ async function submit(action: 'preflight' | 'commit') {
     </template>
     <p v-if="notice" role="status" class="text-sm">{{ notice }}</p>
     <FieldError v-if="loadError" role="alert">{{ loadError }}</FieldError>
-    <div v-if="error" class="flex flex-wrap items-center gap-2">
-      <FieldError role="alert">{{ describeFetchError(error, '批次列表读取失败。') }}</FieldError>
-      <Button variant="outline" size="sm" @click="refetch()">重试加载</Button>
-    </div>
+    <TableFailureState v-if="error" title="批次列表读取失败" :description="describeFetchError(error, '批次列表读取失败。')"
+      :compact="intakes.length > 0" :pending="isPending" @retry="refetch()" />
     <p v-if="isPending" role="status" class="text-sm text-muted-foreground">正在加载公布名单…</p>
     <p v-else-if="!error && !intakes.length" class="text-sm text-muted-foreground">暂无公布名单批次。</p>
     <ul v-if="intakes.length" aria-label="公布名单批次" class="min-h-0 divide-y overflow-y-auto rounded-xl border bg-card">

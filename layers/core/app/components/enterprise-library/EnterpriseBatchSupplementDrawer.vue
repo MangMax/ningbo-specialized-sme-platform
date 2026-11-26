@@ -226,7 +226,7 @@ function close() {
         <p v-if="matching" role="status" class="text-sm text-muted-foreground">正在精确匹配企业…</p>
         <div v-else-if="matchError" class="space-y-2">
           <FieldError role="alert">{{ matchError }}</FieldError>
-          <Button variant="outline" :disabled="busy" @click="match">重试预匹配</Button>
+          <Button variant="outline" :disabled="matching || submitting" @click="match">重试预匹配</Button>
         </div>
         <p v-else-if="!rows.length" class="text-sm text-muted-foreground">没有待补充的名单行。</p>
         <template v-else>
@@ -250,7 +250,7 @@ function close() {
               :key="detailIndex" class="wrap-anywhere text-sm text-muted-foreground">{{ detail }}</p>
             <slot name="row-extra" :row="draft.row" :decision="decision" />
 
-            <fieldset v-if="draft.candidates.length > 1" :disabled="busy" class="min-w-0 space-y-2 text-sm">
+            <fieldset v-if="draft.candidates.length > 1 || (draft.candidates.length === 1 && draft.selection === null)" :disabled="busy" class="min-w-0 space-y-2 text-sm">
               <legend class="mb-1 font-medium">选择匹配企业</legend>
               <label v-for="candidate in draft.candidates" :key="candidate.id" class="flex items-start gap-2">
                 <input type="radio" class="mt-1 shrink-0" :name="`${id}-candidate-${index}`"
