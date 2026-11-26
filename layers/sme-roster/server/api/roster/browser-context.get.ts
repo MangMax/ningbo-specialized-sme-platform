@@ -1,4 +1,5 @@
 import { setHeader } from 'h3'
+import { rosterWriteEnabled } from '../../utils/postgres-roster-db'
 
 defineRouteMeta({
   openAPI: {
@@ -12,5 +13,5 @@ defineRouteMeta({
 /** 轻量状态位：只告诉页面“这台机器是否允许页面提交”，不泄露配置值或任何身份。 */
 export default defineEventHandler((event) => {
   setHeader(event, 'cache-control', 'no-store')
-  return { writeEnabled: true }
+  return { writeEnabled: rosterWriteEnabled() }
 })

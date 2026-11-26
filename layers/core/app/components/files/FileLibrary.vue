@@ -365,6 +365,7 @@ watch([selections, q, page, pageSize], async (values, previous) => {
             <Input v-model="search" type="search" size="sm" class="pl-8" aria-label="搜索文件名" placeholder="搜索文件名" />
           </div>
           <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <slot name="toolbar-actions" />
             <Button v-if="allowRemoval" variant="ghost" size="sm" @click="deleting = null; deleteFailure = ''; deleteOpen = true">恢复隔离文件</Button>
             <Button size="sm" @click="uploading = true"><FolderUp aria-hidden="true" />{{ uploadLabel }}</Button>
           </div>

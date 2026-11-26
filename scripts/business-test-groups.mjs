@@ -10,6 +10,7 @@ const postgresGroup = {
   postgres: true,
 }
 export const postgresTestFiles = [
+  'tests/runtime/database/enterprise-match-candidates.http.test.ts',
   'tests/files/segments/postgres-source-boundaries.http.test.ts',
   'tests/roster/comparison/enterprise-title-antijoin.test.ts',
   'tests/roster/enterprise-read/research-postgres.http.test.ts',

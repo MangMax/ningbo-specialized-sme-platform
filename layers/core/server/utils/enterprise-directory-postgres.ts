@@ -1,10 +1,12 @@
-import { and, asc, count, eq, exists, gt, isNull, sql } from 'drizzle-orm'
+import { and, asc, count, eq, exists, gt, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { alias } from 'drizzle-orm/pg-core'
-import { enterprise, enterpriseAddress, enterpriseDirectory, enterpriseIndustry, enterpriseMerge, enterpriseRegion } from '../../../../db/postgresql/enterprise-tables'
+import { enterprise, enterpriseAddress, enterpriseAlias, enterpriseDirectory, enterpriseIndustry, enterpriseMerge, enterpriseRegion } from '../../../../db/postgresql/enterprise-tables'
 import { enterpriseSource, enterpriseSourceChannel, enterpriseSourceLink, enterpriseSourceListType } from '../../../../db/postgresql/enterprise-source-tables'
 import { storedFile } from '../../../../db/postgresql/file-tables'
 import type { EnterpriseLibrarySortField, EnterpriseLibrarySource } from '../../lib/core/enterprise-library'
+import type { BatchCandidateMatchInput, BatchCandidateMatchResponse, BatchMatchCandidate, BatchMatchReason } from '../../lib/core/enterprise-batch-supplement'
+import { normalizeReviewedUscc } from '../../lib/enterprise-uscc'
 import { normalizeEnterpriseName } from '../../lib/enterprise-name'
 import type { DirectoryQuery, DirectoryRow } from './enterprise-directory-query'
 
@@ -127,4 +129,62 @@ export function listPostgresEnterpriseSources(db: NodePgDatabase, id: number): P
     .innerJoin(enterpriseSourceListType, eq(enterpriseSourceListType.code, enterpriseSource.listTypeCode))
     .leftJoin(storedFile, and(eq(storedFile.id, enterpriseSource.fileId), eq(storedFile.sha256, enterpriseSource.sha256), isNull(storedFile.removedAt)))
     .where(eq(enterpriseSourceLink.enterpriseId, id)).orderBy(asc(enterpriseSource.id))
+}
+
+export async function matchPostgresDirectoryCandidates(
+  db: NodePgDatabase, input: BatchCandidateMatchInput,
+): Promise<BatchCandidateMatchResponse> {
+  const rows = input.rows.map(row => {
+    const code = normalizeReviewedUscc(row.uscc ?? '')
+    return { key: row.key, name: normalizeEnterpriseName(row.name), uscc: /^[A-Z0-9]{18}$/.test(code) ? code : '' }
+  })
+  const names = [...new Set(rows.map(row => row.name).filter(Boolean))]
+  const codes = [...new Set(rows.map(row => row.uscc).filter(Boolean))]
+  // Merge commands transfer aliases to the surviving enterprise.
+  const matches = await db.select({
+    id: fields.id, name: fields.name, uscc: fields.uscc, revision: fields.revision,
+    districtCode: fields.districtCode, townshipCode: fields.townshipCode, industryCode: fields.industryCode,
+    districtName: fields.districtName, townshipName: fields.townshipName, industryName: fields.industryName,
+    nameNorm: enterprise.nameNorm, aliasName: enterpriseAlias.nameNorm,
+  }).from(enterprise)
+    .leftJoin(enterpriseDirectory, eq(enterpriseDirectory.enterpriseId, enterprise.id))
+    .leftJoin(enterpriseMerge, eq(enterpriseMerge.fromEnterpriseId, enterprise.id))
+    .leftJoin(district, eq(district.code, enterpriseDirectory.districtCode))
+    .leftJoin(township, eq(township.code, enterpriseDirectory.townshipCode))
+    .leftJoin(industry, eq(industry.code, enterpriseDirectory.industryCode))
+    .leftJoin(enterpriseAlias, and(
+      eq(enterpriseAlias.enterpriseId, enterprise.id),
+      eq(enterpriseAlias.verificationStatus, 'confirmed'),
+      inArray(enterpriseAlias.nameNorm, names),
+    )).where(and(
+      isNull(enterpriseMerge.fromEnterpriseId),
+      isNull(enterpriseDirectory.removedReason),
+      or(inArray(enterprise.usccNorm, codes), inArray(enterprise.nameNorm, names), inArray(enterpriseAlias.nameNorm, names)),
+    ))
+
+  return { rows: rows.map(row => {
+    const byId = new Map<number, BatchMatchCandidate>()
+    for (const match of matches) {
+      const { id, name, uscc, revision, districtCode, townshipCode, industryCode, districtName, townshipName, industryName } = match
+      const reasons: BatchMatchReason[] = []
+      if (row.uscc && row.uscc === uscc) reasons.push('uscc')
+      if (row.name && row.name === match.nameNorm) reasons.push('name')
+      if (row.name && row.name === match.aliasName) reasons.push('alias')
+      if (!reasons.length) continue
+      const existing = byId.get(id)
+      if (existing) {
+        existing.matchReasons = [...new Set([...existing.matchReasons, ...reasons])]
+      } else {
+        byId.set(id, { id, name, uscc, revision, districtCode, townshipCode, industryCode, districtName, townshipName, industryName, matchReasons: reasons })
+      }
+    }
+    const candidates = [...byId.values()].sort((a, b) =>
+      Number(b.matchReasons.includes('uscc')) - Number(a.matchReasons.includes('uscc')) || a.id - b.id)
+    const usccConflict = Boolean(row.uscc && candidates.length === 1 && candidates[0]!.uscc && candidates[0]!.uscc !== row.uscc)
+    return {
+      key: row.key,
+      status: candidates.length > 1 || usccConflict ? 'ambiguous' : candidates.length ? 'matched' : 'unmatched',
+      candidates,
+    }
+  }) }
 }

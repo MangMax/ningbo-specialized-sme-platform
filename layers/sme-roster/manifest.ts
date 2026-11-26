@@ -1,7 +1,7 @@
 import { BadgeCheck, FolderOpen, Landmark, LayoutList } from '@lucide/vue'
 import { defineAppModule } from '../core/lib/core/module-registry'
 import { CURRENT_ENTERPRISES_TITLE, ENTERPRISE_LIST_TITLE } from './lib/labels'
-import { ROSTER_FILES_PATH, ROSTER_LEDGER_PATH } from './lib/sme-roster/routes'
+import { ROSTER_ANNOUNCEMENT_INTAKES_PATH, ROSTER_FILES_PATH, ROSTER_LEDGER_PATH } from './lib/sme-roster/routes'
 import { rosterFileCategory } from './lib/sme-roster/file-category'
 
 const platform = { id: 'platform', label: '工信部平台' }
@@ -20,6 +20,7 @@ export default defineAppModule({
       paths: [
         ROSTER_LEDGER_PATH,
         ROSTER_FILES_PATH,
+        ROSTER_ANNOUNCEMENT_INTAKES_PATH,
         '/platform-business-processes',
         '/platform-declarations',
         '/platform-queries',
