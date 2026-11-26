@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError, type H3Event } from 'h3'
+import { createApp, createRouter, toNodeListener, defineEventHandler, readBody, setHeader, setResponseStatus, getQuery, getHeader, getRouterParam, createError } from 'h3'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -39,19 +39,9 @@ const tools: any[] = []
 const importDiscovery: RosterImportOpenApiDocument = {
   paths: { '/api/roster/import/preflight': { post: {} }, '/api/roster/import/commit': { post: {} } },
 }
-// The bundled server resolves H3 reads through Nuxt's compatibility parser.
 vi.mock('h3', async importOriginal => {
-  const h3 = await importOriginal<typeof import('h3')>()
-  const { destr } = await import('destr')
-  return {
-    ...h3,
-    readBody: async (event: H3Event) => {
-      if (event.req.headers.get('content-type') === 'application/json') {
-        return destr(await event.req.text(), { strict: true })
-      }
-      return h3.readBody(event)
-    },
-  }
+  const { withNuxtJsonBody } = await import('../fixtures/nuxt-json-body')
+  return withNuxtJsonBody(await importOriginal<typeof import('h3')>())
 })
 extendRosterImportOpenApi(importDiscovery)
 async function post(path: string, body: unknown) {

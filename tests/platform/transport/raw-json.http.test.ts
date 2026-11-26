@@ -17,6 +17,11 @@ import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
+vi.mock('h3', async importOriginal => {
+  const { withNuxtJsonBody } = await import('../fixtures/nuxt-json-body')
+  return withNuxtJsonBody(await importOriginal<typeof import('h3')>())
+})
+
 const dir = mkdtempSync(join(tmpdir(), 'issue298-raw-json-http-'))
 let postgres: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 const nativeFetch = globalThis.fetch
