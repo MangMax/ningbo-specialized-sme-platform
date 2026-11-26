@@ -6,7 +6,7 @@
 
 1. 在模块清单的 `jobKinds` 登记全局唯一且稳定的 `kind`、业务人员看到的 `label`、`group` 和服务端导出名 `spec`。若总数要到某个阶段才有意义，可声明 `progressPhase`。修改显示名称时保留原 kind，历史任务按原标识可查。
 2. 从 [core 服务端公共入口](../../layers/core/server/public.ts) 引入 `JobSpec`、`PostgresJobSpec` 类型。在所属模块导出同名 spec，加入[应用装配](../../server/install-application.ts)使用的该模块 spec 集合。用 `parse` 在提交时校验参数，用 `postgres.run` 执行任务。`GET /api/jobs/kinds` 可查当前可用的能力。
-3. 通用提交接口是 `POST /api/jobs`。有业务准入条件时由业务路由校验后提交，返回 `202`、`jobId` 和指向任务的 `Location`。业务变更与任务必须同时生效时，在同一个 PostgreSQL 事务内调用 `stagePostgresJob(tx, input)`。确需重复请求去重的任务声明 `deduplicateRequest`，一次用户操作重试时沿用同一个 `clientRequestId`。
+3. 通用提交接口是 `POST /api/jobs`。有业务准入条件时由业务路由校验后提交，返回 `202`、`jobId` 和指向任务的 `Location`。业务变更与任务必须同时生效时，在同一个 PostgreSQL 事务内调用 `stageJob(tx, input)`。确需重复请求去重的任务声明 `deduplicateRequest`，一次用户操作重试时沿用同一个 `clientRequestId`。
 4. handler 使用传入的 `ctx`。按有业务意义的完成单位上报进度，PostgreSQL 下等待 `ctx.progress(done, total)` 完成；长批次在工作单元之间检查 `await ctx.cancelled()`。若需要中断后保留部分成果，用 `ctx.checkpoint(result, tx)` 与对应业务写入一起提交。返回 `{ result }`，部分失败或取消时保留已完成部分。运行中断后的安全重试条件由任务所属模块判断。
 
 ## 可以展示哪些业务信息

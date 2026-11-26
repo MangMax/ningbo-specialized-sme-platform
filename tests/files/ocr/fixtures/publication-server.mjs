@@ -68,8 +68,8 @@ const { createJiti } = require(jitiPath)
 const load = createJiti(resolve(root, 'package.json'), { alias: { '~~': root, '#core': resolve(root, 'layers/core'), '#sme-roster': resolve(root, 'layers/sme-roster') } })
 const { installApplicationServer } = await load.import(resolve(root, 'server/install-application.ts'))
 installApplicationServer()
-const { startPostgresJobs } = await load.import(resolve(root, 'layers/core/server/utils/postgres-jobs.ts'))
-const runner = startPostgresJobs(process.env.NUXT_FILES_DIR).runner
+const { startJobs } = await load.import(resolve(root, 'layers/core/server/utils/postgres-jobs.ts'))
+const runner = startJobs(process.env.NUXT_FILES_DIR).runner
 await runner.wake()
 const router = h3.createRouter()
 for (const [method, path, file] of [

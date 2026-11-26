@@ -2,7 +2,7 @@ import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/po
 import { ocrResult, storedFile } from '../../../db/postgresql/file-tables'
 import { job } from '../../../db/postgresql/job-tables'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
-import { startPostgresJobs, stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { startJobs, stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { ocrSpec } from '../../../layers/core/server/utils/jobs/ocr'
 import { renderPagesSpec } from '../../../layers/core/server/utils/jobs/render-pages'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
@@ -37,7 +37,7 @@ let pg: Awaited<ReturnType<typeof postgresRuntimeFixture>> | undefined
 let db: ReturnType<typeof usePostgresDirectoryDb>
 const localJobs = new Set<string>()
 async function whenIdle() {
-  const runner = startPostgresJobs(filesDir)!.runner
+  const runner = startJobs(filesDir)!.runner
   await vi.waitFor(async () => {
     await runner.wake()
     const rows = await db.select({ id: job.id, state: job.state }).from(job).where(inArray(job.id, [...localJobs]))
@@ -53,7 +53,7 @@ let client: Client, mcp: McpServer
 const children: ChildProcess[] = []
 afterEach(async () => {
   gate?.()
-  await stopPostgresJobs()
+  await stopJobs()
   localJobs.clear()
 })
 beforeAll(async () => {
@@ -93,7 +93,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const child of children) if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await once(child, 'exit') }
   gate?.()
-  await stopPostgresJobs()
+  await stopJobs()
   await api?.close()
   await client?.close(); await mcp?.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
@@ -239,7 +239,7 @@ it('legacy raw ownership stays unknown and new source text does not acquire the 
 })
 
 async function childHost(extraEnv: Record<string, string> = {}) {
-  await stopPostgresJobs()
+  await stopJobs()
   const child = spawn(process.execPath, ['tests/files/ocr/fixtures/publication-server.mjs'], { cwd: process.cwd(), env: { ...process.env, ...pg!.env, NUXT_FILES_DIR: filesDir, NUXT_API_TOKEN: 'issue309-api', NUXT_OCR_TOKEN: 'issue309-synthetic-ocr', NUXT_OCR_BASE_URL: api!.origin, MIIT_COOKIE: '', MIIT_COOKIE_FILE: '', ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] })
   children.push(child)
   let output = '', errors = ''
@@ -529,8 +529,8 @@ it("terminal source claim metadata survives stale checkpoints, finishes, reconci
   await submit(file, parent)
   await whenIdle()
   const before = await status(parent)
-  const { getPostgresJob, setPostgresJobResult, setPostgresJobProgress, claimNextPostgresJob, completePostgresJob, recoverPostgresJobs } = await import('../../../layers/core/server/utils/job-store-postgres')
-  const terminal = (await getPostgresJob(db, parent))!
+  const { getJob, setPostgresJobResult, setPostgresJobProgress, claimNextPostgresJob, completePostgresJob, recoverPostgresJobs } = await import('../../../layers/core/server/utils/job-store-postgres')
+  const terminal = (await getJob(db, parent))!
   const stale = { state: 'running', claimToken: terminal.claimToken } as const
   expect(await setPostgresJobResult(db, parent, stale, { publication: 'stale whole result' })).toBe(false)
   expect(await setPostgresJobProgress(db, parent, stale, { done: 0, total: 99 })).toBe(false)

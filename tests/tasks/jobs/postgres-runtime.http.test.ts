@@ -86,7 +86,7 @@ beforeAll(async () => {
 afterAll(async () => {
   try {
     if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-    await (await import("../../../layers/core/server/utils/postgres-jobs")).stopPostgresJobs()
+    await (await import("../../../layers/core/server/utils/postgres-jobs")).stopJobs()
     await (await import('../../../layers/core/lib/logging')).closeApplicationLogging()
     await closePostgresDirectoryDb()
     await pool?.end()
@@ -222,7 +222,7 @@ it.runIf(!!bin)('deduplicates concurrent submissions and enforces capacity witho
 it.runIf(!!bin)('recovers a lost running claim while preserving its checkpoint and executing committed queued work', async () => {
   const { sql } = await import('drizzle-orm')
   const { drizzle } = await import('drizzle-orm/node-postgres')
-  const { stagePostgresJob } = await import('../../../layers/core/server/utils/job-runner-postgres')
+  const { stageJob } = await import('../../../layers/core/server/utils/job-runner-postgres')
   const { newJobId } = await import('../../../layers/core/lib/job')
   const db = drizzle({ client: pool })
   const executed: string[] = []
@@ -254,12 +254,12 @@ it.runIf(!!bin)('recovers a lost running claim while preserving its checkpoint a
   await expect.poll(async () => (await read(interrupted)).result).toEqual({ completed: ['无损证据'] })
   const rolledBack = newJobId()
   await expect(db.transaction(async tx => {
-    await stagePostgresJob(tx, { id: rolledBack, kind, params: {} })
+    await stageJob(tx, { id: rolledBack, kind, params: {} })
     throw new Error('rollback fixture')
   })).rejects.toThrow('rollback fixture')
   expect((await request('/api/jobs/' + rolledBack)).status).toBe(404)
   const queued = newJobId()
-  await db.transaction(tx => stagePostgresJob(tx, { id: queued, kind, params: {} }))
+  await db.transaction(tx => stageJob(tx, { id: queued, kind, params: {} }))
   expect(await read(queued)).toMatchObject({ state: 'queued' })
 
   const { rows } = await db.execute<{ terminated: boolean }>(sql`
@@ -469,7 +469,7 @@ it.runIf(!!bin)('retries only an unfinished platform page in PostgreSQL and pres
 
 it.runIf(!!bin)('skips a row locked by a transaction and picks it up after the lock is released', async () => {
   const { drizzle } = await import('drizzle-orm/node-postgres')
-  const { stagePostgresJob } = await import('../../../layers/core/server/utils/job-runner-postgres')
+  const { stageJob } = await import('../../../layers/core/server/utils/job-runner-postgres')
   const { newJobId } = await import('../../../layers/core/lib/job')
   const db = drizzle({ client: pool })
   const wait = Promise.withResolvers<void>()
@@ -495,8 +495,8 @@ it.runIf(!!bin)('skips a row locked by a transaction and picks it up after the l
   try {
     await expect.poll(async () => (await read(gate)).result).toEqual({ waiting: true })
     await db.transaction(async tx => {
-      await stagePostgresJob(tx, { id: first, kind, params: { label: 'first' } })
-      await stagePostgresJob(tx, { id: second, kind, params: { label: 'second' } })
+      await stageJob(tx, { id: first, kind, params: { label: 'first' } })
+      await stageJob(tx, { id: second, kind, params: { label: 'second' } })
     })
     await client.query('BEGIN')
     await client.query('SELECT id FROM business.job WHERE id=$1 FOR UPDATE', [first])
@@ -731,7 +731,7 @@ it.runIf(!!bin)('reports one run per scheduled hour and keeps the last result vi
 
 it.runIf(!!bin)('keeps task-center list and detail summaries scoped, public and actionable', async () => {
   const { newJobId } = await import('../../../layers/core/lib/job')
-  await (await import('../../../layers/core/server/utils/postgres-jobs')).stopPostgresJobs()
+  await (await import('../../../layers/core/server/utils/postgres-jobs')).stopJobs()
   const createdAt = '2027-01-01T00:00:00Z'
   const rawError = 'PRIVATE_FAILURE /private/workbook.xlsx'
   const file = { id: 891, path: 'synthetic/ocr.pdf' }

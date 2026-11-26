@@ -1,6 +1,6 @@
 import { requestLogContext } from '#core/lib/logging'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
-import { startPostgresJobs } from '#core/server/public'
+import { startJobs } from '#core/server/public'
 import { LEAD_LIST_EXPORT, leadListExportInput } from '../../../../lib/export-contract'
 
 defineRouteMeta({ openAPI: {
@@ -17,7 +17,7 @@ export default defineEventHandler(async event => {
   const parsed = leadListExportInput.safeParse(await readBody(event))
   if (!parsed.success) throw createError({ statusCode: 400, message: '请提交版本编号和请求 UUID' })
   const input = { kind: LEAD_LIST_EXPORT, params: parsed.data, filesDir: useRuntimeConfig(event).filesDir, logContext: requestLogContext(event) }
-  const runtime = startPostgresJobs(input.filesDir)
+  const runtime = startJobs(input.filesDir)
   if (!runtime) throw createError({ statusCode: 503, message: '需要启用 PostgreSQL 任务中心' })
   const task = await runtime.runner.submit(input)
   setResponseStatus(event, 202)

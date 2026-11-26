@@ -67,7 +67,7 @@ function admissionError(statusCode: number, message: string) {
 
 /** Stage with the originating command's read-committed transaction. The runner
  * can only see the job after commit, and polls even without a local wakeup. */
-export async function stagePostgresJob(tx: PostgresJobTransaction, input: SubmitPostgresJobInput) {
+export async function stageJob(tx: PostgresJobTransaction, input: SubmitPostgresJobInput) {
   const spec = getJobSpec(input.kind)
   const handler = postgresJobHandler(input.kind)
   if (!spec || !handler) throw admissionError(501, `任务种类尚未接入 PostgreSQL:${input.kind}`)
@@ -262,7 +262,7 @@ export function createPostgresJobRunner(db: PostgresJobDb, filesDir: string) {
     trackSubmission,
     async submit(input: SubmitPostgresJobInput) {
       return trackSubmission(remember => db.transaction(async tx => {
-        const { row, inserted } = await stagePostgresJob(tx, input)
+        const { row, inserted } = await stageJob(tx, input)
         if (inserted) remember([row])
         return row
       }), input.logContext)

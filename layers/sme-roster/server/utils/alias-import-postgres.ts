@@ -1,7 +1,7 @@
 import { and, eq, notExists, or } from 'drizzle-orm'
 import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { insertPostgresEnterpriseAlias, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { insertEnterpriseAlias, lockReviewedEnterpriseBatch, canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportAlias, RosterImportItemResult } from '../../lib/roster-import-client'
 import { replayOptionalString as text } from '../../lib/platform/query-replay'
@@ -63,7 +63,7 @@ async function planAlias(db: Reader, input: RosterImportAlias,index:number): Pro
       if (evidence.interface!==expected || !selected.uscc || normalizeUscc(evidence.usccRaw)!==selected.uscc || evidence.nameRaw!==name) {
         return fail('alias_source_evidence_mismatch','平台关系的接口、统一社会信用代码或 qymc 与该别名不一致',field)
       }
-      if (evidence.enterpriseId!==null && await postgresCanonicalEnterpriseId(db,evidence.enterpriseId)!==selected.id) {
+      if (evidence.enterpriseId!==null && await canonicalEnterpriseId(db,evidence.enterpriseId)!==selected.id) {
         return fail('alias_source_evidence_mismatch','平台关系已归属的企业与该别名归属企业不一致',field)
       }
     }
@@ -90,7 +90,7 @@ export async function executePostgresAliasItems(tx: Tx,batch:PostgresImportBatch
   const planned = plans.filter((plan):plan is AliasPlan=>!('ok' in plan))
   if (action==='commit' && planned.length===plans.length) {
     const ids = planned.map(plan=>plan.enterpriseId)
-    await lockPostgresReviewedEnterpriseBatch(tx,ids,planned.map(plan=>({name:plan.name,uscc:normalizeUscc(plan.input.uscc) || null})))
+    await lockReviewedEnterpriseBatch(tx,ids,planned.map(plan=>({name:plan.name,uscc:normalizeUscc(plan.input.uscc) || null})))
     const verified = await collect()
     plans = verified.map((plan,index)=>'ok' in plan || plan.enterpriseId===ids[index] ? plan
       : {ok:false,kind:'alias',ref:plan.ref,error:{code:'enterprise_changed',field:'enterpriseName',message:'别名归属企业已变更，请重新核对'}})
@@ -105,7 +105,7 @@ export async function executePostgresAliasItems(tx: Tx,batch:PostgresImportBatch
   let written = 0
   const items: RosterImportItemResult[] = []
   for (const {enterpriseId,name,nameNorm,sourceRefId,input} of ready) {
-    const { id,created } = await insertPostgresEnterpriseAlias(tx,{
+    const { id,created } = await insertEnterpriseAlias(tx,{
       enterpriseId,name,nameNorm,sourceKind:input.sourceKind,sourceRefId,
       validFrom:text(input.validFrom),validTo:text(input.validTo),verificationStatus:input.verificationStatus ?? 'pending',note:text(input.note),
     })

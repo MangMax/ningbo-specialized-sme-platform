@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { postgresCanonicalEnterpriseId } from '../../../layers/core/server/public'
+import { canonicalEnterpriseId } from '../../../layers/core/server/public'
 import { applyPostgresRosterMerge, planPostgresRosterMerge } from '../../../layers/sme-roster/server/utils/roster-merge-postgres'
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -63,7 +63,7 @@ it('folds records without collapsing events or evidence and follows the old ente
     const originalEvidence = (await tx.execute(sql`SELECT * FROM official_evidence_row_revision WHERE evidence_id=7301`)).rows
     const planned = await planPostgresRosterMerge(tx, input, 0)
     expect(planned.item).toMatchObject({ ok: true, ref: `merge:7001->${code}` })
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7001)
     const result = await applyPostgresRosterMerge(tx, planned.plan!)
     expect(result).toMatchObject({ ok: true, ref: 'merge:7001->7002', detail: { rowsWritten: 1, lineage: {
       fromEnterpriseId: 7001, intoEnterpriseId: 7002, canonicalName: '规范企业', rename: null,
@@ -72,7 +72,7 @@ it('folds records without collapsing events or evidence and follows the old ente
         fromRecordSnapshot: { id: 7101, enterpriseId: 7001, nameRaw: '旧企业' } }],
       eventsMoved: [7201, 7203], evidenceMoved: [7301, 7302],
     } } })
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7002)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7002)
     expect((await tx.execute(sql`SELECT id::int AS id,name FROM enterprise WHERE id IN (7001,7002) ORDER BY id`)).rows)
       .toEqual([{ id: 7001, name: '旧企业' }, { id: 7002, name: '规范企业' }])
     expect((await tx.execute(sql`SELECT enterprise_id::int AS id FROM roster_legacy_member WHERE enterprise_id IN (7001,7002) ORDER BY id`)).rows)
@@ -100,7 +100,7 @@ it('resolves chained merges from either an old ID or an old unified credit code'
     const second = await planPostgresRosterMerge(tx, { fromEnterpriseId: 7001, intoUscc: newestCode }, 1)
     expect(second.plan).toMatchObject({ sourceEnterpriseId: 7002, intoEnterpriseId: 7003 })
     expect(await applyPostgresRosterMerge(tx, second.plan!)).toMatchObject({ ok: true, ref: 'merge:7002->7003' })
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7003)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7003)
     expect(await planPostgresRosterMerge(tx, { fromEnterpriseId: 7003, intoUscc: code }, 2)).toMatchObject({
       plan: null, item: { ok: false, error: { code: 'merge_same_enterprise' } },
     })
@@ -203,7 +203,7 @@ it('rejects different legacy versions and rechecks adopted difference scope at a
     expect(await applyPostgresRosterMerge(tx, planned.plan!)).toMatchObject({
       ok: false, error: { code: 'merge_difference_lifecycle_conflict', message: expect.stringContaining('7802') },
     })
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7001)
     expect((await tx.execute(sql`SELECT id,enterprise_id FROM difference_reason ORDER BY id`)).rows)
       .toEqual([{ id: '7801', enterprise_id: '7001' }, { id: '7802', enterprise_id: '7002' }, { id: '7803', enterprise_id: '7002' }])
   })
@@ -226,7 +226,7 @@ it('rejects alias conflicts that would lose a decision or share an audit key', a
     expect(await planPostgresRosterMerge(tx, input, 0)).toMatchObject({
       plan: null, item: { ok: false, error: { code: 'merge_alias_audit_key_conflict' } },
     })
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7001)
   })
 })
 
@@ -236,10 +236,10 @@ it('rolls back merge lineage, membership and ownership with the caller transacti
     await expect(tx.transaction(async nested => {
       const planned = await planPostgresRosterMerge(nested, input, 0)
       expect(await applyPostgresRosterMerge(nested, planned.plan!)).toMatchObject({ ok: true })
-      expect(await postgresCanonicalEnterpriseId(nested, 7001)).toBe(7002)
+      expect(await canonicalEnterpriseId(nested, 7001)).toBe(7002)
       throw laterItemFailure
     })).rejects.toBe(laterItemFailure)
-    expect(await postgresCanonicalEnterpriseId(tx, 7001)).toBe(7001)
+    expect(await canonicalEnterpriseId(tx, 7001)).toBe(7001)
     expect((await tx.execute(sql`SELECT enterprise_id FROM roster_legacy_member WHERE enterprise_id IN (7001,7002)`)).rows)
       .toEqual([{ enterprise_id: '7001' }])
     expect((await tx.execute(sql`SELECT record_id FROM record_event WHERE id=7201`)).rows).toEqual([{ record_id: '7101' }])

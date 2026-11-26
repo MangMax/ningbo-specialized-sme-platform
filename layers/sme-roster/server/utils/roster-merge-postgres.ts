@@ -6,7 +6,7 @@ import { enterprise, enterpriseAlias, enterpriseMerge } from '../../../../db/pos
 import { record, recordEvent, recordEvidence } from '../../../../db/postgresql/ledger-tables'
 import { platformObservationAssignment } from '../../../../db/postgresql/platform-tables'
 import { differenceReason } from '../../../../db/postgresql/roster-selection-tables'
-import { applyPostgresEnterpriseMerge, findPostgresEnterpriseMergeAliasConflict, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { applyEnterpriseMerge, findEnterpriseMergeAliasConflict, lockReviewedEnterpriseBatch, canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import type { RosterImportItemResult, RosterImportMerge } from '../../lib/roster-import-client'
 import type { MergeLineage } from './roster-import-model'
@@ -34,7 +34,7 @@ function failure(ref: string, code: string, message: string, field: string): Ros
 }
 
 async function subjectById(tx: Tx, ref: number) {
-  const id = Number.isSafeInteger(ref) ? await postgresCanonicalEnterpriseId(tx, ref) : null
+  const id = Number.isSafeInteger(ref) ? await canonicalEnterpriseId(tx, ref) : null
   return id === null ? undefined : (await tx.select(subjectColumns).from(enterprise).where(eq(enterprise.id, id)))[0]
 }
 
@@ -113,7 +113,7 @@ async function mergeConflict(tx: Tx, from: number, into: number, ref: string) {
     return failure(ref, 'merge_difference_lifecycle_conflict',
       `差异决定版本 ${managed.id}（企业 ${managed.enterpriseId}/${managed.titleCode}/${managed.direction}）已接管；归并须保留原 ID、历史和接管状态`, 'merges')
   }
-  const aliasConflict = await findPostgresEnterpriseMergeAliasConflict(tx, from, into)
+  const aliasConflict = await findEnterpriseMergeAliasConflict(tx, from, into)
   if (aliasConflict) return failure(ref, aliasConflict.code, aliasConflict.message, 'merges')
   const distinct = or(...differenceFields.map(field => {
     const left = differenceReason[field], right = targetDifference[field]
@@ -210,7 +210,7 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const { merge, sourceEnterpriseId, intoEnterpriseId } = plan
   const ref = `merge:${sourceEnterpriseId}->${intoEnterpriseId}`
   const requestedName = optionalText(merge.canonicalName)
-  await lockPostgresReviewedEnterpriseBatch(tx, [sourceEnterpriseId, intoEnterpriseId],
+  await lockReviewedEnterpriseBatch(tx, [sourceEnterpriseId, intoEnterpriseId],
     requestedName ? [{ name: requestedName }] : [])
   const resolved = await resolveMerge(tx, merge, plan.index)
   if ('ok' in resolved) return resolved
@@ -228,7 +228,7 @@ export async function applyPostgresRosterMerge(tx: Tx, plan: PostgresRosterMerge
   const renameNote = `主名称改为「${canonicalName}」（导出表侧）后被顶掉的原名`
   const aliasName = optionalText(merge.aliasName) ?? from.name
   const basis = note ?? ref
-  const applied = await applyPostgresEnterpriseMerge(tx, {
+  const applied = await applyEnterpriseMerge(tx, {
     fromEnterpriseId: from.id,
     intoEnterpriseId: into.id,
     rename: renamedFrom === null ? null : {

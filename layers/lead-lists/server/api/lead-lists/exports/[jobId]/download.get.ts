@@ -3,7 +3,7 @@ import { usePostgresDirectoryDb } from '../../../../../../../db/postgresql/clien
 import { postgresLeadListExport } from '../../../../../../../db/postgresql/lead-tables'
 import { isJobId } from '#core/lib/job'
 import { requireTaskCenterAccess } from '#core/server/utils/task-center-access'
-import { getPostgresJob } from '#core/server/public'
+import { getJob } from '#core/server/public'
 import { LEAD_LIST_EXPORT } from '../../../../../lib/export-contract'
 
 defineRouteMeta({ openAPI: {
@@ -16,7 +16,7 @@ export default defineEventHandler(async event => {
   const id = getRouterParam(event, 'jobId')
   if (!isJobId(id)) throw createError({ statusCode: 400, message: '任务编号有误' })
   const db = usePostgresDirectoryDb()
-  const task = (await getPostgresJob(db, id))?.row
+  const task = (await getJob(db, id))?.row
   if (task?.kind !== LEAD_LIST_EXPORT) throw createError({ statusCode: 404, message: '名单导出任务不存在' })
   if (task.state !== 'done') throw createError({ statusCode: 409, message: '名单导出尚未完成' })
   const [artifact] = await db.select({ versionId: postgresLeadListExport.versionId, content: postgresLeadListExport.content })

@@ -15,7 +15,7 @@ import { asc, eq, sql } from 'drizzle-orm'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { platformCollection, platformExportBatch } from '../../../db/postgresql/platform-tables'
 import { importBatch, importReceipt } from '../../../db/postgresql/import-tables'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { runPlatformLiveQuery } from '../../../layers/sme-roster/server/utils/platform-live-query'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
@@ -75,7 +75,7 @@ beforeAll(async () => {
   }
 }, 60_000)
 afterAll(async () => {
-  await stopPostgresJobs()
+  await stopJobs()
   await mcpClient?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))

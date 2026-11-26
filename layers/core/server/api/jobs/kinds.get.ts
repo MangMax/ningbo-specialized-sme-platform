@@ -1,4 +1,4 @@
-import { postgresJobsEnabled } from '../../utils/postgres-jobs'
+import { jobsEnabled } from '../../utils/postgres-jobs'
 import { postgresJobHandler } from '../../utils/job-runner-postgres'
 import { jobSpecs } from '../../utils/job-spec-registry'
 import { registerJobSpecs } from '../../../../../server/utils/job-specs'
@@ -57,7 +57,7 @@ defineRouteMeta({
 
 export default defineEventHandler(() => {
   registerJobSpecs()
-  const writable = postgresJobsEnabled()
+  const writable = jobsEnabled()
   return {
     kinds: jobSpecs().map((spec) => ({
       kind: spec.kind,

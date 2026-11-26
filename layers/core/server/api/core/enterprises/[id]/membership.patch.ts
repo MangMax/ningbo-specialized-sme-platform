@@ -1,4 +1,4 @@
-import { setPostgresEnterpriseRemoved } from '../../../../utils/enterprise-directory-postgres-write'
+import { setEnterpriseRemoved } from '../../../../utils/enterprise-directory-postgres-write'
 import { z } from 'zod'
 import { requireApiToken } from '../../../../utils/api-guard'
 import { directoryInput, directoryResult, usePostgresDirectoryWriteDb, enterpriseId } from '../../../../utils/enterprise-directory-route'
@@ -19,6 +19,6 @@ export default defineEventHandler(async event => {
   const body = directoryInput(membership, await readBody(event))
   return directoryResult(() => {
     const db = usePostgresDirectoryWriteDb()
-    return setPostgresEnterpriseRemoved(db, id, body.expectedRevision, body.removedReason)
+    return setEnterpriseRemoved(db, id, body.expectedRevision, body.removedReason)
   })
 })

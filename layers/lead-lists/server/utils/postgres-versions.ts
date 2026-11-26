@@ -6,7 +6,7 @@ import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
 import { enterpriseSourceChannel, enterpriseSourceListType } from '../../../../db/postgresql/enterprise-source-tables'
 import { filePhysicalIntent, storedFile } from '../../../../db/postgresql/file-tables'
 import { postgresLeadListRow as leadRow, postgresLeadListVersion as leadVersion } from '../../../../db/postgresql/lead-tables'
-import { registerPostgresEnterpriseSource, verifyRegisteredFileRead } from '../../../core/server/public'
+import { registerEnterpriseSource, verifyRegisteredFileRead } from '../../../core/server/public'
 import type { LeadCatalog, LeadVersionDetail, LeadVersionSummary, VersionInput } from '../../lib/contracts'
 
 export function usePostgresLeadWriteDb() {
@@ -134,7 +134,7 @@ export async function registerPostgresLeadVersion(db: NodePgDatabase, root: stri
       versionId: id, rowNumber: row.rowNumber, name: row.name,
       uscc: row.uscc ?? null, district: row.district ?? null, note: row.note ?? null,
     })))
-    await registerPostgresEnterpriseSource(tx, {
+    await registerEnterpriseSource(tx, {
       module: 'lead-lists', businessTable: 'lead_list_version', versionKey: String(id),
       channel: fields.channel, listType: fields.listType, acquiredOn: fields.acquiredOn,
       series: fields.series, fileId: fields.fileId, sha256: file.sha256,

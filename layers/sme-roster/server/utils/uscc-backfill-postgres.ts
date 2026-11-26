@@ -1,7 +1,7 @@
 import { and, eq, ne, notExists } from 'drizzle-orm'
 import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterprise-tables'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
-import { backfillPostgresEnterpriseUscc, lockPostgresReviewedEnterpriseBatch, postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { backfillEnterpriseUscc, lockReviewedEnterpriseBatch, canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { missingUsccSourceFields, usccFormatVerdict } from '../../lib/roster/uscc-research'
 import type { RosterImportItemResult, RosterImportUsccBackfill } from '../../lib/roster-import-client'
@@ -33,7 +33,7 @@ async function planBackfill(db: Tx, input: RosterImportUsccBackfill, index: numb
   if (requested == null && !name) return failure(ref,'enterprise_required','补录缺少 enterpriseId 或 enterpriseName','enterpriseId')
   let target: Subject | undefined
   if (requested != null) {
-    const id = Number.isSafeInteger(requested) ? await postgresCanonicalEnterpriseId(db,requested) : null
+    const id = Number.isSafeInteger(requested) ? await canonicalEnterpriseId(db,requested) : null
     target = id === null ? undefined : (await db.select(subject).from(enterprise).where(eq(enterprise.id, id)))[0]
     if (target && name && normalizeName(name)!==target.nameNorm) {
       return failure(ref,'enterprise_selector_conflict',`enterpriseId=${requested} 的名称与给定 enterpriseName 不一致`,'enterpriseName')
@@ -73,7 +73,7 @@ export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImpo
   if (action==='preflight') return { preflight }
   if (conflicts.length) return { preflight,items:plans.map(plan=>'ok' in plan ? plan : item(plan)),
     summary:{ ...emptySummary,failed:conflicts.length },error:`批次校验未通过：${conflicts.length} 项有误，未写入任何数据` }
-  await lockPostgresReviewedEnterpriseBatch(tx,ready.map(change=>change.target.id),ready.map(change=>({uscc:change.uscc})))
+  await lockReviewedEnterpriseBatch(tx,ready.map(change=>change.target.id),ready.map(change=>({uscc:change.uscc})))
   try {
     const items = await tx.transaction(async nested=>{
       const results: RosterImportItemResult[] = []
@@ -83,7 +83,7 @@ export async function executePostgresUsccBackfillItems(tx: Tx,batch:PostgresImpo
         if (plan.target.id!==original.target.id) throw new BackfillConflict([...results,
           failure(plan.ref,'enterprise_selector_conflict','补录归属企业已变更，请重新核对','enterpriseId')])
         const { target,uscc,backfill } = plan
-        await backfillPostgresEnterpriseUscc(nested,target.id,uscc,JSON.parse(target.flags ?? 'null') ?? [])
+        await backfillEnterpriseUscc(nested,target.id,uscc,JSON.parse(target.flags ?? 'null') ?? [])
         results.push({ ok:true,kind:'uscc_backfill',ref:item(plan).ref,detail:{ enterpriseId:target.id,uscc,rowsWritten:1,
           lineage:{ enterpriseId:target.id,enterpriseName:target.name,uscc,previousUscc:null,source:backfill.source,note:optionalText(backfill.note) } } })
       }

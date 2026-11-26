@@ -6,7 +6,7 @@ import { job } from '../../../db/postgresql/job-tables'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
 import { newJobId } from '../../../layers/core/lib/job'
 import { createPostgresJobRunner } from '../../../layers/core/server/utils/job-runner-postgres'
-import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { getJob } from '../../../layers/core/server/utils/job-store-postgres'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 
 let dir: string
@@ -58,7 +58,7 @@ async function sweep(clientRequestId: string) {
   try {
     const queued = await runner.submit({ kind: 'roster_export_cleanup', params: { clientRequestId } })
     await runner.wake()
-    return (await getPostgresJob(db, queued.id))?.row
+    return (await getJob(db, queued.id))?.row
   } finally {
     await runner.stop()
   }
@@ -83,8 +83,8 @@ it('removes only expired completed roster workbooks and preserves export history
   expect(await sweep('hour-1')).toMatchObject({ state: 'done', result: { removed: 1, failed: 0 } })
   expect(existsSync(old.xlsx)).toBe(false)
   for (const path of keep) expect(existsSync(path), path).toBe(true)
-  expect((await getPostgresJob(db, old.id))?.row).toMatchObject({ state: 'done', result: { artifact: old.artifact } })
-  expect((await getPostgresJob(db, missing.id))?.row).toMatchObject({ state: 'done' })
+  expect((await getJob(db, old.id))?.row).toMatchObject({ state: 'done', result: { artifact: old.artifact } })
+  expect((await getJob(db, missing.id))?.row).toMatchObject({ state: 'done' })
   expect(await sweep('hour-2')).toMatchObject({ state: 'done', result: { removed: 0, failed: 0 } })
 })
 

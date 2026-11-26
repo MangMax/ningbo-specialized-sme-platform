@@ -15,8 +15,8 @@ import { platformBusinessObservation, platformBusinessRecordVersion } from '../.
 import { readPostgresPlatformQueries } from '../../../layers/sme-roster/lib/platform/postgres-query-read'
 import { newJobId } from '../../../layers/core/lib/job'
 import { clearJobSpecs, registerJob } from '../../../layers/core/server/utils/job-spec-registry'
-import { getPostgresJob } from '../../../layers/core/server/utils/job-store-postgres'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { getJob } from '../../../layers/core/server/utils/job-store-postgres'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import type { PlatformLiveQueryResult } from '../../../layers/sme-roster/lib/platform/live-query'
 import { platformResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { commitPostgresPlatformCollection } from '../../../layers/sme-roster/server/utils/collection-import-postgres'
@@ -74,7 +74,7 @@ describe('PostgreSQL snapshot public handlers', () => {
   })
 
   afterEach(async () => {
-    try { await stopPostgresJobs() }
+    try { await stopJobs() }
     finally {
       await closePostgresDirectoryDb()
       vi.unstubAllEnvs()
@@ -121,9 +121,9 @@ describe('PostgreSQL snapshot public handlers', () => {
   }
 
   async function settledPostgres(id: string) {
-    let job: NonNullable<Awaited<ReturnType<typeof getPostgresJob>>>['row']
+    let job: NonNullable<Awaited<ReturnType<typeof getJob>>>['row']
     await vi.waitFor(async () => {
-      job = (await getPostgresJob(db, id))!.row
+      job = (await getJob(db, id))!.row
       expect(['done', 'failed', 'cancelled']).toContain(job.state)
     }, { timeout: 15_000 })
     return job!

@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 
-export async function postgresCanonicalEnterpriseId(db: Pick<NodePgDatabase, 'execute'>, enterpriseId: number) {
+export async function canonicalEnterpriseId(db: Pick<NodePgDatabase, 'execute'>, enterpriseId: number) {
   const { rows: [owner] } = await db.execute<{ id: string; cycle: boolean }>(sql`
     WITH RECURSIVE chain(id) AS (
       SELECT id FROM enterprise WHERE id = ${enterpriseId}

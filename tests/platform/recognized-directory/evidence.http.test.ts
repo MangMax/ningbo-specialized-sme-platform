@@ -14,7 +14,7 @@ import { createRosterImportHandler } from '../../../layers/sme-roster/server/uti
 import { createRosterImportClient, type RosterImportRequest } from '../../../layers/sme-roster/lib/roster-import-client'
 import { normalizeName, normalizeUscc } from '../../../layers/sme-roster/lib/domain'
 import { closeApplicationLogging } from '../../../layers/core/lib/logging'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { assertEnterpriseDetailSnapshotEqual } from '../../roster/assertions/enterprise-detail-snapshot'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -91,7 +91,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
-  await stopPostgresJobs()
+  await stopJobs()
   await closeApplicationLogging()
   await closePostgresDirectoryDb()
   postgres?.close()

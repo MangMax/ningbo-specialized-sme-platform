@@ -1,5 +1,5 @@
 import type { JobSpec, PostgresJobSpec } from '../../../../core/server/public'
-import { getPostgresJob } from '../../../../core/server/utils/job-store-postgres'
+import { getJob } from '../../../../core/server/utils/job-store-postgres'
 import { readPostgresExportSummaries } from './export-summary-postgres'
 import { mkdir, rm, rename, stat, open } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
@@ -123,7 +123,7 @@ const postgresExport: PostgresJobSpec = {
     if (!postgresExportDirectory()) {
       throw Object.assign(new Error('需要配置 NUXT_ROSTER_EXPORT_DIR'), { statusCode: 503 })
     }
-    if (params.regenerateOf) validateRegeneration(params.titleCode, (await getPostgresJob(tx, String(params.regenerateOf)))?.row)
+    if (params.regenerateOf) validateRegeneration(params.titleCode, (await getJob(tx, String(params.regenerateOf)))?.row)
   },
   allowBrowserCancel: true,
   taskCenter: { summaries: readPostgresExportSummaries },
@@ -133,7 +133,7 @@ const postgresExport: PostgresJobSpec = {
     const titleCode = paramsSchema.shape.titleCode.parse(params.titleCode)
     return runCurrentExport(directory, {
       ...ctx,
-      cleanup: context => cleanupExportArtifacts(directory, async id => (await getPostgresJob(ctx.db, id))?.row, context),
+      cleanup: context => cleanupExportArtifacts(directory, async id => (await getJob(ctx.db, id))?.row, context),
     }, titleCode)
   },
   async projectResult(_db, job) {

@@ -1,6 +1,6 @@
 import { Client, types } from 'pg'
 import { closePostgresDirectoryDb, usePostgresDirectoryDb } from '../../../db/postgresql/client'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { minimalPdf } from '../../support/minimal-pdf'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { createReviewedPostgresImportClient, startPostgresImportHttp } from './fixtures/postgres-import-http'
@@ -76,7 +76,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (process.env.USCC_131_RESOURCE_PATH) writeFileSync(process.env.USCC_131_RESOURCE_PATH, JSON.stringify({ sha: process.env.USCC_131_SHA, note: 'Synthetic local HTTP route tests; sampled heap/RSS after request, no peak or SLO claim', measurements }, null, 2))
   await server?.close()
-  await stopPostgresJobs()
+  await stopJobs()
   await closePostgresDirectoryDb()
   postgres?.close()
   vi.restoreAllMocks()

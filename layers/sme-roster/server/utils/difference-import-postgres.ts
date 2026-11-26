@@ -7,7 +7,7 @@ import { enterprise, enterpriseMerge } from '../../../../db/postgresql/enterpris
 import { differenceReason as d } from '../../../../db/postgresql/roster-selection-tables'
 import { platformBusinessObservation as observation, platformCollection, platformCollectionPage as page,
   platformObservationAssignment as assignment } from '../../../../db/postgresql/platform-tables'
-import { postgresCanonicalEnterpriseId } from '../../../core/server/public'
+import { canonicalEnterpriseId } from '../../../core/server/public'
 import { normalizeName, normalizeUscc } from '../../lib/domain'
 import { TITLE_ORDER } from '../../lib/labels'
 import { isCurrentPlatformCollection, platformDecisionQueryMode } from '../../lib/platform/current-observation-postgres'
@@ -33,7 +33,7 @@ async function locateEnterprise(tx: Tx, difference: RosterImportDifference, lock
   if (uscc) {
     const [match] = await tx.select({ id: enterprise.id }).from(enterprise).where(eq(enterprise.usccNorm, uscc))
     if (match) {
-      const id = await postgresCanonicalEnterpriseId(tx, match.id)
+      const id = await canonicalEnterpriseId(tx, match.id)
       if (id !== null) {
         const query = owners.where(eq(enterprise.id, id))
         const [owner] = await (lock ? query.for('update') : query)

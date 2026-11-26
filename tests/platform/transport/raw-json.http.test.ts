@@ -13,7 +13,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { updatePostgresCredentialState } from '../../../layers/core/server/utils/credential-state-postgres'
-import { stopPostgresJobs } from '../../../layers/core/server/utils/postgres-jobs'
+import { stopJobs } from '../../../layers/core/server/utils/postgres-jobs'
 import { recognizedResultToImport } from '../../../layers/sme-roster/lib/platform/recognized-evidence'
 import { readMcpToken, resolveMcpAuth } from '../../../layers/core/server/utils/mcp-auth'
 
@@ -90,7 +90,7 @@ beforeAll(async () => {
   await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }))
 }, 60_000)
 afterAll(async () => {
-  await stopPostgresJobs(); await client?.close()
+  await stopJobs(); await client?.close()
   for (const transport of transports) await transport.close()
   if (server) await new Promise<void>(resolve => server.close(() => resolve()))
   await closePostgresDirectoryDb()
