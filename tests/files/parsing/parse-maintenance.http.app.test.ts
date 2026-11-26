@@ -8,18 +8,17 @@ import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { eq, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
-import pg from 'pg'
 import { enterprise } from '../../../db/postgresql/enterprise-tables'
 import { ocrResult, storedFile } from '../../../db/postgresql/file-tables'
 import { record, recordEvent, recordEvidence } from '../../../db/postgresql/ledger-tables'
 import { fileDeclaration669, fileParseAudit105, rosterFileClassification, storedFilePart } from '../../../db/postgresql/roster-file-tables'
-import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
+import { postgresFixturePool, postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
 import { reserveLoopbackPort, waitForHttp, stopOwnedChild } from '../../support/owned-process.mjs'
 
 const dir = mkdtempSync('/tmp/issue310-http-')
 const recordedAt = '2026-10-19T00:00:00Z'
 let runtime: Awaited<ReturnType<typeof postgresRuntimeFixture>>
-let pool: pg.Pool
+let database: ReturnType<typeof postgresFixturePool> | undefined
 let db: ReturnType<typeof drizzle>
 const token = 'synthetic-105-token'
 let service: { baseUrl: string; stop: () => Promise<void> }
@@ -98,15 +97,15 @@ async function startService() {
 beforeAll(async () => {
   await readDevelopmentDiscovery()
   runtime = await postgresRuntimeFixture({ dir })
-  pool = new pg.Pool({ connectionString: runtime.url })
-  db = drizzle({ client: pool })
+  database = postgresFixturePool({ connectionString: runtime.url })
+  db = drizzle({ client: database.pool })
   await startService()
 }, 90000)
 afterAll(async () => {
   try {
     if (service) await service.stop()
   } finally {
-    try { await pool?.end() }
+    try { await database?.close() }
     finally {
       try { runtime?.close() }
       finally { rmSync(dir, { recursive: true, force: true }) }
