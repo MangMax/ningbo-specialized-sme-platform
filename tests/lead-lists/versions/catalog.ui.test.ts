@@ -30,7 +30,7 @@ afterEach(() => vi.unstubAllGlobals())
 async function render(path = '/lead-lists', data = catalog, rows: LeadRow[] = [
   { id: 1, rowNumber: 2, name: '待走访企业', uscc: null, district: null, note: null, enterpriseId: null },
 ]) {
-  const fetch = vi.fn(async (url: string, _options?: unknown) => {
+  const fetch = vi.fn(async (url: string, _options?: unknown): Promise<unknown> => {
     if (url === '/api/lead-lists/versions') return data
     const item = data.versions.find(item => url === `/api/lead-lists/versions/${item.id}`)
     if (item) return { ...item, rows }

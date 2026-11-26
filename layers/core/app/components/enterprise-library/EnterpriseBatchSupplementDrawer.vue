@@ -12,6 +12,7 @@ import { describeFetchError } from '#core/lib/file-content-status'
 import { normalizeEnterpriseName } from '#core/lib/enterprise-name'
 import { normalizeReviewedUscc, usccFormatVerdict } from '#core/lib/enterprise-uscc'
 import type { DictionaryEntry } from '#core/lib/dictionaries'
+import { BATCH_CANDIDATE_MATCH_LIMIT } from '#core/lib/core/enterprise-batch-supplement'
 import type {
   BatchCandidateMatchResponse, BatchMatchCandidate, BatchMatchEnterprise, BatchSupplementDecision,
   BatchSupplementRowInput,
@@ -104,12 +105,15 @@ async function match() {
   matching.value = true
   matchError.value = ''
   try {
-    const response = await $fetch<BatchCandidateMatchResponse>('/api/core/enterprises/match-candidates', {
-      method: 'POST', signal: request.signal,
-      body: { rows: rows.map(({ key, name, uscc }) => ({ key, name, uscc })) },
-    })
-    if (request.signal.aborted) return
-    const matches = new Map(response.rows.map(row => [row.key, row]))
+    const matches = new Map<BatchCandidateMatchResponse['rows'][number]['key'], BatchCandidateMatchResponse['rows'][number]>()
+    for (let offset = 0; offset < rows.length; offset += BATCH_CANDIDATE_MATCH_LIMIT) {
+      const response = await $fetch<BatchCandidateMatchResponse>('/api/core/enterprises/match-candidates', {
+        method: 'POST', signal: request.signal,
+        body: { rows: rows.slice(offset, offset + BATCH_CANDIDATE_MATCH_LIMIT).map(({ key, name, uscc }) => ({ key, name, uscc })) },
+      })
+      if (request.signal.aborted) return
+      for (const row of response.rows) matches.set(row.key, row)
+    }
     drafts.value = rows.map(row => {
       const result = matches.get(row.key)
       const draft: Draft = {

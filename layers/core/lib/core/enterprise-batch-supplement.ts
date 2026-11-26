@@ -3,12 +3,14 @@ import type { EnterpriseLibraryDetails, EnterpriseLibraryTableRow } from './ente
 
 const nameText = z.string().refine(value => value.isWellFormed() && !value.includes('\0'))
 
+export const BATCH_CANDIDATE_MATCH_LIMIT = 200
+
 export const batchCandidateMatchInput = z.strictObject({
   rows: z.array(z.strictObject({
     key: z.union([z.string(), z.number()]),
     name: nameText,
     uscc: z.string().nullish(),
-  })).min(1).max(200).refine(rows => new Set(rows.map(row => row.key)).size === rows.length, '行标识必须唯一。'),
+  })).min(1).max(BATCH_CANDIDATE_MATCH_LIMIT).refine(rows => new Set(rows.map(row => row.key)).size === rows.length, '行标识必须唯一。'),
 })
 
 export type BatchCandidateMatchInput = z.infer<typeof batchCandidateMatchInput>

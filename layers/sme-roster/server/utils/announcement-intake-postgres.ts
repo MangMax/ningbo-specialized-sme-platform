@@ -8,6 +8,31 @@ import { ImportReceiptError } from './import-receipt-model'
 import { committedPostgresImportResult, lockPostgresRosterImportBatch, lockPostgresRosterImportKey } from './roster-export-import-postgres'
 import { usePostgresRosterDb } from './postgres-roster-db'
 
+export async function listPostgresAnnouncementIntakes(db: NodePgDatabase) {
+  // The intake table has no creation timestamp. The document date is source metadata.
+  const rows = await db.select({
+    id: intake.id,
+    digest: intake.digest,
+    request: intake.request,
+    removed: intake.removedReason,
+    supplemented: intake.supplementDigest,
+  }).from(intake).orderBy(desc(intake.id))
+  return rows.map(row => {
+    const request = JSON.parse(row.request) as RosterImportRequest
+    const announcement = request.payload.announcement!
+    return {
+      id: row.id,
+      digest: row.digest,
+      status: row.removed ? 'removed' as const : row.supplemented ? 'supplemented' as const : 'staged' as const,
+      sourceKind: request.sourceKind,
+      sourceIdentity: request.sourceIdentity,
+      sourceName: announcement.sourceDocument.title,
+      issueDate: announcement.sourceDocument.issueDate ?? null,
+      rowCount: announcement.records.length,
+    }
+  })
+}
+
 export async function readPostgresIntakeRow(db: Pick<NodePgDatabase, 'select'>, id: number, lock = false): Promise<IntakeRow> {
   const query = db.select({
     id: intake.id, digest: intake.digest, request: intake.request, removed_reason: intake.removedReason,
