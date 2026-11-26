@@ -1,4 +1,4 @@
-import { createServer } from 'node:http'
+import { createServer, IncomingMessage, ServerResponse } from 'node:http'
 import { createApp, defineEventHandler, toNodeListener } from 'h3'
 import { expect, it } from 'vitest'
 import { createReadTurns, runReadTurn } from '../../../layers/core/server/utils/read-turn'
@@ -9,7 +9,8 @@ it('cleans real queued disconnects and lifecycle listeners without a new HTTP do
   const turns = createReadTurns((input: string) => { reads.push(input); return { value: input } })
   const app = createApp()
   app.use('/cancel', defineEventHandler(async event => {
-    const { req, res } = event.node
+    const req = event.node?.req, res = event.node?.res
+    if (!(req instanceof IncomingMessage) || !(res instanceof ServerResponse)) throw new Error('Expected a Node request and response')
     listeners.push([req.listenerCount('aborted'), res.listenerCount('close')])
     const earlier = turns.submit('ahead')
     const pending = withReadTurn(event, turns, 'cancelled')

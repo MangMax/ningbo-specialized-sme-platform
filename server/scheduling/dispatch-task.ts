@@ -1,4 +1,5 @@
-import { defineTask, useRuntimeConfig } from 'nitropack/runtime'
+import { defineTask } from 'nitro/task'
+import { useRuntimeConfig } from 'nitro/runtime-config'
 import { dispatchScheduledJob } from './scheduled-jobs'
 
 export default defineTask({

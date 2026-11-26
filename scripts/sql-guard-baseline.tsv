@@ -4,7 +4,6 @@ db/postgresql/job-request-index.sql	FX5WienCF_RlBk2BEU0GuYdPqET3LRHnyxVtjEpgCb9A
 db/runtime-mode.ts	I1-1MTms4UI39EhYg4lrIPG2eMRwGXaniXg6_8VDZsyM,IQ5dWh9j2AdB9AeLLP9EnQwwZ-NCA-J70ZmwMFewp7dA,DGedDIzHc8JvwFZd_UfhQVKAe1couSlutIEfW3sPx6cI
 layers/core/lib/logging/postgres-storage.ts	IDOkRu35TNWoZ-qTANIwH8etkJtNIsTx0KzKb9lJNwfY,D_5xAEYeWSCFc5SoqxKNunn-RjNfpbbYMsddtCLsKgG0
 layers/core/server/utils/enterprise-directory-postgres.ts	TUYUBGM65VB-MWVFLsFpkw3sTbUDDJHS5-CJ9FPdgjEI,TYfVvX4B_-h_m2YhDB6F09ae-bFkwG9cIzCPD7nIhqkA
-layers/core/server/utils/enterprise-directory-query.ts	Ley6lJA2jyJ0HHtBkKndZzklMhTSeodAPtQ6X1z0sP8Y
 layers/core/server/utils/enterprise-identity-postgres.ts	TYkS7PY-4bRgIPQdLvGhYa4ZEJOteX3i0QbwLJgXuHoM
 layers/core/server/utils/job-contract.ts	Td4HadKcR-bW1s-hhI4XAXcTkuXwXYCfR7jsFluzHW5I,TlHG5T-QNoTMQIdsupc27d5d7C5CX7QLP4SlU0JiWLzw,Tzqfxql6ADR0kUxm3zj9iPf3Q_y5CG1Q8fgs-qa076qc
 layers/core/server/utils/job-runner-postgres.ts	PINV_UlxxujF_AMdmUFT5cWsI_hN5_fMpK-Ap9bt3-aE

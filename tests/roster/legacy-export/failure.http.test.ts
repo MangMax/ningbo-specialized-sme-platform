@@ -47,7 +47,7 @@ beforeAll(async () => {
   initializeWorkerLogging()
   for (const [name, value] of Object.entries({ defineEventHandler, getQuery, setHeader, createError })) vi.stubGlobal(name, value)
   vi.stubGlobal('useRuntimeConfig', () => ({ curatedPath: join(dir, 'curation.json') }))
-  const app = createApp({ onRequest: event => { event.context.applicationLogContext = newLogContext(); setHeader(event, 'x-request-id', event.context.applicationLogContext.requestId) }, onError: () => { state.settledRequests++ }, onAfterResponse: () => { state.settledRequests++ } })
+  const app = createApp({ onRequest: event => { const context = newLogContext(); event.context.applicationLogContext = context; if (context.requestId) { setHeader(event, 'x-request-id', context.requestId); event.res.errHeaders.set('x-request-id', context.requestId) } }, onError: () => { state.settledRequests++ }, onResponse: () => { state.settledRequests++ } })
   app.use('/api/export', (await import('../../../layers/sme-roster/server/api/export.get')).default)
   app.use('/api/roster/export', (await import('../../../layers/sme-roster/server/api/roster/export.get')).default)
   // Exercise the authorized adapter input seam over real HTTP, with a slow disk.
@@ -97,7 +97,7 @@ it('preserves validation errors without leaving staged files even when the disk 
   state.fail = true
   const response = await fetch(`${baseUrl}/api/export?mode=comparison`)
   expect(response.status).toBe(400)
-  expect((await response.json()).statusMessage).toBe('Unsupported export mode')
+  expect((await response.json()).message).toBe('Unsupported export mode')
   expect(state.directories.every((folder) => !existsSync(folder))).toBe(true)
 })
 

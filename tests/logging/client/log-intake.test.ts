@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applicationLogs, closeApplicationLogging } from '../../../layers/core/lib/logging'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging } from '../../../layers/core/lib/logging'
 import { clientPage } from '../../../layers/core/lib/client-logging/contract'
 import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
@@ -127,6 +127,7 @@ it('retains only a bounded untrusted related request reference beside trusted in
   const row = (await applicationLogs().list({ source: 'client' })).rows[0]!
   const id = row.id
   await closeApplicationLogging()
+  initializeWorkerLogging()
   expect(await applicationLogs().detail(id)).toMatchObject({ untrustedRelatedRequestId: 'original-response-180', requestId: 'intake-180', traceId: 'intake-trace-180' })
   expect(JSON.stringify(await applicationLogs().detail(id))).not.toContain('forged')
 })

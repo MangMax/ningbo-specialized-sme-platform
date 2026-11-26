@@ -92,5 +92,3 @@ export function writeToolCallIn(body: unknown): McpWriteTool | null {
   }
   return writeToolCallOf(body)
 }
-
-export const sessionReadTools: readonly string[] = ['list_enterprises', 'get_enterprise_detail']

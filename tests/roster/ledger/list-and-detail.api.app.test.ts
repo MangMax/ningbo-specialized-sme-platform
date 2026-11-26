@@ -85,7 +85,7 @@ beforeAll(async () => {
   db = usePostgresDirectoryDb()
   vi.stubGlobal('defineEventHandler', (fn: unknown) => fn)
   vi.stubGlobal('defineRouteMeta', () => undefined)
-  vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.node ? h3Query(event) : query)
+  vi.stubGlobal('getQuery', (event: Parameters<typeof h3Query>[0]) => event.req ? h3Query(event) : query)
   vi.stubGlobal('getRouterParam', () => routerParam)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => {
     headers[name] = value
@@ -368,7 +368,7 @@ describe('GET /api/roster/export(总表导出)', () => {
     expect(sheet.getColumn(10).width).toBe(60)
     const invalid = await fetch(`${baseUrl}/api/roster/export?title=nope`)
     expect(invalid.status).toBe(400)
-    expect((await invalid.json()).statusMessage).toContain('Unknown title')
+    expect((await invalid.json()).statusText).toContain('Unknown title')
     expect(invalid.headers.get('content-disposition')).toBeNull()
   })
   async function exported(params: Record<string, unknown>) {

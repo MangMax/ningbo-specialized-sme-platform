@@ -72,6 +72,8 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       const child = spawnCompiledApp(port, {
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
+          // Run the production signal handler even when Vitest itself runs in CI.
+          CI: undefined, TEST: undefined,
           NUXT_DB_READONLY: readOnly ? '1' : '0',
           NUXT_POSTGRES_DIRECTORY_URL: fixture.url,
           NUXT_POSTGRES_LOG_URL: readOnly ? logConnection.href : undefined,
@@ -91,7 +93,8 @@ it.skipIf(!bin)('checks PostgreSQL-only runtime readiness, read-only tasks, comm
       } catch (cause) {
         throw new Error(output || 'Compiled app produced no startup output', { cause })
       } finally {
-        await stopOwnedChild(child)
+        // srvx can drain connections for five seconds before the Nitro close hooks.
+        await stopOwnedChild(child, 10_000)
       }
       // The process group can become empty before Node reports the child's exit.
       if (child.exitCode === null && child.signalCode === null) await once(child, 'exit')

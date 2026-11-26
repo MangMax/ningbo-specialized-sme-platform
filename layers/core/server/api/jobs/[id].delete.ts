@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
 
   const db = useJobsDb()
   requireJobsWritable()
-  const config = useRuntimeConfig(event)
+  const config = useRuntimeConfig()
   const project = await postgresJobReadProjector(db, config)
   const cancelled = await cancelPostgresJob(db, id, requestLogContext(event))
   if (!cancelled) throw createError({ statusCode: 404, message: `任务不存在:${id}` })

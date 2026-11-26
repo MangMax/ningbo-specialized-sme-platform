@@ -63,7 +63,7 @@ export type PostgresTaskListOptions = (query: Record<string, unknown>) => { filt
 export async function handlePostgresTaskCenter(action: TaskCenterAction, event: H3Event, listOptions?: PostgresTaskListOptions) {
   setHeader(event, 'cache-control', 'no-store')
   registerJobSpecs()
-  const config = useRuntimeConfig(event)
+  const config = useRuntimeConfig()
   const db = useJobsDb()
   const writable = jobsEnabled()
   if (action === 'cancel' || action === 'retry') requireJobsWritable()

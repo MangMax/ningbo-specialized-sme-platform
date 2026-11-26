@@ -9,11 +9,13 @@ import { isSuccessfulProbe } from './http'
 import { httpLogModule, mcpLogModule } from './module'
 export * from './contract'
 let service: LogService | undefined
+let loggingClosed = false
 let workerExecution = !isMainThread
 const numberEnv = (name: string, fallback: number) => {
   const value = Number(process.env[name]); return Number.isInteger(value) && value > 0 ? value : fallback
 }
 export function applicationLogs(): LogService {
+  if (loggingClosed) throw new Error('Application logging is closed')
   const postgresUrl = process.env.NUXT_POSTGRES_LOG_URL ?? process.env.NUXT_POSTGRES_DIRECTORY_URL
   if (!postgresUrl) throw new Error('PostgreSQL logging connection is required')
   return service ??= createPostgresLogService({
@@ -33,6 +35,7 @@ export function drainApplicationEvent(event: Record<string, unknown>) {
 }
 /** Worker entry points call once, before emitting. Nuxt is initialized by evlog/nuxt instead. */
 export function initializeWorkerLogging() {
+  loggingClosed = false
   workerExecution = true
   initLogger({ enabled: true, silent: true, pretty: false, redact: applicationLogRedaction, sampling: { rates: { info: 100, warn: 100, error: 100, debug: 100 } }, drain: ctx => drainApplicationEvent(ctx.event) })
 }
@@ -45,21 +48,26 @@ export function appLog(input: LogInput, context: LogContext = {}): void {
   } catch { /* Runtime logging must not change business outcome. */ }
 }
 /** Request-scoped context also carries the transport facts once the router has matched a route. */
+export function matchedHttpRoute(context?: { matchedRoute?: { path?: unknown; route?: unknown } }) {
+  const matched = context?.matchedRoute
+  const route = matched?.path ?? matched?.route
+  return typeof route === 'string' ? route.replace(/\/:([a-zA-Z_][a-zA-Z_0-9]*)\(\.\*\)$/, '/**:$1') : undefined
+}
 export type RequestLogContext = LogContext & { httpMethod?: string; httpRoute?: string }
 /** Request handlers pass this context into task/subprocess payloads explicitly. No inferred actor. */
 export function requestLogContext(event: { context?: Record<string, any>; method?: string }): RequestLogContext {
   // Plain route adapters may omit H3 context; only carry metadata actually present.
   const context = event.context ?? {}
-  const matched = context.matchedRoute
+  const route = matchedHttpRoute(context)
   const request: LogContext | undefined = context.applicationLogContext
   const module = request?.mcp ? mcpLogModule(request.mcp)
-    : typeof matched?.path === 'string' ? httpLogModule(matched.path) ?? request?.module
+    : route ? httpLogModule(route) ?? request?.module
     : request?.module
   return {
     ...request,
     ...(module !== undefined ? { module } : {}),
     ...(typeof event.method === 'string' ? { httpMethod: event.method } : {}),
-    ...(typeof matched?.path === 'string' ? { httpRoute: matched.path } : {}),
+    ...(route ? { httpRoute: route } : {}),
   }
 }
 /**
@@ -91,4 +99,8 @@ export function setRequestLogMetadata(
   } catch { /* Metadata collection must never change the response. */ }
 }
 export function newLogContext(): LogContext { return { requestId: randomUUID(), traceId: randomUUID() } }
-export async function closeApplicationLogging() { await service?.close(); service = undefined }
+export async function closeApplicationLogging() {
+  loggingClosed = true
+  await service?.close()
+  service = undefined
+}

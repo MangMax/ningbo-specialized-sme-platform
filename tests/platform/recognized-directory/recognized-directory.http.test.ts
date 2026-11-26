@@ -103,7 +103,11 @@ beforeAll(async () => {
     .get('/api/platform/recognized-directory', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory.get')).default)
     .get('/api/platform/recognized-directory/:recordId', (await import('../../../layers/sme-roster/server/api/platform/recognized-directory/[recordId].get')).default)
     .get('/api/platform/filter-options', (await import('../../../layers/sme-roster/server/api/platform/filter-options.get')).default)
-  request = toWebHandler(createApp().use(router))
+  const app = createApp({ onError: (_error, event) => {
+    const cacheControl = event.res.headers.get('cache-control')
+    if (cacheControl) event.res.errHeaders.set('cache-control', cacheControl)
+  } })
+  request = toWebHandler(app.use(router))
   listTool = (await import('../../../layers/sme-roster/server/mcp/tools/list_platform_recognized_directory')).default
   detailTool = (await import('../../../layers/sme-roster/server/mcp/tools/get_platform_recognized_record')).default
 }, 60_000)
@@ -168,10 +172,10 @@ it('HTTP and MCP preserve invalid input and missing detail errors', async () => 
   }
   const missing = await get('recognized-directory/99999')
   expect(missing.response.status).toBe(404)
-  expect(missing.body.statusMessage).toBe('Recognized directory record not found')
-  expect((await get('recognized-directory?whpcyear=bad')).body.statusMessage).toBe('whpcyear must be a positive integer')
-  expect((await get('recognized-directory?view=bad')).body.statusMessage).toBe('Invalid recognized directory query parameters')
-  expect((await get('recognized-directory/0')).body.statusMessage).toBe('recordId must be a positive safe integer')
+  expect(missing.body.statusText).toBe('Recognized directory record not found')
+  expect((await get('recognized-directory?whpcyear=bad')).body.statusText).toBe('whpcyear must be a positive integer')
+  expect((await get('recognized-directory?view=bad')).body.statusText).toBe('Invalid recognized directory query parameters')
+  expect((await get('recognized-directory/0')).body.statusText).toBe('recordId must be a positive safe integer')
   await expect(mcp({ page: 0 })).rejects.toMatchObject({ statusCode: 400, code: 'invalid_recognized_directory_filter' })
   await expect(mcp({ recordId: 0 }, true)).rejects.toMatchObject({ statusCode: 400, code: 'invalid_recognized_record_id' })
   await expect(mcp({ recordId: 99999 }, true)).rejects.toMatchObject({ statusCode: 404, code: 'recognized_record_not_found' })

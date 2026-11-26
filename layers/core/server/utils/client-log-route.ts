@@ -10,8 +10,10 @@ async function readClientBody(event: H3Event): Promise<{ status: number; body?: 
   if (declared !== undefined && (!/^\d+$/.test(declared) || Number(declared) > 4096)) return { status: 413 }
   if (!/^application\/json(?:\s*;|$)/i.test(getHeader(event, 'content-type') ?? '')
     || !['', 'identity'].includes(getHeader(event, 'content-encoding') ?? '')) return { status: 415 }
+  const req = event.node?.req
+  if (!req) return { status: 400 }
   return new Promise(resolve => {
-    const req = event.node.req, chunks: Buffer[] = []
+    const chunks: Buffer[] = []
     let bytes = 0, settled = false
     const finish = (result: { status: number; body?: unknown }) => {
       if (settled) return
@@ -44,9 +46,9 @@ export default defineEventHandler(async event => {
     setResponseStatus(event, body.status); return { error: { code: 'invalid_client_log_body' } }
   }
   // Socket address is budget-only, never stored; forwarded headers are untrusted.
-  const result = intake.accept(body.body, event.node.req.socket.remoteAddress ?? 'unknown', requestLogContext(event))
+  const result = intake.accept(body.body, event.node?.req.socket.remoteAddress ?? 'unknown', requestLogContext(event))
   setResponseStatus(event, result.status)
-  if (result.status === 429) setHeader(event, 'retry-after', 60)
+  if (result.status === 429) setHeader(event, 'retry-after', '60')
   if (result.status !== 202) return { error: { code: result.status === 429 ? 'client_log_rate_limited' : 'invalid_client_log_body' } }
   return { accepted: result.accepted, duplicates: result.duplicates }
 })

@@ -1,4 +1,4 @@
-import { defineEventHandler, getQuery, getRouterParam, setHeader, setResponseStatus, type H3Event } from 'h3'
+import { defineEventHandler, getHeader, getQuery, getRouterParam, setHeader, setResponseStatus, type H3Event } from 'h3'
 import { applicationLogs } from '../../lib/logging'
 import { dispatchLogAction, type LogAction } from '../../lib/logging/application'
 import { logAccessAllowed } from './logging-access'
@@ -7,7 +7,8 @@ class LogBodyError extends Error {
 }
 /** h3 1.x readBody/readRawBody accumulate without a size bound. Retain <=4096 raw bytes. */
 function readLogBody(event: H3Event): Promise<Record<string, unknown>> {
-  const req = event.node.req
+  const req = event.node?.req
+  if (!req) return Promise.reject(new LogBodyError(400, 'invalid_log_input'))
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let bytes = 0, settled = false
@@ -47,7 +48,7 @@ export function createLoggingRoute(action: LogAction) {
     if (!authorized) { setResponseStatus(event, 401); setHeader(event, 'cache-control', 'no-store'); return { error: { code: 'log_access_denied' } } }
     let input: Record<string, unknown> = action === 'detail' ? { id: getRouterParam(event, 'id') } : getQuery(event)
     if (['setPolicy','clear'].includes(action)) {
-      const header = event.node.req.headers['content-length']
+      const header = getHeader(event, 'content-length')
       const length = typeof header === 'string' && /^[0-9]+$/.test(header) ? Number(header) : NaN
       if (!Number.isInteger(length) || length < 1 || length > 4096) { setResponseStatus(event, 413); setHeader(event, 'cache-control', 'no-store'); return { error: { code: 'log_body_too_large' } } }
       try { input = await readLogBody(event) }

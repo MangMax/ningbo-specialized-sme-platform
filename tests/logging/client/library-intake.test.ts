@@ -7,7 +7,7 @@ import { createApp } from 'vue'
 import { createPinia, disposePinia } from 'pinia'
 import { PiniaColada, useQueryCache, useMutationCache } from '@pinia/colada'
 // Uses the actual integrated catalog, without a test-only extension.
-import { applicationLogs, closeApplicationLogging, LOG_DEFAULTS } from '../../../layers/core/lib/logging'
+import { applicationLogs, closeApplicationLogging, initializeWorkerLogging, LOG_DEFAULTS } from '../../../layers/core/lib/logging'
 import { createClientLogIntake } from '../../../layers/core/server/utils/client-log-intake'
 import { createClientErrorTransport } from '../../../layers/core/lib/client-logging/transport'
 import { installColadaLogging } from '../../../layers/core/lib/client-logging/colada'
@@ -73,6 +73,7 @@ it('persists every fixed server mapping and discards adversarial library claims 
   const rows = (await applicationLogs().list({ source: 'client', limit: 100 })).rows
   expect(rows).toHaveLength(21)
   await closeApplicationLogging()
+  initializeWorkerLogging()
   for (const [, integration, operation, outcome, level] of expected) {
     const row = rows.find(row => row.operation === operation)!
     const detail = await applicationLogs().detail(row.id)

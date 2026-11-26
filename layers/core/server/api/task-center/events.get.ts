@@ -1,4 +1,4 @@
-import { defineEventHandler, setResponseHeaders } from 'h3'
+import { defineEventHandler } from 'h3'
 import { subscribeTaskCenterEvents } from '../../utils/task-center-events'
 
 defineRouteMeta({
@@ -11,31 +11,36 @@ defineRouteMeta({
   },
 })
 
-export default defineEventHandler(event => {
-  const res = event.node.res
-  function close() {
-    clearInterval(heartbeat)
-    res.off('close', close)
-    unsubscribe()
-    res.end()
-  }
-  function write(frame: string) {
-    if (!res.write(frame)) {
-      close()
-      res.destroy()
-    }
-  }
-
-  const unsubscribe = subscribeTaskCenterEvents(name => {
-    if (name === 'close') close()
-    else write(`event: ${name}\ndata:\n\n`)
-  })
-  const heartbeat = setInterval(() => write(': heartbeat\n\n'), 15_000)
-  res.once('close', close)
-  setResponseHeaders(event, {
+export default defineEventHandler(() => {
+  const encoder = new TextEncoder()
+  let cleanup: (() => void) | undefined
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      function write(frame: string) {
+        if ((controller.desiredSize ?? 0) > 0) controller.enqueue(encoder.encode(frame))
+        else close()
+      }
+      function close() {
+        cleanup?.()
+        controller.close()
+      }
+      const unsubscribe = subscribeTaskCenterEvents(name => {
+        if (name === 'close') close()
+        else write(`event: ${name}\ndata:\n\n`)
+      })
+      const heartbeat = setInterval(() => write(': heartbeat\n\n'), 15_000)
+      cleanup = () => {
+        clearInterval(heartbeat)
+        unsubscribe()
+        cleanup = undefined
+      }
+      write('retry: 3000\n\n')
+    },
+    cancel() { cleanup?.() },
+  }, { highWaterMark: 16 })
+  return new Response(body, { headers: {
     'content-type': 'text/event-stream',
     'cache-control': 'no-store, no-transform',
     'x-accel-buffering': 'no',
-  })
-  write('retry: 3000\n\n')
+  } })
 })

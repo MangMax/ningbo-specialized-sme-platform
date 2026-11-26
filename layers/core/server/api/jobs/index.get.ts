@@ -127,7 +127,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = useJobsDb()
-  const config = useRuntimeConfig(event)
+  const config = useRuntimeConfig()
   if (q.view === 'summary') return listPostgresJobSummaries(db, query)
   const { rows, total } = await listPostgresJobs(db, query)
   const project = await postgresJobReadProjector(db, config)

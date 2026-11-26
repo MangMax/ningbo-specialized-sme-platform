@@ -155,13 +155,12 @@ export default defineEventHandler(async (event) => {
       if (start <= end && start < stat.size) {
         setResponseStatus(event, 206)
         setHeader(event, 'content-range', `bytes ${start}-${end}/${stat.size}`)
-        // h3 把 content-length 标成数字,不传字符串。
-        setHeader(event, 'content-length', end - start + 1)
+        setHeader(event, 'content-length', String(end - start + 1))
         return sendStream(event, createReadStream(abs, { start, end }))
       }
     }
   }
 
-  setHeader(event, 'content-length', stat.size)
+  setHeader(event, 'content-length', String(stat.size))
   return sendStream(event, createReadStream(abs))
 })

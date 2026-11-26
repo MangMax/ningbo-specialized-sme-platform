@@ -39,6 +39,10 @@ const tools: any[] = []
 const importDiscovery: RosterImportOpenApiDocument = {
   paths: { '/api/roster/import/preflight': { post: {} }, '/api/roster/import/commit': { post: {} } },
 }
+vi.mock('h3', async importOriginal => {
+  const { withNuxtJsonBody } = await import('../fixtures/nuxt-json-body')
+  return withNuxtJsonBody(await importOriginal<typeof import('h3')>())
+})
 extendRosterImportOpenApi(importDiscovery)
 async function post(path: string, body: unknown) {
   return nativeFetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) })

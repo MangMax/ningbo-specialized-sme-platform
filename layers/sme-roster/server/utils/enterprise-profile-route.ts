@@ -1,5 +1,5 @@
 import { semanticRouteHandler } from '../../../core/server/utils/core-route'
-import { getQuery, getRouterParam, readBody, setHeader } from 'h3'
+import { getQuery, getRouterParam, readBody, setHeader, setResponseStatus } from 'h3'
 import { requireApiToken } from '../../../core/server/utils/api-guard'
 import { EnterpriseProfileError } from './enterprise-profile-model'
 import { usePostgresDirectoryDb } from '../../../../db/postgresql/client'
@@ -20,7 +20,7 @@ export function enterpriseProfileRoute(action: 'get' | 'patch' | 'history') {
       return await patchPostgresEnterpriseProfile(pg, id, body)
     } catch (error) {
       if (error instanceof EnterpriseProfileError) {
-        event.node.res.statusCode = error.statusCode
+        setResponseStatus(event, error.statusCode)
         return { error: { code: error.code, message: error.message } }
       }
       throw error

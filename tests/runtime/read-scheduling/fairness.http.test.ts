@@ -66,7 +66,7 @@ it('retains literal public differences and sees an API commit on every read afte
 it('keeps original invalid-query status and message before scheduling', async () => {
   const res = await fetch(base + '/api/roster/differences?title=invalid')
   expect(res.status).toBe(400)
-  expect(await res.json()).toMatchObject({ statusMessage: 'Unknown title; expected little_giant, specialized_sme, innovative_sme' })
+  expect(await res.json()).toMatchObject({ statusText: 'Unknown title; expected little_giant, specialized_sme, innovative_sme' })
 })
 
 it('keeps literal nonempty results and separate universes during mixed public reads', async () => {
@@ -99,11 +99,11 @@ it('preserves each scheduled route validation and the import authentication boun
   for (const path of ['/api/roster/recognitions?title=invalid', '/api/roster/uscc-research?title=invalid']) {
     const response = await fetch(base + path)
     expect(response.status).toBe(400)
-    expect((await response.json()).statusMessage).toBeTruthy()
+    expect((await response.json()).statusText).toBeTruthy()
   }
   const response = await fetch(base + '/api/roster/uscc-research', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"claims":1}' })
   expect(response.status).toBe(400)
-  expect(await response.json()).toMatchObject({ statusMessage: 'claims 必须是数组' })
+  expect(await response.json()).toMatchObject({ message: 'claims 必须是数组' })
   const denied = await fetch(base + '/api/roster/import/commit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
   expect(denied.status).toBe(401)
 })

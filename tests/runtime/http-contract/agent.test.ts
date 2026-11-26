@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createNitro } from 'nitropack'
+import { createNitro } from 'nitro/builder'
 import {
   JOB_ID_RE,
   JOB_STATES,

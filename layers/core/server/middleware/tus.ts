@@ -1,3 +1,4 @@
+import { defineMiddleware, HTTPError } from 'nitro/h3'
 import type { ResolveUploadPlacement } from '../../lib/core/file-categories'
 import { requirePostgresFileWrite } from '../utils/file-store-postgres'
 import { appLog, requestLogContext, setRequestLogMetadata, type TusLogContext } from '../../lib/logging'
@@ -14,29 +15,29 @@ const postgresUploadPlacement: ResolveUploadPlacement = metadata => postgresFile
  * **匹配不到基路径 `/api/uploads` 本身**(只有子路径能匹配),而中间件按前缀判断
  * 一个入口同时覆盖基路径与子路径(见 `.research/tus-research.md` §2.5)。
  *
- * `sendWebResponse` 会把 `handleWeb` 返回的 `Response` 流式写回 Node `res`;
- * 其余路径**放行**(不返回、不消费)。
+ * 将 Nitro 的请求流直接交给 `handleWeb`，其余路径放行。
  *
  * 上传不是一次 HTTP:observation 只绑定本次 `handleWeb`,uploadId 来自 tus 回调,
  * 非终态 PATCH 成功不写事件;只有创建、终态完成或请求失败才落一条。
  */
-export default defineEventHandler(async (event) => {
+export default defineMiddleware(async (event) => {
   // 精确匹配基路径与子路径:`/api/uploads`、`/api/uploads/<id>`
   // (既覆盖 catch-all 匹配不到的基路径,又不误伤 `/api/uploadsextra` 之类)。
   if (event.path !== TUS_PATH && !event.path.startsWith(`${TUS_PATH}/`)) return
   // 鉴权预留位:tus 协议本身不含鉴权(见 ADR)。真实登录体系未接入前,这里只做
   // 最小把关;上线前应在此校验会话/来源,再交给 tus(见 .research/tus-research.md §5.4)。
   setRequestLogMetadata(event, { module: httpLogModule(TUS_PATH) })
+  const logContext = requestLogContext(event)
   const startedAt = Date.now()
   const observation: TusObservation = {}
   let logged = false
   try {
     if (event.method !== 'HEAD' && event.method !== 'OPTIONS') {
       try { requirePostgresFileWrite() }
-      catch (error) { throw createError({ statusCode: 503, message: (error as Error).message }) }
+      catch (error) { throw new HTTPError({ status: 503, message: (error as Error).message }) }
     }
     const { result: response } = await withTusObservation(() =>
-      getTus(postgresUploadPlacement).handleWeb(toWebRequest(event)), observation,
+      getTus(postgresUploadPlacement).handleWeb(event.req), observation,
     )
     const status = response.status
     // A client disconnect may surface as `Connection: close`; it is an observed
@@ -55,7 +56,7 @@ export default defineEventHandler(async (event) => {
         errorCode: denied ? 'file_upload_rejected' : 'file_upload_failed',
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'request-failed' } } : {}),
-      }, requestLogContext(event))
+      }, logContext)
       logged = true
     } else if (observation.completed === true) {
       // `onUploadFinish` completed its original mkdir/link/rm work before this flag.
@@ -63,7 +64,7 @@ export default defineEventHandler(async (event) => {
         origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'success', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'completed' } } : {}),
-      }, requestLogContext(event))
+      }, logContext)
       logged = true
     } else if (observation.created === true && event.method === 'POST') {
       // A create response is not a completed upload. Keep the id for later PATCH/retry correlation.
@@ -71,11 +72,11 @@ export default defineEventHandler(async (event) => {
         origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'started', statusCode: status,
         durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'created' } } : {}),
-      }, requestLogContext(event))
+      }, logContext)
       logged = true
     }
     // Successful HEAD/non-final PATCH/OPTIONS/DELETE stay out of semantic logs.
-    return sendWebResponse(event, response)
+    return response
   } catch (error) {
     if (!logged) {
       const tus = tusContext(observation)
@@ -83,7 +84,7 @@ export default defineEventHandler(async (event) => {
         origin: { runtime: 'node', integration: 'tus', capture: 'hook', execution: 'request' }, module: 'core', source: 'file', operation: 'file.upload', outcome: 'failure', level: 'error',
         errorCode: 'file_upload_failed', durationMs: Date.now() - startedAt,
         ...(tus ? { tus: { ...tus, phase: 'request-failed' } } : {}),
-      }, requestLogContext(event))
+      }, logContext)
     }
     throw error
   }
