@@ -75,7 +75,6 @@ export const APPLICATION_LOG_ROUTES: ReadonlySet<string> = new Set([
   "/api/roster/browser-context",
   "/api/roster/current-enterprises",
   "/api/roster/decision-lifecycle/:id",
-  "/api/roster/decision-lifecycle/browser-commands",
   "/api/roster/decision-lifecycle/commands",
   "/api/roster/decision-lifecycle/current",
   "/api/roster/decision-lifecycle/history",
