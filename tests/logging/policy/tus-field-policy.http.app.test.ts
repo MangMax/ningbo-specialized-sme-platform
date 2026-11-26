@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { postgresRuntimeFixture } from '../../support/postgres-fixture.mjs'
@@ -105,6 +106,38 @@ async function roundTrip(disabled?: typeof fields[number]) {
   observations.push({ disabled: disabled ?? 'none', uploadId: id, statuses: [created.status, rejected.status, completed.status], landed: path, fileSHA256: createHash('sha256').update(readFileSync(join(files, path))).digest('hex'), events })
 }
 it('real TUS defaults preserve creation failure completion context and original file placement without registration', async () => { await roundTrip() })
+it('writes the first TUS PATCH bytes before the client finishes sending the body', async () => {
+  const filename = 'streamed-chunk.txt'
+  const metadata = Object.entries({ source: 'jxj', kind: 'announcement', year: '2026', batch: '4', filename })
+    .map(([key, value]) => key + ' ' + Buffer.from(value).toString('base64')).join(',')
+  const created = await call('/api/uploads', { method: 'POST', headers: {
+    'Tus-Resumable': '1.0.0', 'Upload-Length': String(payload.length), 'Upload-Metadata': metadata,
+  } })
+  expect(created.status).toBe(201)
+  const location = new URL(created.headers.get('location')!, url)
+  const staged = join(incoming, location.pathname.split('/').pop()!)
+  const client = request(location, { method: 'PATCH', headers: {
+    'Tus-Resumable': '1.0.0', 'Upload-Offset': '0', 'Content-Length': String(payload.length),
+    'content-type': 'application/offset+octet-stream',
+  } })
+  const completed = new Promise<number>((resolve, reject) => {
+    client.once('error', reject)
+    client.once('response', response => {
+      response.resume()
+      resolve(response.statusCode!)
+    })
+  })
+  void completed.catch(() => {})
+  try {
+    client.write(payload.subarray(0, 4))
+    await expect.poll(() => statSync(staged, { throwIfNoEntry: false })?.size ?? 0).toBe(4)
+    client.end(payload.subarray(4))
+    expect(await completed).toBe(204)
+    expect(readFileSync(join(files, 'jxj/announcement/2026/4', filename))).toEqual(payload)
+  } finally {
+    client.destroy()
+  }
+})
 for (const field of fields) it(`real TUS ${field} off preserves phase response bytes and registration separation`, async () => { await roundTrip(field) })
 it('real TUS pre-create rejection has no invented context or capture despite disabled TUS fields', async () => {
   await rpc('set_runtime_log_policy', { ...base, fieldControls: { tus: Object.fromEntries(LOG_LEVELS.map(level => [level, Object.fromEntries(fields.map(field => [field, false]))])) } })

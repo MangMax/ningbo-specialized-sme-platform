@@ -13,7 +13,7 @@ import { createTus, MAX_SIZE, TUS_PATH, withTusObservation, type TusObservation 
  *
  * 直接装配 `createTus()`(读注入的临时目录),用 Node 内建 `fetch` 走 tus 协议,
  * 全部请求经 `server.handleWeb(new Request(...))` —— 与生产里
- * `server/middleware/tus.ts` 调 `handleWeb(toWebRequest(event))` **走同一入口**,
+ * `server/middleware/tus.ts` 把请求流交给 `handleWeb`，走同一入口，
  * 只是省去 h3 的 request/response 包装(测试环境无顶层 h3;Nitro 才提供它)。
  *
  * 覆盖:创建(带 metadata)→ 分片 → HEAD 查 offset → 中断/续传 → 落位,
