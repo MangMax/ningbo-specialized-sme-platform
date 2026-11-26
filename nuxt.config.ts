@@ -30,6 +30,9 @@ export default defineNuxtConfig({
   buildDir: process.env.NUXT_BUILD_DIR || '.nuxt',
   compatibilityDate: '2026-10-13',
   ssr: false,
+  experimental: {
+    webmcp: { navigate: false },
+  },
   devtools: { enabled: true },
   app: {
     head: {

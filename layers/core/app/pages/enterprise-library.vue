@@ -102,6 +102,10 @@ const resultLabel = computed(() => {
 
 watch(() => displayed.value?.request.key, () => { scroller.value?.scrollTo({ top: 0 }) }, { flush: 'post' })
 
+/**
+ * 在企业库按企业名称或完整的统一社会信用代码查询，并在当前页面显示结果。
+ * @tool readonly
+ */
 function applySearch() {
   const text = draft.value.trim()
   const code = normalizeReviewedUscc(text)
